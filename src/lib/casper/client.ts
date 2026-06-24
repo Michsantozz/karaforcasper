@@ -28,8 +28,13 @@ let agentKey: PrivateKey | null = null;
 export async function getAgentKey(): Promise<PrivateKey> {
   if (!agentKey) {
     const pem = await readFile(SECRET_KEY_PATH, "utf8");
-    // Testnet padrão usa ED25519. Troque para SECP256K1 se sua chave for dessa curva.
-    agentKey = PrivateKey.fromPem(pem, KeyAlgorithm.ED25519);
+    // Curva da chave: SECP256K1 (Casper Wallet exporta EC PRIVATE KEY).
+    // Override via env CASPER_KEY_ALGORITHM=ED25519 se usar chave ed25519.
+    const algo =
+      process.env.CASPER_KEY_ALGORITHM === "ED25519"
+        ? KeyAlgorithm.ED25519
+        : KeyAlgorithm.SECP256K1;
+    agentKey = PrivateKey.fromPem(pem, algo);
   }
   return agentKey;
 }
