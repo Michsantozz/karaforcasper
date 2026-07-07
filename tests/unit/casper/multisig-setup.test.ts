@@ -92,10 +92,10 @@ describe("prepareMultisigSetup — ordem e contagem", () => {
 
     // 1 + 2 associados + 1 = 4 passos.
     expect(out.steps).toHaveLength(4);
-    expect(out.steps[0].label).toMatch(/elevar peso da chave primária/i);
-    expect(out.steps[1].label).toMatch(/adicionar/i);
-    expect(out.steps[2].label).toMatch(/adicionar/i);
-    expect(out.steps[3].label).toMatch(/definir quórum/i);
+    expect(out.steps[0].label).toMatch(/raise primary key weight/i);
+    expect(out.steps[1].label).toMatch(/add/i);
+    expect(out.steps[2].label).toMatch(/add/i);
+    expect(out.steps[3].label).toMatch(/set quorum/i);
   });
 
   it("sem associados: só peso + thresholds (2 passos)", async () => {
@@ -107,8 +107,8 @@ describe("prepareMultisigSetup — ordem e contagem", () => {
       keyManagementThreshold: 1,
     });
     expect(out.steps).toHaveLength(2);
-    expect(out.steps[0].label).toMatch(/elevar peso/i);
-    expect(out.steps[1].label).toMatch(/definir quórum/i);
+    expect(out.steps[0].label).toMatch(/raise primary key weight/i);
+    expect(out.steps[1].label).toMatch(/set quorum/i);
   });
 
   it("cada passo referencia uma tx persistida no store, com kind setup_multisig", async () => {

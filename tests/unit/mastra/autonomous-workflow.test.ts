@@ -63,7 +63,7 @@ describe("decideAction — ação e contrato fail-closed", () => {
     const transfer = vi.fn(async () => ({ transactionHash: "abc123" }));
     const r = await decideAction("100", cfg(), transfer);
     expect(r.acted).toBe(true);
-    expect(r.decision).toContain("AÇÃO: transfer");
+    expect(r.decision).toContain("ACTION: transfer");
     expect(r.decision).toContain("abc123");
     expect(transfer).toHaveBeenCalledWith({
       toPublicKeyHex: cfg().heartbeatTarget,
@@ -77,7 +77,7 @@ describe("decideAction — ação e contrato fail-closed", () => {
     });
     const r = await decideAction("100", cfg(), transfer);
     expect(r.acted).toBe(false);
-    expect(r.decision).toContain("BLOQUEADO");
+    expect(r.decision).toContain("BLOCKED");
     expect(r.decision).toContain("acima do teto");
   });
 
@@ -90,9 +90,9 @@ describe("decideAction — ação e contrato fail-closed", () => {
   });
 
   it("decision e acted nunca divergem entre si", async () => {
-    // acted:true só quando a string diz AÇÃO; acted:false só com AGUARDANDO/BLOQUEADO.
+    // acted:true only when the string says ACTION; acted:false only with WAITING/BLOCKED.
     const acted = await decideAction("100", cfg(), okTransfer);
-    expect(acted.acted && acted.decision.startsWith("AÇÃO")).toBe(true);
+    expect(acted.acted && acted.decision.startsWith("ACTION")).toBe(true);
 
     const blocked = await decideAction(
       "100",
@@ -101,6 +101,6 @@ describe("decideAction — ação e contrato fail-closed", () => {
         throw new Error("x");
       }),
     );
-    expect(!blocked.acted && blocked.decision.startsWith("BLOQUEADO")).toBe(true);
+    expect(!blocked.acted && blocked.decision.startsWith("BLOCKED")).toBe(true);
   });
 });
