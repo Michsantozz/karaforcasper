@@ -20,7 +20,12 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 # Cache do store do pnpm entre builds (BuildKit). --frozen-lockfile = reprodutível.
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
-    pnpm install --frozen-lockfile
+    pnpm install --frozen-lockfile \
+      --fetch-retries=5 \
+      --fetch-retry-mintimeout=10000 \
+      --fetch-retry-maxtimeout=120000 \
+      --fetch-timeout=300000 \
+      --network-concurrency=8
 
 # ---- builder -------------------------------------------------------------
 FROM base AS builder
