@@ -6,6 +6,18 @@
   "engines": {
     "node": ">=24"
   },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@reown/appkit",
+      "bigint-buffer",
+      "bufferutil",
+      "esbuild",
+      "protobufjs",
+      "sharp",
+      "unrs-resolver",
+      "utf-8-validate"
+    ]
+  },
   "scripts": {
     "preinstall": "npx only-allow pnpm",
     "dev": "next dev",
