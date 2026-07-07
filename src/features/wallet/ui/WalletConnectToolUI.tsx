@@ -265,7 +265,7 @@ function Row({ k, v }: { k: string; v: string }) {
 // Displays the wallet error. When the extension isn't installed, shows a CTA
 // with a download link — otherwise an external user won't know what to do.
 function WalletError({ error }: { error: string }) {
-  const notInstalled = /não instalada|not installed/i.test(error);
+  const notInstalled = /not installed/i.test(error);
   if (notInstalled)
     return (
       <div className="flex flex-col gap-1.5">

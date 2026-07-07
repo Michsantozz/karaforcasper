@@ -17,10 +17,11 @@ import {
 } from "lucide-react";
 import { Button } from "@/shared/ui/button";
 
-// Showcase INTERATIVO do fluxo Recall.ai Calendar V2 multi-usuário. Cada célula
-// tem um botão "run" que anima o fluxo real (OAuth → cria calendar → webhook →
-// agenda bot) com mock data — sem tocar API real do Recall nem OAuth provider.
-// Viewport 1920x1080, rota: /calendar-showcase
+// INTERACTIVE showcase of the multi-user Recall.ai Calendar V2 flow. Each
+// cell has a "run" button that animates the real flow (OAuth → creates
+// calendar → webhook → schedules bot) with mock data — without touching the
+// real Recall API or an OAuth provider. Viewport 1920x1080, route:
+// /calendar-showcase
 export default function CalendarShowcasePage() {
   return (
     <main className="flex h-screen w-screen flex-col gap-3 overflow-hidden bg-(--thread-frame-outer) p-4">
@@ -34,13 +35,13 @@ export default function CalendarShowcasePage() {
               Recall.ai · Calendar V2 · Multi-User
             </span>
             <span className="font-mono text-[10px] text-muted-foreground">
-              calendar-showcase / conecta agenda de N usuários → agenda bots
+              calendar-showcase / connects N users' calendars → schedules bots
             </span>
           </div>
         </div>
         <div className="flex items-center gap-4">
-          <Legend dot="primary" label="você gerencia OAuth" />
-          <Legend dot="secondary" label="Recall gerencia tokens" />
+          <Legend dot="primary" label="you manage OAuth" />
+          <Legend dot="secondary" label="Recall manages tokens" />
           <span className="flex items-center gap-1.5 font-mono text-[10px] text-muted-foreground">
             <span className="size-1.5 animate-pulse rounded-[1px] bg-(--thread-accent-primary)" />
             api/v2
@@ -62,9 +63,9 @@ export default function CalendarShowcasePage() {
   );
 }
 
-/* ─────────────  hook: máquina de etapas animada  ───────────── */
+/* ─────────────  hook: animated step machine  ───────────── */
 
-// Roda uma sequência de etapas com delays. Cada item = [label, ms].
+// Runs a sequence of steps with delays. Each item = [label, ms].
 function useFlow(steps: [string, number][]) {
   const [step, setStep] = useState(-1); // -1 = idle, steps.length = done
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -102,7 +103,7 @@ function useFlow(steps: [string, number][]) {
 
 /* ─────────────────────────  CELLS  ───────────────────────── */
 
-// 1. CONNECT — OAuth do provider → troca code por refresh_token → cria calendar
+// 1. CONNECT — provider OAuth → exchanges code for refresh_token → creates calendar
 function ConnectCell() {
   const flow = useFlow([
     ["redirect → consent", 700],
@@ -113,16 +114,16 @@ function ConnectCell() {
   return (
     <Cell icon={CalendarIcon} label="connect calendar" kind="write" flow={flow}>
       <p className="text-xs text-muted-foreground">
-        Usuário autoriza no Google/Outlook. Seu backend troca o code por um
-        refresh_token e cria o calendar no Recall.
+        The user authorizes on Google/Outlook. Your backend exchanges the
+        code for a refresh_token and creates the calendar in Recall.
       </p>
       <KV k="platform" v="google_calendar" />
-      <KV k="oauth_email" v="ana@empresa.com" />
+      <KV k="oauth_email" v="ana@company.com" />
       {flow.step >= 3 ? (
         <KV k="refresh_token" v="1//0gFx…long-lived" accent />
       ) : (
         <p className="font-mono text-[10px] text-muted-foreground">
-          refresh_token ··· aguardando authorization code ···
+          refresh_token ··· awaiting authorization code ···
         </p>
       )}
       {flow.done && <Confirmed label="calendar.id" value="cal_a1b2…9f3e" />}
@@ -130,11 +131,11 @@ function ConnectCell() {
   );
 }
 
-// 2. MULTI-USER — N usuários, cada um 1 calendar; mapa recall_id ↔ user_id
+// 2. MULTI-USER — N users, each with 1 calendar; recall_id ↔ user_id mapping
 function MultiUserCell() {
   const users = [
-    { who: "ana@empresa.com", plat: "google", cal: "cal_a1b2…9f3e" },
-    { who: "bruno@empresa.com", plat: "outlook", cal: "cal_c3d4…7a1c" },
+    { who: "ana@company.com", plat: "google", cal: "cal_a1b2…9f3e" },
+    { who: "bruno@company.com", plat: "outlook", cal: "cal_c3d4…7a1c" },
     { who: "caio@partner.io", plat: "google", cal: "cal_e5f6…2b8d" },
   ];
   const flow = useFlow([
@@ -146,8 +147,8 @@ function MultiUserCell() {
   return (
     <Cell icon={UsersIcon} label="multi-user calendars" kind="read" gold flow={flow}>
       <p className="text-xs text-muted-foreground">
-        N usuários = N calendars no Recall. Você mapeia calendar.id ↔ user no
-        seu DB. Cada um tem o próprio OAuth.
+        N users = N calendars in Recall. You map calendar.id ↔ user in your
+        own DB. Each one has their own OAuth.
       </p>
       {users.map((u, idx) => {
         const on = idx < linked;
@@ -186,7 +187,7 @@ function MultiUserCell() {
   );
 }
 
-// 3. WEBHOOK — eventos do calendar chegando em tempo real
+// 3. WEBHOOK — calendar events arriving in real time
 function WebhookCell() {
   const allEvents = [
     { t: "09:00:02", e: "calendar.sync_events", who: "ana" },
@@ -232,8 +233,8 @@ function WebhookCell() {
   return (
     <Cell icon={RadioIcon} label="webhook sync" kind="read" flow={flow}>
       <p className="text-xs text-muted-foreground">
-        Calendar criado → Recall manda webhooks de update no seu webhook_url.
-        Você reage e agenda bots.
+        Calendar created → Recall sends update webhooks to your webhook_url.
+        You react and schedule bots.
       </p>
       {allEvents.slice(0, count).map((ev, i) => {
         const isLast = i === count - 1 && streaming;
@@ -265,19 +266,19 @@ function WebhookCell() {
           </div>
         );
       })}
-      {/* flow.idle é estado puro (count/streaming); o linter atribui o ref do
-          objeto `flow` inline por engano. */}
+      {/* flow.idle is plain state (count/streaming); the linter mistakenly
+          flags the inline `flow` object's ref. */}
       {/* eslint-disable-next-line react-hooks/refs */}
       {flow.idle && (
         <p className="font-mono text-[10px] text-muted-foreground">
-          run → webhooks chegam em tempo real
+          run → webhooks arrive in real time
         </p>
       )}
     </Cell>
   );
 }
 
-// 4. SCHEDULE — agenda bot pra um evento do calendar
+// 4. SCHEDULE — schedules a bot for a calendar event
 function ScheduleCell() {
   const flow = useFlow([
     ["fetch event", 600],
@@ -287,8 +288,8 @@ function ScheduleCell() {
   return (
     <Cell icon={BotIcon} label="schedule bot" kind="write" flow={flow}>
       <p className="text-xs text-muted-foreground">
-        Pra cada evento com link de meeting, agenda um bot. Reschedule? Chama de
-        novo — o bot anterior é sobrescrito.
+        For every event with a meeting link, schedules a bot. Reschedule?
+        Call it again — the previous bot is overwritten.
       </p>
       <KV k="event" v="Sync Q3 · 10:30" />
       <KV k="meeting_url" v="meet.google.com/abc-…" />
@@ -298,11 +299,11 @@ function ScheduleCell() {
   );
 }
 
-// 5. DEDUP — 2 users no mesmo evento → você dedupa pra 1 bot
+// 5. DEDUP — 2 users on the same event → you dedupe to 1 bot
 function DedupCell() {
   const flow = useFlow([
-    ["ana convidada", 600],
-    ["bruno convidado", 600],
+    ["ana invited", 600],
+    ["bruno invited", 600],
     ["dedup_key match → 1 bot", 800],
   ]);
   const invites = [
@@ -313,8 +314,8 @@ function DedupCell() {
   return (
     <Cell icon={CopyCheckIcon} label="dedup · shared event" kind="write" flow={flow}>
       <p className="text-xs text-muted-foreground">
-        Recall NÃO deduplica bots. Se ana e bruno têm o mesmo evento, você dedupa
-        por meeting_url → 1 bot, não 2.
+        Recall does NOT dedupe bots. If ana and bruno share the same event,
+        you dedupe by meeting_url → 1 bot, not 2.
       </p>
       {invites.map((iv, idx) => {
         const on = idx < seen;
@@ -343,14 +344,14 @@ function DedupCell() {
         <Confirmed label="dedup_key" value="1 bot · meet.google.com/abc" />
       ) : (
         <p className="font-mono text-[10px] text-muted-foreground">
-          dedup_key = meeting_url → 1 bot por meeting
+          dedup_key = meeting_url → 1 bot per meeting
         </p>
       )}
     </Cell>
   );
 }
 
-// 6. ZOOM — caminho OAuth nativo do Zoom (sem agenda)
+// 6. ZOOM — Zoom's native OAuth path (no calendar)
 function ZoomCell() {
   const flow = useFlow([
     ["POST /zoom_oauth_apps/", 600],
@@ -358,29 +359,30 @@ function ZoomCell() {
     ["sync_meetings", 700],
   ]);
   return (
-    <Cell icon={VideoIcon} label="zoom oauth (nativo)" kind="write" flow={flow}>
+    <Cell icon={VideoIcon} label="zoom oauth (native)" kind="write" flow={flow}>
       <p className="text-xs text-muted-foreground">
-        Zoom tem caminho próprio: 1 credential por user Zoom. Cobre gravar
-        meetings da conta Zoom direto, sem passar pela agenda.
+        Zoom has its own path: 1 credential per Zoom user. Covers recording
+        meetings from the Zoom account directly, without going through the
+        calendar.
       </p>
       <KV k="app" v="zoom_oauth_app" />
-      <KV k="credential" v="1 por user Zoom" />
+      <KV k="credential" v="1 per Zoom user" />
       {flow.done ? (
         <Confirmed label="status" value="credential · valid" />
       ) : (
         <p className="font-mono text-[10px] text-muted-foreground">
-          links Zoom dentro da agenda → cobertos pelo Calendar V2
+          Zoom links inside the calendar → covered by Calendar V2
         </p>
       )}
     </Cell>
   );
 }
 
-// 7. TOKEN — refresh_token long-lived; revoke → reconnect
+// 7. TOKEN — long-lived refresh_token; revoke → reconnect
 function TokenCell() {
   const flow = useFlow([
     ["Recall auto-refresh", 700],
-    ["user revoga permissão", 700],
+    ["user revokes permission", 700],
     ["calendar → disconnected", 700],
     ["reconnect → PATCH calendar", 800],
   ]);
@@ -390,8 +392,9 @@ function TokenCell() {
   return (
     <Cell icon={KeyRoundIcon} label="token lifecycle" kind="read" flow={flow}>
       <p className="text-xs text-muted-foreground">
-        refresh_token é long-lived — Recall renova o access token sozinho. Só
-        quebra se o user revoga ou troca senha.
+        refresh_token is long-lived — Recall renews the access token on its
+        own. It only breaks if the user revokes access or changes their
+        password.
       </p>
       <div
         className={`flex items-center justify-between rounded-[5px] border px-3 py-2 transition-colors ${
@@ -412,19 +415,19 @@ function TokenCell() {
         </span>
       </div>
       {flow.done && (
-        <Confirmed label="recovery" value="novo refresh_token salvo" />
+        <Confirmed label="recovery" value="new refresh_token saved" />
       )}
     </Cell>
   );
 }
 
-// 8. ARCHITECTURE — moldura da arquitetura (estático)
+// 8. ARCHITECTURE — architecture frame (static)
 function ArchitectureCell() {
   const steps = [
-    "OAuth client por provider",
-    "user autoriza → refresh_token",
+    "OAuth client per provider",
+    "user authorizes → refresh_token",
     "POST /v2/calendars/ → calendar.id",
-    "map calendar.id ↔ user no DB",
+    "map calendar.id ↔ user in the DB",
     "webhook → schedule bot",
   ];
   return (
@@ -444,7 +447,7 @@ function ArchitectureCell() {
           </div>
         ))}
         <p className="mt-auto font-mono text-[10px] text-muted-foreground">
-          você: OAuth · Recall: tokens + sync + bots
+          you: OAuth · Recall: tokens + sync + bots
         </p>
       </div>
     </div>

@@ -14,7 +14,7 @@ import {
 import { Button } from "@/shared/ui/button";
 import { useCasperWallet } from "@/features/wallet/model/useCasperWallet";
 
-// Page de teste ao vivo da Casper Wallet extension. Rota: /wallet-test
+// Live test page for the Casper Wallet extension. Route: /wallet-test
 export default function WalletTestPage() {
   const wallet = useCasperWallet();
   const [signResult, setSignResult] = useState<string | null>(null);
@@ -23,13 +23,13 @@ export default function WalletTestPage() {
   const onSignMessage = async () => {
     setBusy(true);
     setSignResult(null);
-    const sig = await wallet.signMessage("Teste de assinatura — Casper Agent");
-    setSignResult(sig ? `signatureHex: ${sig}` : "(cancelado / erro)");
+    const sig = await wallet.signMessage("Signature test — Casper Agent");
+    setSignResult(sig ? `signatureHex: ${sig}` : "(cancelled / error)");
     setBusy(false);
   };
 
-  // Monta um Native Transfer real (não envia) e pede assinatura à extensão.
-  // Usa buildFor1_5() → Deploy: formato que a Casper Wallet assina.
+  // Builds a real Native Transfer (doesn't send it) and asks the extension
+  // to sign it. Uses buildFor1_5() → Deploy: the format the Casper Wallet signs.
   const onSignTransfer = async () => {
     setBusy(true);
     setSignResult(null);
@@ -37,29 +37,29 @@ export default function WalletTestPage() {
       const { NativeTransferBuilder, PublicKey, CasperNetworkName, Deploy } =
         await import("casper-js-sdk");
 
-      if (!wallet.activeKey) throw new Error("Sem activeKey");
+      if (!wallet.activeKey) throw new Error("No activeKey");
 
       const sender = PublicKey.fromHex(wallet.activeKey);
       const tx = new NativeTransferBuilder()
         .from(sender)
         .target(sender)
-        .amount("2500000000") // 2.5 CSPR em motes
+        .amount("2500000000") // 2.5 CSPR in motes
         .id(1)
         .chainName(CasperNetworkName.Testnet)
         .payment(100_000_000)
         .buildFor1_5();
 
       const deploy = tx.getDeploy();
-      if (!deploy) throw new Error("Transaction não gerou Deploy");
+      if (!deploy) throw new Error("Transaction did not produce a Deploy");
 
       const json = JSON.stringify(Deploy.toJSON(deploy));
       const sig = await wallet.sign(json);
       setSignResult(
-        sig ? `transfer signatureHex: ${sig}` : "(cancelado / erro)",
+        sig ? `transfer signatureHex: ${sig}` : "(cancelled / error)",
       );
     } catch (e) {
       setSignResult(
-        "Erro ao montar/assinar: " +
+        "Error building/signing: " +
           (e instanceof Error ? e.message : String(e)),
       );
     } finally {
@@ -84,7 +84,7 @@ export default function WalletTestPage() {
         </div>
       </header>
 
-      {/* Outer frame — duplo nesting */}
+      {/* Outer frame — double nesting */}
       <div className="rounded-[8px] bg-(--thread-frame-outer) p-1">
         {/* Header bar mono */}
         <div className="flex items-center justify-between px-2 py-1.5">
@@ -143,7 +143,7 @@ export default function WalletTestPage() {
 
       {!wallet.installed && (
         <p className="mt-3 font-mono text-[11px] text-(--thread-accent-secondary)">
-          Casper Wallet não detectada — instale a extensão e recarregue.
+          Casper Wallet not detected — install the extension and reload.
         </p>
       )}
 

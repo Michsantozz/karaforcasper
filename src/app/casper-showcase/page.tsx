@@ -17,10 +17,10 @@ import {
 } from "lucide-react";
 import { Button } from "@/shared/ui/button";
 
-// Showcase INTERATIVO das funções nativas do Casper. Cada célula tem um botão
-// "run" que anima o fluxo real da operação (monta → assina → confirma) com
-// mock data — sem tocar chain nem carteira. Viewport 1920x1080, rota:
-// /casper-showcase
+// INTERACTIVE showcase of Casper's native functions. Each cell has a "run"
+// button that animates the operation's real flow (build → sign → confirm)
+// with mock data — without touching the chain or a wallet. Viewport
+// 1920x1080, route: /casper-showcase
 export default function CasperShowcasePage() {
   return (
     <main className="flex h-screen w-screen flex-col gap-3 overflow-hidden bg-(--thread-frame-outer) p-4">
@@ -34,13 +34,13 @@ export default function CasperShowcasePage() {
               Casper · Native Functions
             </span>
             <span className="font-mono text-[10px] text-muted-foreground">
-              casper-showcase / interactive demo / clique run em cada célula
+              casper-showcase / interactive demo / click run on each cell
             </span>
           </div>
         </div>
         <div className="flex items-center gap-4">
-          <Legend dot="primary" label="read · sem assinatura" />
-          <Legend dot="secondary" label="write · assina + envia" />
+          <Legend dot="primary" label="read · no signature" />
+          <Legend dot="secondary" label="write · signs + sends" />
           <span className="flex items-center gap-1.5 font-mono text-[10px] text-muted-foreground">
             <span className="size-1.5 animate-pulse rounded-[1px] bg-(--thread-accent-primary)" />
             casper-test
@@ -62,9 +62,9 @@ export default function CasperShowcasePage() {
   );
 }
 
-/* ─────────────  hook: máquina de etapas animada  ───────────── */
+/* ─────────────  hook: animated step machine  ───────────── */
 
-// Roda uma sequência de etapas com delays. Cada item = [label, ms].
+// Runs a sequence of steps with delays. Each item = [label, ms].
 function useFlow(steps: [string, number][]) {
   const [step, setStep] = useState(-1); // -1 = idle, steps.length = done
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -102,7 +102,7 @@ function useFlow(steps: [string, number][]) {
 
 /* ─────────────────────────  CELLS  ───────────────────────── */
 
-// 1. TRANSFER — monta → assina → broadcast → confirmado
+// 1. TRANSFER — build → sign → broadcast → confirmed
 function TransferCell() {
   const flow = useFlow([
     ["building deploy", 600],
@@ -112,7 +112,7 @@ function TransferCell() {
   return (
     <Cell icon={ArrowRightLeftIcon} label="transfer" kind="write" flow={flow}>
       <p className="text-xs text-muted-foreground">
-        Manda CSPR de uma conta pra outra. Como um Pix.
+        Sends CSPR from one account to another. Like a wire transfer.
       </p>
       <KV k="from" v="0137bb…71b4a" />
       <KV k="to" v="02a1c8…9f3e2" />
@@ -124,7 +124,7 @@ function TransferCell() {
   );
 }
 
-// 2. TRANSFER_ID — etiqueta o pagamento
+// 2. TRANSFER_ID — tags the payment
 function TransferIdCell() {
   const flow = useFlow([
     ["tagging payment", 600],
@@ -133,7 +133,7 @@ function TransferIdCell() {
   return (
     <Cell icon={TagIcon} label="transfer_id" kind="write" flow={flow}>
       <p className="text-xs text-muted-foreground">
-        Etiqueta um número no pagamento. Liga grana ↔ reunião.
+        Tags a number onto the payment. Links money ↔ meeting.
       </p>
       <KV k="meeting" v="Standup Q3" />
       <KV k="transfer_id" v="#42007" accent />
@@ -141,14 +141,14 @@ function TransferIdCell() {
         <Confirmed label="indexed" value="id #42007 → 1 transfer" />
       ) : (
         <p className="font-mono text-[10px] text-muted-foreground">
-          query on-chain por id → pagamentos da reunião
+          on-chain query by id → meeting payments
         </p>
       )}
     </Cell>
   );
 }
 
-// 3. BALANCE — query RPC, número conta sobe
+// 3. BALANCE — RPC query, the account number counts up
 function BalanceCell() {
   const flow = useFlow([["querying RPC", 700]]);
   const [val, setVal] = useState(0);
@@ -159,7 +159,7 @@ function BalanceCell() {
       setVal(0);
       return;
     }
-    // anima o número subindo até o saldo final (RAF → setState é o propósito)
+    // animates the number counting up to the final balance (RAF → setState is the point)
     const target = 1482.91;
     let raf = 0;
     const t0 = performance.now();
@@ -175,7 +175,7 @@ function BalanceCell() {
   return (
     <Cell icon={WalletIcon} label="balance" kind="read" flow={flow}>
       <p className="text-xs text-muted-foreground">
-        Consulta o saldo de uma conta. Leitura pura, sem assinar.
+        Looks up an account's balance. Pure read, no signature needed.
       </p>
       <div className="flex flex-col gap-1 rounded-[5px] border bg-background p-3">
         <span className="font-mono text-[10px] text-muted-foreground uppercase tracking-wider">
@@ -196,20 +196,20 @@ function BalanceCell() {
   );
 }
 
-// 4. MULTI-SIG — chaves assinam uma a uma, peso acumula até threshold
+// 4. MULTI-SIG — keys sign one by one, weight accumulates up to threshold
 function MultiSigCell() {
   const keys = [
     { who: "organizer", weight: 2 },
     { who: "member · A", weight: 1 },
     { who: "member · B", weight: 1 },
   ];
-  // cada etapa = uma chave assinando
+  // each step = one key signing
   const flow = useFlow([
     ["organizer signs", 700],
     ["member A signs", 700],
     ["member B signs", 700],
   ]);
-  // peso acumulado = soma das chaves já assinadas (step indica quantas)
+  // accumulated weight = sum of the keys that have signed so far (step indicates how many)
   const signedCount = Math.max(0, Math.min(flow.step, keys.length));
   const accWeight = keys
     .slice(0, signedCount)
@@ -226,7 +226,7 @@ function MultiSigCell() {
       flow={flow}
     >
       <p className="text-xs text-muted-foreground">
-        Conta com várias chaves, cada uma com peso. Diferencial Casper.
+        An account with multiple keys, each with a weight. A Casper differentiator.
       </p>
       {keys.map((k, idx) => {
         const signed = idx < signedCount;
@@ -287,7 +287,7 @@ function NamedKeysCell() {
   return (
     <Cell icon={ArchiveIcon} label="named keys" kind="write" flow={flow}>
       <p className="text-xs text-muted-foreground">
-        Gaveta dentro da conta. Guarda o hash do resumo = prova de entrega.
+        A drawer inside the account. Stores the summary's hash = proof of delivery.
       </p>
       <div className="rounded-[5px] border bg-background p-3">
         <KVInline k="key" v="summary-42007" />
@@ -301,21 +301,21 @@ function NamedKeysCell() {
         <span className="mt-1 block break-all font-mono text-[10px] text-(--thread-accent-primary)">
           {flow.step >= 1
             ? "c9170ad1504fe1d8f560fd712ff3d0a4ede41b23…"
-            : "··· aguardando hash ···"}
+            : "··· awaiting hash ···"}
         </span>
       </div>
       {flow.done ? (
-        <Confirmed label="stored" value="imutável · timestamped" />
+        <Confirmed label="stored" value="immutable · timestamped" />
       ) : (
         <p className="font-mono text-[10px] text-muted-foreground">
-          imutável · qualquer um verifica
+          immutable · anyone can verify
         </p>
       )}
     </Cell>
   );
 }
 
-// 6. SSE — stream de eventos chegando em tempo real
+// 6. SSE — event stream arriving in real time
 function SseCell() {
   const allEvents = [
     { t: "07:42:01", e: "TransactionAccepted" },
@@ -361,7 +361,7 @@ function SseCell() {
   return (
     <Cell icon={RadioIcon} label="sse · event stream" kind="read" flow={flow}>
       <p className="text-xs text-muted-foreground">
-        Campainha: o nó avisa na hora. Pagou → libera resumo automático.
+        A doorbell: the node notifies instantly. Paid → releases the summary automatically.
       </p>
       {allEvents.slice(0, count).map((ev, i) => {
         const isLast = i === count - 1 && streaming;
@@ -390,11 +390,11 @@ function SseCell() {
           </div>
         );
       })}
-      {/* flow.idle é estado puro; o linter atribui o ref do objeto `flow` por engano. */}
+      {/* flow.idle is plain state; the linter mistakenly flags the `flow` object's ref. */}
       {/* eslint-disable-next-line react-hooks/refs */}
       {flow.idle && (
         <p className="font-mono text-[10px] text-muted-foreground">
-          run → eventos chegam em tempo real
+          run → events arrive in real time
         </p>
       )}
     </Cell>
@@ -411,7 +411,7 @@ function StakingCell() {
   return (
     <Cell icon={CoinsIcon} label="staking · delegate" kind="write" flow={flow}>
       <p className="text-xs text-muted-foreground">
-        Deixa CSPR rendendo num validador. Poupança que dá juros.
+        Lets CSPR earn yield with a validator. Savings that pay interest.
       </p>
       <KV k="validator" v="01a7c8…validator" />
       <div className="grid grid-cols-2 gap-2">
@@ -423,14 +423,14 @@ function StakingCell() {
   );
 }
 
-// 8. SUMMARY — pipeline do produto (estático, é a moldura)
+// 8. SUMMARY — product pipeline (static, it's the frame)
 function SummaryCell() {
   const steps = [
-    "reunião → bot grava",
-    "agente gera resumo",
-    "named key grava hash",
-    "transfer + id paga",
-    "sse libera entrega",
+    "meeting → bot records",
+    "agent generates summary",
+    "named key stores hash",
+    "transfer + id pays",
+    "sse releases delivery",
   ];
   return (
     <div className="flex flex-col rounded-[8px] border border-(--thread-accent-primary) bg-(--thread-accent-primary-soft) p-1">
@@ -449,7 +449,7 @@ function SummaryCell() {
           </div>
         ))}
         <p className="mt-auto font-mono text-[10px] text-muted-foreground">
-          100% nativo · zero smart contract
+          100% native · zero smart contract
         </p>
       </div>
     </div>
@@ -495,7 +495,7 @@ function Cell({
           {label}
         </span>
         <div className="flex items-center gap-2">
-          {/* status do flow */}
+          {/* flow status */}
           {flow.running && flow.label && (
             <span className="flex items-center gap-1 font-mono text-[10px] text-(--thread-accent-primary)">
               <span className="size-1.5 animate-pulse rounded-[1px] bg-(--thread-accent-primary)" />

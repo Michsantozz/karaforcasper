@@ -60,11 +60,11 @@ export default function CreatorRequestPage({
   const [msg, setMsg] = useState<string | null>(null);
   const [broadcastUrl, setBroadcastUrl] = useState<string | null>(null);
 
-  // Detalhe + polling terminal-aware vêm do hook compartilhado. `enabled` só
-  // dispara com sessão. `detail` é undefined enquanto carrega.
-  // isLoading = primeira busca em andamento (isPending && isFetching). Com a
-  // query desabilitada (sem sessão) fica false, então o ramo de login abaixo é
-  // alcançável em vez de travar no spinner.
+  // Detail + terminal-aware polling come from the shared hook. `enabled`
+  // only fires with a session. `detail` is undefined while loading.
+  // isLoading = first fetch in progress (isPending && isFetching). With the
+  // query disabled (no session) it's false, so the login branch below is
+  // reachable instead of getting stuck on the spinner.
   const { data: detail, isLoading: loading } = useRequestDetail(
     id,
     Boolean(session?.user),
@@ -84,12 +84,12 @@ export default function CreatorRequestPage({
     if (!ok) {
       setMsg(
         err.error === "forbidden"
-          ? "Só o criador pode cancelar."
-          : `Falha ao cancelar: ${err.error ?? status}`,
+          ? "Only the creator can cancel."
+          : `Failed to cancel: ${err.error ?? status}`,
       );
       return;
     }
-    setMsg("Solicitação cancelada.");
+    setMsg("Request cancelled.");
   };
 
   const onBroadcast = async () => {
@@ -98,15 +98,15 @@ export default function CreatorRequestPage({
     const d = data as { error?: string; explorerUrl?: string };
     if (!ok) {
       const map: Record<string, string> = {
-        forbidden: "Só o criador pode submeter.",
-        request_not_ready: "Quórum ainda não atingido.",
-        unauthenticated: "Faça login para submeter.",
+        forbidden: "Only the creator can submit.",
+        request_not_ready: "Quorum not yet reached.",
+        unauthenticated: "Log in to submit.",
       };
-      setMsg(map[d.error ?? ""] ?? `Falha no broadcast: ${d.error ?? status}`);
+      setMsg(map[d.error ?? ""] ?? `Broadcast failed: ${d.error ?? status}`);
       return;
     }
     setBroadcastUrl(d.explorerUrl ?? null);
-    setMsg("Transação submetida ✓");
+    setMsg("Transaction submitted ✓");
   };
 
   if (isPending || loading) {
@@ -114,7 +114,7 @@ export default function CreatorRequestPage({
       <main className="mx-auto w-full max-w-2xl px-4 py-10">
         <div className="flex items-center gap-2 font-mono text-muted-foreground text-sm">
           <LoaderIcon className="size-4 animate-spin" />
-          carregando…
+          loading request…
         </div>
       </main>
     );
@@ -124,7 +124,7 @@ export default function CreatorRequestPage({
     return (
       <main className="mx-auto w-full max-w-2xl px-4 py-10">
         <p className="text-sm text-muted-foreground">
-          Faça login no <Link href="/multisig" className="underline">dashboard</Link> para gerenciar suas solicitações.
+          Log in on the <Link href="/multisig" className="underline">dashboard</Link> to manage your requests.
         </p>
       </main>
     );
@@ -136,7 +136,7 @@ export default function CreatorRequestPage({
         <div className="flex items-center gap-2 rounded-[5px] border border-(--thread-accent-secondary) bg-(--thread-accent-secondary-soft) px-3 py-2">
           <CircleAlertIcon className="size-4 text-(--thread-accent-secondary)" />
           <span className="text-(--thread-accent-secondary) text-sm">
-            Solicitação não encontrada ou expirada.
+            Request not found or expired.
           </span>
         </div>
       </main>
@@ -155,7 +155,7 @@ export default function CreatorRequestPage({
         className="mb-4 inline-flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground hover:text-foreground"
       >
         <ArrowLeftIcon className="size-3.5" />
-        voltar ao dashboard
+        back to dashboard
       </Link>
 
       <header className="mb-6 flex items-center gap-3">
@@ -164,7 +164,7 @@ export default function CreatorRequestPage({
         </span>
         <div>
           <h1 className="font-semibold text-2xl tracking-tight">
-            Gerenciar solicitação
+            Manage request
           </h1>
           <p className="font-mono text-[11px] text-muted-foreground">
             {detail.kind} · {detail.chainName} · {detail.status}
@@ -172,7 +172,7 @@ export default function CreatorRequestPage({
         </div>
       </header>
 
-      {/* Link compartilhável */}
+      {/* Shareable link */}
       <div className="mb-4 flex items-center gap-2 rounded-[5px] border bg-background px-3 py-2">
         <span className="font-mono text-[10px] text-muted-foreground uppercase tracking-wider">
           link
@@ -184,17 +184,17 @@ export default function CreatorRequestPage({
           type="button"
           onClick={() => navigator.clipboard.writeText(shareLink)}
           className="text-muted-foreground hover:text-(--thread-accent-primary)"
-          aria-label="copiar link"
+          aria-label="copy link"
         >
           <CopyIcon className="size-3.5" />
         </button>
       </div>
 
-      {/* Valor/destino reais + progresso */}
+      {/* Real amount/target + progress */}
       <div className="rounded-[8px] bg-(--thread-frame-outer) p-1">
         <div className="flex items-center justify-between px-2 py-1.5">
           <span className="font-mono text-muted-foreground text-xs">
-            o que será pago
+            what will be paid
           </span>
           <span className="flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground">
             <span
@@ -204,7 +204,7 @@ export default function CreatorRequestPage({
                 detail.ready ? "bg-(--thread-accent-primary)" : "bg-amber-500",
               )}
             />
-            {detail.signed.length}/{detail.threshold} assinadas
+            {detail.signed.length}/{detail.threshold} signed
           </span>
         </div>
 
@@ -219,7 +219,7 @@ export default function CreatorRequestPage({
           <div className="flex items-start gap-2">
             <TargetIcon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
             <span className="break-all font-mono text-[11px] text-muted-foreground">
-              {detail.decoded.target ?? "destino não decodado"}
+              {detail.decoded.target ?? "target not decoded"}
             </span>
           </div>
           {detail.description && (
@@ -228,7 +228,7 @@ export default function CreatorRequestPage({
 
           <div className="mt-1 border-t border-dashed border-border pt-2" />
           <span className="font-mono text-[10px] text-muted-foreground uppercase tracking-wider">
-            signatários ({detail.threshold} exigidas)
+            signers ({detail.threshold} required)
           </span>
           {detail.requiredSigners.map((s) => {
             const done = detail.signed.includes(norm(s.publicKeyHex));
@@ -249,7 +249,7 @@ export default function CreatorRequestPage({
                       : "text-muted-foreground",
                   )}
                 >
-                  {done ? "assinado ✓" : "pendente"}
+                  {done ? "signed ✓" : "pending"}
                 </span>
               </div>
             );
@@ -265,14 +265,14 @@ export default function CreatorRequestPage({
                 className="inline-flex items-center gap-1 pt-1 font-mono text-[11px] text-(--thread-accent-primary) hover:underline"
               >
                 <ExternalLinkIcon className="size-3" />
-                ver no explorer
+                view on explorer
               </a>
             </>
           )}
         </div>
       </div>
 
-      {/* Ações */}
+      {/* Actions */}
       <div className="mt-4 flex flex-wrap gap-2">
         {detail.ready && !terminal && (
           <AlertDialog>
@@ -291,15 +291,15 @@ export default function CreatorRequestPage({
             </AlertDialogTrigger>
             <AlertDialogContent>
               <AlertDialogHeader>
-                <AlertDialogTitle>Submeter à rede?</AlertDialogTitle>
+                <AlertDialogTitle>Submit to the network?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  Irreversível. Move{" "}
+                  Irreversible. Moves{" "}
                   <strong className="text-foreground">
                     {detail.decoded.amountCspr ?? "?"} CSPR
                   </strong>{" "}
-                  para{" "}
+                  to{" "}
                   <span className="break-all font-mono text-[11px]">
-                    {detail.decoded.target ?? "destino não decodado"}
+                    {detail.decoded.target ?? "target not decoded"}
                   </span>
                   .
                 </AlertDialogDescription>
@@ -314,7 +314,7 @@ export default function CreatorRequestPage({
                     />
                   }
                 >
-                  cancelar
+                  cancel
                 </AlertDialogCancel>
                 <AlertDialogAction
                   render={
@@ -327,7 +327,7 @@ export default function CreatorRequestPage({
                   onClick={onBroadcast}
                 >
                   <SendIcon className="size-3.5" />
-                  confirmar
+                  confirm
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>
@@ -347,14 +347,14 @@ export default function CreatorRequestPage({
               }
             >
               <Trash2Icon className="size-3.5" />
-              cancelar solicitação
+              cancel request
             </AlertDialogTrigger>
             <AlertDialogContent>
               <AlertDialogHeader>
-                <AlertDialogTitle>Cancelar solicitação?</AlertDialogTitle>
+                <AlertDialogTitle>Cancel request?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  Invalida o link de assinatura. As assinaturas já coletadas são
-                  descartadas. Não há como reverter.
+                  Invalidates the signature link. Signatures already
+                  collected are discarded. This cannot be undone.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
@@ -367,7 +367,7 @@ export default function CreatorRequestPage({
                     />
                   }
                 >
-                  voltar
+                  back
                 </AlertDialogCancel>
                 <AlertDialogAction
                   render={
@@ -379,7 +379,7 @@ export default function CreatorRequestPage({
                   }
                   onClick={onCancel}
                 >
-                  confirmar cancelamento
+                  confirm cancellation
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>

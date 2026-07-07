@@ -13,32 +13,34 @@ import { getSession } from "@/features/auth/model/session";
 import { withUserScope } from "@/shared/db/rls";
 
 /**
- * Estimativa de duração (min) usada só no GATE de saldo antes de criar o bot —
- * o custo real é medido depois pela duração transcrita. Conservador de propósito.
+ * Duration estimate (min) used only for the balance GATE before creating the
+ * bot — the real cost is measured afterwards from the transcribed duration.
+ * Deliberately conservative.
  */
 const ESTIMATED_MEETING_MINUTES = Number(
   process.env.BILLING_ESTIMATED_MINUTES ?? 30,
 );
 
 /**
- * Tools de "front-desk" de bots Recall.ai — escrita via REST.
+ * "Front-desk" tools for Recall.ai bots — writes via REST.
  *
- * Leitura rica (recordings, transcript, calendar) já vem das tools do MCP
- * recall-ai (read-only). Estas tools cobrem o que o MCP NÃO faz: criar, agendar,
- * controlar e remover bots, com deduplicação no DB do app.
+ * Rich reads (recordings, transcript, calendar) already come from the
+ * recall-ai MCP tools (read-only). These tools cover what the MCP does NOT
+ * do: creating, scheduling, controlling, and removing bots, with
+ * deduplication in the app's DB.
  *
- * Convenção de receipt: as tools retornam { ok, botId, ... } — não despejam o
- * recording/transcript inteiro no resultado (fronteira capability).
+ * Receipt convention: the tools return { ok, botId, ... } — they don't dump
+ * the entire recording/transcript into the result (capability boundary).
  */
 
-/** Artefato de mídia do recording (transcript/áudio/vídeo). */
+/** Recording media artifact (transcript/audio/video). */
 type MediaArtifact = {
   id?: string;
   status?: { code?: string };
   data?: { download_url?: string };
 } | null;
 
-/** Artefato participant_events: expõe URLs de download de participantes/timeline. */
+/** participant_events artifact: exposes download URLs for participants/timeline. */
 type ParticipantEventsArtifact = {
   status?: { code?: string };
   data?: {
@@ -59,7 +61,7 @@ type RecallRecording = {
   };
 };
 
-/** Shape parcial do bot do Recall (só o que consumimos no receipt). */
+/** Partial shape of the Recall bot (only what we consume in the receipt). */
 type RecallBot = {
   id: string;
   status_changes?: Array<{ code?: string; created_at?: string }>;
@@ -73,7 +75,7 @@ function latestStatus(bot: RecallBot): string | undefined {
   return changes?.[changes.length - 1]?.code;
 }
 
-/** Segmento bruto de transcript: participante + palavras com timestamps. */
+/** Raw transcript segment: participant + words with timestamps. */
 type TranscriptSegment = {
   participant?: { name?: string | null };
   words?: Array<{
@@ -84,10 +86,10 @@ type TranscriptSegment = {
 };
 
 /**
- * Baixa e parseia a transcrição de um bot.
+ * Downloads and parses a bot's transcript.
  *
- * Retorna o estado da transcrição e (se pronta) os segmentos brutos. Compartilhado
- * por get_transcript (texto legível) e summarize_meeting (input do LLM).
+ * Returns the transcript state and (if ready) the raw segments. Shared by
+ * get_transcript (human-readable text) and summarize_meeting (LLM input).
  */
 async function loadTranscript(botId: string): Promise<{
   bot: RecallBot;
@@ -112,14 +114,14 @@ async function loadTranscript(botId: string): Promise<{
   return { bot, state: "ready", segments };
 }
 
-/** Monta texto "participante: fala" + conjunto de speakers a partir dos segmentos. */
+/** Builds "participant: speech" text + set of speakers from the segments. */
 function renderTranscript(segments: TranscriptSegment[]): {
   text: string;
   speakers: string[];
 } {
   const speakers = new Set<string>();
   const lines = segments.map((seg) => {
-    const who = seg.participant?.name ?? "Desconhecido";
+    const who = seg.participant?.name ?? "Unknown";
     speakers.add(who);
     const text = (seg.words ?? []).map((w) => w.text ?? "").join(" ").trim();
     return `${who}: ${text}`;
@@ -128,37 +130,37 @@ function renderTranscript(segments: TranscriptSegment[]): {
 }
 
 /**
- * Agenda (ou reutiliza) um bot para entrar numa meeting.
+ * Schedules (or reuses) a bot to join a meeting.
  *
- * - join_at > 10 min no futuro → scheduled (join garantido).
- * - join_at omitido / <= 10 min → ad-hoc (pode falhar com 507; retentar ~30s).
- * Deduplica por dedup_key: se já existe bot para a meeting, reusa em vez de criar.
+ * - join_at > 10 min in the future → scheduled (guaranteed join).
+ * - join_at omitted / <= 10 min → ad-hoc (can fail with 507; retry ~30s).
+ * Deduplicates by dedup_key: if a bot already exists for the meeting, reuses it instead of creating one.
  */
 export const scheduleRecallBotTool = createTool({
   id: "schedule_recall_bot",
   description:
-    "Agenda ou inicia um bot do Recall.ai para entrar numa reunião (Zoom/Meet/Teams/etc.). " +
-    "Passe join_at (ISO 8601, >10min no futuro) para agendar com join garantido, ou omita para entrar agora (ad-hoc). " +
-    "Deduplica automaticamente: não cria bot duplicado para a mesma reunião.",
+    "Schedules or starts a Recall.ai bot to join a meeting (Zoom/Meet/Teams/etc.). " +
+    "Pass join_at (ISO 8601, >10min in the future) to schedule with a guaranteed join, or omit it to join now (ad-hoc). " +
+    "Deduplicates automatically: doesn't create a duplicate bot for the same meeting.",
   inputSchema: z.object({
-    meetingUrl: z.url().describe("URL da reunião"),
+    meetingUrl: z.url().describe("Meeting URL"),
     joinAt: z.iso
       .datetime()
       .optional()
-      .describe("Horário de entrada em ISO 8601. Omita para entrar agora (ad-hoc)."),
+      .describe("Join time in ISO 8601. Omit to join now (ad-hoc)."),
     botName: z
       .string()
       .optional()
-      .describe('Nome exibido na call. Default do Recall: "Meeting Notetaker".'),
+      .describe('Name shown in the call. Recall default: "Meeting Notetaker".'),
     dedupKey: z
       .string()
       .optional()
-      .describe("Chave de dedup custom. Default: derivada de joinAt+meetingUrl."),
+      .describe("Custom dedup key. Default: derived from joinAt+meetingUrl."),
   }),
   outputSchema: z.object({
     ok: z.boolean(),
     botId: z.string(),
-    reused: z.boolean().describe("true se um bot existente foi reusado"),
+    reused: z.boolean().describe("true if an existing bot was reused"),
     scheduled: z.boolean().describe("true=scheduled, false=ad-hoc"),
     dedupKey: z.string(),
   }),
@@ -177,21 +179,21 @@ export const scheduleRecallBotTool = createTool({
       };
     }
 
-    // Dono da reunião = usuário da sessão (nunca vem do chat). Necessário para
-    // faturar e para o gate de saldo. Persistido na metadata do bot para o
-    // webhook/enrich saberem a quem cobrar/notificar.
+    // Meeting owner = session user (never comes from chat). Needed for
+    // billing and for the balance gate. Persisted in the bot's metadata so
+    // the webhook/enrich know who to charge/notify.
     const session = await getSession();
     const userId = session?.user?.id ?? null;
 
-    // GATE de saldo: sem crédito suficiente para uma reunião estimada, recusa
-    // antes de criar o bot (não gasta recurso do Recall nem gera cobrança).
+    // Balance GATE: without enough credit for an estimated meeting, refuses
+    // before creating the bot (doesn't spend Recall resources or generate a charge).
     if (userId) {
       const ok = await withUserScope(userId, () =>
         hasBalanceForMinutes(userId, ESTIMATED_MEETING_MINUTES),
       );
       if (!ok) {
         throw new Error(
-          "Saldo insuficiente para agendar a reunião. Deposite CSPR para adicionar créditos antes de continuar.",
+          "Insufficient balance to schedule the meeting. Deposit CSPR to add credits before continuing.",
         );
       }
     }
@@ -205,8 +207,8 @@ export const scheduleRecallBotTool = createTool({
           meeting_url: input.meetingUrl,
           ...(input.joinAt ? { join_at: input.joinAt } : {}),
           ...(input.botName ? { bot_name: input.botName } : {}),
-          // Bot entra SEM gravar (start manual). Já deixa transcript configurado
-          // para que start_recording capture vídeo + transcrição.
+          // Bot joins WITHOUT recording (manual start). Transcript is already
+          // configured so start_recording captures video + transcript.
           recording_config: {
             transcript: { provider: { recallai_streaming: {} } },
             participant_events: {},
@@ -221,7 +223,7 @@ export const scheduleRecallBotTool = createTool({
     } catch (err) {
       if (err instanceof RecallAdhocPoolError) {
         throw new Error(
-          "Pool de bots ad-hoc esgotado (507). Tente novamente em ~30s, ou agende com join_at >10min no futuro.",
+          "Ad-hoc bot pool exhausted (507). Try again in ~30s, or schedule with join_at >10min in the future.",
         );
       }
       throw err;
@@ -245,13 +247,13 @@ export const scheduleRecallBotTool = createTool({
   },
 });
 
-/** Consulta o estado atual de um bot. */
+/** Checks a bot's current state. */
 export const getRecallBotTool = createTool({
   id: "get_recall_bot",
   description:
-    "Consulta o estado atual de um bot do Recall.ai (joining, in_call_recording, done, fatal, etc.) pelo seu ID.",
+    "Checks the current state of a Recall.ai bot (joining, in_call_recording, done, fatal, etc.) by its ID.",
   inputSchema: z.object({
-    botId: z.string().describe("UUID do bot"),
+    botId: z.string().describe("Bot UUID"),
   }),
   outputSchema: z.object({
     botId: z.string(),
@@ -272,21 +274,22 @@ export const getRecallBotTool = createTool({
 });
 
 /**
- * Lê a transcrição de um bot após a reunião.
+ * Reads a bot's transcript after the meeting.
  *
- * O transcript fica em recordings[].media_shortcuts.transcript. Quando pronto
- * (`status=done`), tem um `download_url` para um JSON com as falas — baixamos e
- * montamos um texto legível (participante: fala). Se ainda processando ou se o
- * bot não gravou com transcrição, retorna o estado correspondente.
+ * The transcript lives in recordings[].media_shortcuts.transcript. When
+ * ready (`status=done`), it has a `download_url` for a JSON with the
+ * speech — we download it and build a human-readable text (participant:
+ * speech). If still processing or if the bot didn't record with a
+ * transcript, returns the corresponding state.
  */
 export const getRecallTranscriptTool = createTool({
   id: "get_recall_transcript",
   description:
-    "Lê a transcrição de uma reunião gravada por um bot do Recall.ai, pelo botId. " +
-    "Retorna o texto da conversa (por participante) se já estiver pronta. " +
-    "Use após a reunião terminar e a gravação processar.",
+    "Reads the transcript of a meeting recorded by a Recall.ai bot, by botId. " +
+    "Returns the conversation text (per participant) if already ready. " +
+    "Use after the meeting ends and the recording finishes processing.",
   inputSchema: z.object({
-    botId: z.string().describe("UUID do bot que gravou a reunião"),
+    botId: z.string().describe("UUID of the bot that recorded the meeting"),
   }),
   outputSchema: z.object({
     botId: z.string(),
@@ -304,13 +307,13 @@ export const getRecallTranscriptTool = createTool({
   },
 });
 
-/** Lista as mídias gravadas de um bot (vídeo/áudio/transcript) e seus estados. */
+/** Lists a bot's recorded media (video/audio/transcript) and their states. */
 export const getRecallRecordingTool = createTool({
   id: "get_recall_recording",
   description:
-    "Lista as mídias gravadas de um bot do Recall.ai (vídeo, áudio, transcrição) e o estado de cada uma, com link de download quando pronto.",
+    "Lists a Recall.ai bot's recorded media (video, audio, transcript) and the state of each, with a download link when ready.",
   inputSchema: z.object({
-    botId: z.string().describe("UUID do bot"),
+    botId: z.string().describe("Bot UUID"),
   }),
   outputSchema: z.object({
     botId: z.string(),
@@ -351,25 +354,25 @@ export const getRecallRecordingTool = createTool({
 });
 
 /**
- * Resumo pós-reunião: pega a transcrição e gera resumo + decisões + tarefas.
+ * Post-meeting summary: takes the transcript and generates a summary + decisions + tasks.
  *
- * Lê a transcrição do bot (mesma fonte de get_transcript), passa para o LLM via
- * generateObject e devolve estrutura: resumo, decisões, action items (com dono
- * quando mencionado), tópicos. Se a transcrição não estiver pronta, retorna o
- * estado correspondente sem chamar o LLM.
+ * Reads the bot's transcript (same source as get_transcript), passes it to
+ * the LLM via generateObject and returns a structure: summary, decisions,
+ * action items (with owner when mentioned), topics. If the transcript isn't
+ * ready, returns the corresponding state without calling the LLM.
  */
 export const summarizeRecallMeetingTool = createTool({
   id: "summarize_recall_meeting",
   description:
-    "Gera um resumo da reunião a partir da transcrição de um bot do Recall.ai (pelo botId): " +
-    "resumo executivo, decisões tomadas, action items (tarefas com responsável quando citado) e tópicos. " +
-    "Use após a reunião terminar e a transcrição estar pronta.",
+    "Generates a meeting summary from the transcript of a Recall.ai bot (by botId): " +
+    "executive summary, decisions made, action items (tasks with an owner when mentioned), and topics. " +
+    "Use after the meeting ends and the transcript is ready.",
   inputSchema: z.object({
-    botId: z.string().describe("UUID do bot que gravou a reunião"),
+    botId: z.string().describe("UUID of the bot that recorded the meeting"),
     focus: z
       .string()
       .optional()
-      .describe('Foco opcional do resumo, ex: "decisões de produto", "próximos passos".'),
+      .describe('Optional summary focus, e.g. "product decisions", "next steps".'),
   }),
   outputSchema: z.object({
     botId: z.string(),
@@ -381,25 +384,26 @@ export const summarizeRecallMeetingTool = createTool({
       .optional(),
     topics: z.array(z.string()).optional(),
   }),
-  // Delega à função server reusável (mesma lógica usada pelo webhook de bot que
-  // gera a ata automática no fim da reunião).
+  // Delegates to the reusable server function (same logic used by the bot
+  // webhook that generates the automatic minutes at the end of the meeting).
   execute: async (input) => summarizeMeeting(input.botId, input.focus),
 });
 
 /**
- * Lista participantes e calcula tempo de fala da reunião.
+ * Lists participants and calculates meeting speaking time.
  *
- * Attendance vem do artefato participant_events (participants_download_url).
- * Tempo de fala é derivado da própria transcrição (soma de duração das palavras
- * por participante via timestamps), evitando depender de um segundo artefato.
+ * Attendance comes from the participant_events artifact (participants_download_url).
+ * Speaking time is derived from the transcript itself (sum of word
+ * durations per participant via timestamps), avoiding a dependency on a
+ * second artifact.
  */
 export const getRecallParticipantsTool = createTool({
   id: "get_recall_participants",
   description:
-    "Lista os participantes de uma reunião gravada por um bot do Recall.ai (pelo botId) e o tempo de fala de cada um. " +
-    "Use após a reunião para ver quem participou e quem mais falou.",
+    "Lists the participants of a meeting recorded by a Recall.ai bot (by botId) and each person's speaking time. " +
+    "Use after the meeting to see who attended and who talked the most.",
   inputSchema: z.object({
-    botId: z.string().describe("UUID do bot que gravou a reunião"),
+    botId: z.string().describe("UUID of the bot that recorded the meeting"),
   }),
   outputSchema: z.object({
     botId: z.string(),
@@ -426,21 +430,21 @@ export const getRecallParticipantsTool = createTool({
       return { botId: bot.id, state: "processing" as const };
     }
 
-    // Attendance: lista de participantes do artefato.
+    // Attendance: list of participants from the artifact.
     const peRes = await fetch(peUrl);
     const rawParticipants = (await peRes.json()) as Array<{
       name?: string | null;
       is_host?: boolean | null;
     }>;
 
-    // Tempo de fala derivado da transcrição (duração das palavras por nome).
+    // Speaking time derived from the transcript (word duration per name).
     const speaking = new Map<string, number>();
     const transcript = bot.recordings?.[0]?.media_shortcuts?.transcript;
     if (transcript?.status?.code === "done" && transcript.data?.download_url) {
       const tRes = await fetch(transcript.data.download_url);
       const segments = (await tRes.json()) as TranscriptSegment[];
       for (const seg of segments) {
-        const who = seg.participant?.name ?? "Desconhecido";
+        const who = seg.participant?.name ?? "Unknown";
         const words = seg.words ?? [];
         const start = words[0]?.start_timestamp?.relative;
         const end = words[words.length - 1]?.end_timestamp?.relative;
@@ -450,13 +454,13 @@ export const getRecallParticipantsTool = createTool({
       }
     }
 
-    // Dedup por nome (re-joins criam duplicatas) e junta com speaking time.
+    // Dedup by name (re-joins create duplicates) and merges with speaking time.
     const byName = new Map<string, { isHost: boolean | null }>();
     for (const p of rawParticipants) {
-      const name = p.name ?? "Desconhecido";
+      const name = p.name ?? "Unknown";
       if (!byName.has(name)) byName.set(name, { isHost: p.is_host ?? null });
     }
-    // Garante quem falou mas não apareceu na lista (raro).
+    // Ensures anyone who spoke but didn't appear in the list is included (rare).
     for (const name of speaking.keys()) {
       if (!byName.has(name)) byName.set(name, { isHost: null });
     }
@@ -473,16 +477,16 @@ export const getRecallParticipantsTool = createTool({
   },
 });
 
-/** Lista bots agendados para o futuro. */
+/** Lists bots scheduled for the future. */
 export const listScheduledRecallBotsTool = createTool({
   id: "list_scheduled_recall_bots",
   description:
-    "Lista os bots do Recall.ai agendados para entrar em reuniões a partir de um horário (default: agora).",
+    "Lists Recall.ai bots scheduled to join meetings from a given time onward (default: now).",
   inputSchema: z.object({
     joinAtAfter: z.iso
       .datetime()
       .optional()
-      .describe("ISO 8601. Default: agora. Lista bots com join_at após este horário."),
+      .describe("ISO 8601. Default: now. Lists bots with join_at after this time."),
   }),
   outputSchema: z.object({
     count: z.number(),
@@ -511,26 +515,26 @@ export const listScheduledRecallBotsTool = createTool({
 });
 
 /**
- * Cancela/remove um bot.
- * - Scheduled e ainda não entrou (>10min) → DELETE (desagenda).
- * - Já entrando / em call → leave_call (remove da call).
- * O parâmetro `force` força leave_call independente do estado.
+ * Cancels/removes a bot.
+ * - Scheduled and hasn't joined yet (>10min) → DELETE (unschedules).
+ * - Already joining / in call → leave_call (removes from the call).
+ * The `force` parameter forces leave_call regardless of state.
  */
 export const cancelRecallBotTool = createTool({
   id: "cancel_recall_bot",
   description:
-    "Cancela um bot agendado ou remove um bot que já está numa call do Recall.ai. " +
-    "Use para desistir de uma reunião ou tirar o bot de uma call em andamento.",
+    "Cancels a scheduled bot or removes a bot that's already in a Recall.ai call. " +
+    "Use it to back out of a meeting or to remove the bot from an ongoing call.",
   inputSchema: z.object({
-    botId: z.string().describe("UUID do bot"),
+    botId: z.string().describe("Bot UUID"),
     dedupKey: z
       .string()
       .optional()
-      .describe("Se informado, limpa o mapeamento de dedup do app."),
+      .describe("If provided, clears the app's dedup mapping."),
     force: z
       .boolean()
       .optional()
-      .describe("true força leave_call (remover da call) em vez de desagendar."),
+      .describe("true forces leave_call (removing from the call) instead of unscheduling."),
   }),
   outputSchema: z.object({
     ok: z.boolean(),
@@ -546,7 +550,7 @@ export const cancelRecallBotTool = createTool({
       });
       action = "left_call";
     } else {
-      // Tenta desagendar; se o bot já entrou (Recall recusa o DELETE), cai p/ leave_call.
+      // Tries to unschedule; if the bot already joined (Recall refuses the DELETE), falls back to leave_call.
       try {
         await recallFetch({ method: "DELETE", path: `v1/bot/${input.botId}/` });
         action = "unscheduled";
@@ -565,23 +569,23 @@ export const cancelRecallBotTool = createTool({
 });
 
 /**
- * Inicia a gravação de um bot que já está na call.
+ * Starts recording for a bot that's already in the call.
  *
- * O bot deste app entra SEM gravar (start_recording_on padrão não aplicado na
- * criação); a gravação começa quando o usuário pede via chat. Reinicia a
- * gravação atual se já houver uma.
+ * This app's bot joins WITHOUT recording (start_recording_on default is not
+ * applied on creation); recording starts when the user asks via chat.
+ * Restarts the current recording if there already is one.
  */
 export const startRecallRecordingTool = createTool({
   id: "start_recall_recording",
   description:
-    "Inicia a gravação de um bot do Recall.ai que já está na reunião. " +
-    "Por padrão captura também a transcrição (Recall.ai Transcription). Reinicia se já estava gravando.",
+    "Starts recording for a Recall.ai bot that's already in the meeting. " +
+    "By default it also captures the transcript (Recall.ai Transcription). Restarts if it was already recording.",
   inputSchema: z.object({
-    botId: z.string().describe("UUID do bot (deve estar na call)"),
+    botId: z.string().describe("Bot UUID (must be in the call)"),
     transcribe: z
       .boolean()
       .optional()
-      .describe("Capturar transcrição. Default: true."),
+      .describe("Capture transcript. Default: true."),
   }),
   outputSchema: z.object({ ok: z.boolean() }),
   execute: async (input) => {
@@ -597,13 +601,13 @@ export const startRecallRecordingTool = createTool({
   },
 });
 
-/** Para a gravação em andamento de um bot. */
+/** Stops a bot's ongoing recording. */
 export const stopRecallRecordingTool = createTool({
   id: "stop_recall_recording",
   description:
-    "Para a gravação em andamento de um bot do Recall.ai. O bot continua na call.",
+    "Stops a Recall.ai bot's ongoing recording. The bot stays in the call.",
   inputSchema: z.object({
-    botId: z.string().describe("UUID do bot"),
+    botId: z.string().describe("Bot UUID"),
   }),
   outputSchema: z.object({ ok: z.boolean() }),
   execute: async (input) => {
@@ -615,12 +619,12 @@ export const stopRecallRecordingTool = createTool({
   },
 });
 
-/** Pausa a gravação (retomável com resume). */
+/** Pauses the recording (resumable with resume). */
 export const pauseRecallRecordingTool = createTool({
   id: "pause_recall_recording",
   description:
-    "Pausa a gravação de um bot do Recall.ai sem encerrá-la. Retome depois com resume_recall_recording.",
-  inputSchema: z.object({ botId: z.string().describe("UUID do bot") }),
+    "Pauses a Recall.ai bot's recording without ending it. Resume later with resume_recall_recording.",
+  inputSchema: z.object({ botId: z.string().describe("Bot UUID") }),
   outputSchema: z.object({ ok: z.boolean() }),
   execute: async (input) => {
     await recallFetch({
@@ -631,11 +635,11 @@ export const pauseRecallRecordingTool = createTool({
   },
 });
 
-/** Retoma uma gravação pausada. */
+/** Resumes a paused recording. */
 export const resumeRecallRecordingTool = createTool({
   id: "resume_recall_recording",
-  description: "Retoma uma gravação pausada de um bot do Recall.ai.",
-  inputSchema: z.object({ botId: z.string().describe("UUID do bot") }),
+  description: "Resumes a paused recording for a Recall.ai bot.",
+  inputSchema: z.object({ botId: z.string().describe("Bot UUID") }),
   outputSchema: z.object({ ok: z.boolean() }),
   execute: async (input) => {
     await recallFetch({
@@ -646,18 +650,18 @@ export const resumeRecallRecordingTool = createTool({
   },
 });
 
-/** Faz o bot enviar uma mensagem no chat da reunião (Zoom/Meet/Teams). */
+/** Makes the bot send a message in the meeting chat (Zoom/Meet/Teams). */
 export const sendRecallChatMessageTool = createTool({
   id: "send_recall_chat_message",
   description:
-    "Faz o bot do Recall.ai enviar uma mensagem no chat da reunião. Suportado em Zoom, Google Meet e Microsoft Teams.",
+    "Makes the Recall.ai bot send a message in the meeting chat. Supported on Zoom, Google Meet, and Microsoft Teams.",
   inputSchema: z.object({
-    botId: z.string().describe("UUID do bot (deve estar na call)"),
-    message: z.string().describe("Texto da mensagem"),
+    botId: z.string().describe("Bot UUID (must be in the call)"),
+    message: z.string().describe("Message text"),
     to: z
       .string()
       .optional()
-      .describe('Destinatário. Em plataformas não-Zoom só "everyone" é suportado.'),
+      .describe('Recipient. On non-Zoom platforms only "everyone" is supported.'),
   }),
   outputSchema: z.object({ ok: z.boolean() }),
   execute: async (input) => {
@@ -673,12 +677,12 @@ export const sendRecallChatMessageTool = createTool({
   },
 });
 
-/** Faz o bot começar a compartilhar tela (output screenshare). */
+/** Makes the bot start sharing its screen (output screenshare). */
 export const startRecallScreenshareTool = createTool({
   id: "start_recall_screenshare",
   description:
-    "Faz o bot do Recall.ai começar a compartilhar tela na reunião. Use stop_recall_screenshare para parar.",
-  inputSchema: z.object({ botId: z.string().describe("UUID do bot na call") }),
+    "Makes the Recall.ai bot start sharing its screen in the meeting. Use stop_recall_screenshare to stop.",
+  inputSchema: z.object({ botId: z.string().describe("Bot UUID in the call") }),
   outputSchema: z.object({ ok: z.boolean() }),
   execute: async (input) => {
     await recallFetch({
@@ -689,11 +693,11 @@ export const startRecallScreenshareTool = createTool({
   },
 });
 
-/** Para o compartilhamento de tela do bot. */
+/** Stops the bot's screenshare. */
 export const stopRecallScreenshareTool = createTool({
   id: "stop_recall_screenshare",
-  description: "Para o compartilhamento de tela de um bot do Recall.ai.",
-  inputSchema: z.object({ botId: z.string().describe("UUID do bot") }),
+  description: "Stops a Recall.ai bot's screenshare.",
+  inputSchema: z.object({ botId: z.string().describe("Bot UUID") }),
   outputSchema: z.object({ ok: z.boolean() }),
   execute: async (input) => {
     await recallFetch({
@@ -705,19 +709,19 @@ export const stopRecallScreenshareTool = createTool({
 });
 
 /**
- * Faz o bot tocar um clipe de áudio na call (output_audio).
+ * Makes the bot play an audio clip in the call (output_audio).
  *
- * Para tons/alertas/avisos curtos — NÃO para fala conversacional. Requer bot
- * criado com `automatic_audio_output` habilitado. `b64Data` é mp3 em base64.
+ * For short tones/alerts/notices — NOT for conversational speech. Requires
+ * a bot created with `automatic_audio_output` enabled. `b64Data` is base64-encoded mp3.
  */
 export const outputRecallAudioTool = createTool({
   id: "output_recall_audio",
   description:
-    "Faz o bot do Recall.ai tocar um clipe de áudio mp3 (base64) na reunião — alertas/tons/avisos curtos. " +
-    "Requer bot com automatic_audio_output habilitado.",
+    "Makes the Recall.ai bot play an mp3 audio clip (base64) in the meeting — short alerts/tones/notices. " +
+    "Requires a bot with automatic_audio_output enabled.",
   inputSchema: z.object({
-    botId: z.string().describe("UUID do bot na call"),
-    b64Data: z.string().describe("Áudio mp3 codificado em base64 (alfabeto padrão)"),
+    botId: z.string().describe("Bot UUID in the call"),
+    b64Data: z.string().describe("Mp3 audio encoded in base64 (standard alphabet)"),
   }),
   outputSchema: z.object({ ok: z.boolean() }),
   execute: async (input) => {
@@ -730,14 +734,14 @@ export const outputRecallAudioTool = createTool({
   },
 });
 
-/** Faz o bot exibir uma imagem (jpeg base64) como vídeo na call. */
+/** Makes the bot display an image (base64 jpeg) as video in the call. */
 export const outputRecallVideoTool = createTool({
   id: "output_recall_video",
   description:
-    "Faz o bot do Recall.ai exibir uma imagem jpeg (base64, 16:9) como saída de vídeo na reunião.",
+    "Makes the Recall.ai bot display a jpeg image (base64, 16:9) as video output in the meeting.",
   inputSchema: z.object({
-    botId: z.string().describe("UUID do bot na call"),
-    b64Data: z.string().describe("Imagem jpeg codificada em base64 (16:9)"),
+    botId: z.string().describe("Bot UUID in the call"),
+    b64Data: z.string().describe("Jpeg image encoded in base64 (16:9)"),
   }),
   outputSchema: z.object({ ok: z.boolean() }),
   execute: async (input) => {

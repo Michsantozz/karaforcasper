@@ -155,13 +155,13 @@ export const prepareMultisigPaymentRequestTool = createTool({
   },
 });
 
-// Leitura do estado de uma solicitação (progresso de assinaturas).
+// Reads the state of a request (signature progress).
 export const getSignatureRequestTool = createTool({
   id: "get_signature_request",
   description:
-    "Consulta o estado de uma solicitação multisig pelo id: progresso (quem assinou / quem falta), quórum e status. Use para acompanhar uma coleta de assinaturas em andamento.",
+    "Checks the state of a multisig request by id: progress (who signed / who's pending), quorum and status. Use it to track an ongoing signature collection.",
   inputSchema: z.object({
-    id: z.string().describe("ID da solicitação (slug do link /sign/:id)"),
+    id: z.string().describe("Request ID (slug of the /sign/:id link)"),
   }),
   outputSchema: z.object({
     id: z.string(),
@@ -176,7 +176,7 @@ export const getSignatureRequestTool = createTool({
   }),
   execute: async (input) => {
     const state = await getSignatureRequestState(input.id);
-    if (!state) throw new Error("Solicitação não encontrada.");
+    if (!state) throw new Error("Request not found.");
     return {
       id: state.request.id,
       status: state.request.status,
@@ -191,11 +191,11 @@ export const getSignatureRequestTool = createTool({
   },
 });
 
-// "Aguardando minha assinatura" — match das carteiras do usuário da sessão.
+// "Awaiting my signature" — matches the session user's wallets.
 export const listMyPendingSignaturesTool = createTool({
   id: "list_my_pending_signatures",
   description:
-    "Lista as solicitações multisig que aguardam a assinatura do usuário atual (match pelas carteiras vinculadas à conta). Use quando o usuário perguntar 'o que preciso assinar?'. Retorna cada uma com o link /sign/:id.",
+    "Lists the multisig requests awaiting the current user's signature (matched by the wallets linked to the account). Use it when the user asks 'what do I need to sign?'. Returns each one with its /sign/:id link.",
   inputSchema: z.object({}),
   outputSchema: z.object({
     pending: z.array(
