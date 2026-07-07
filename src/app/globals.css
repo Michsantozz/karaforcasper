@@ -6,7 +6,7 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -39,9 +39,25 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+
+  /* EvilCharts — frame, accents categóricos, composer radius */
+  --thread-frame-outer: oklch(0.96 0 0);
+  --thread-accent-primary: oklch(0.5 0.13 165);
+  --thread-accent-primary-soft: oklch(0.5 0.13 165 / 12%);
+  --thread-accent-secondary: oklch(0.5 0.2 12);
+  --thread-accent-secondary-soft: oklch(0.5 0.2 12 / 12%);
+  --composer-radius: 5px;
+  --composer-bg: var(--background);
+  --composer-padding: 0.5rem;
 }
 
 @theme inline {
+  --font-mono: var(--font-mono);
+  --color-thread-frame-outer: var(--thread-frame-outer);
+  --color-thread-accent-primary: var(--thread-accent-primary);
+  --color-thread-accent-primary-soft: var(--thread-accent-primary-soft);
+  --color-thread-accent-secondary: var(--thread-accent-secondary);
+  --color-thread-accent-secondary-soft: var(--thread-accent-secondary-soft);
   --font-heading: var(--font-sans);
   --font-sans: var(--font-sans);
   --color-sidebar-ring: var(--sidebar-ring);
@@ -85,6 +101,7 @@
 }
 
 .dark {
+  color-scheme: dark;
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);
@@ -116,6 +133,13 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+
+  /* EvilCharts dark */
+  --thread-frame-outer: oklch(0.22 0 0);
+  --thread-accent-primary: oklch(0.72 0.17 162);
+  --thread-accent-primary-soft: oklch(0.72 0.17 162 / 18%);
+  --thread-accent-secondary: oklch(0.68 0.21 16);
+  --thread-accent-secondary-soft: oklch(0.68 0.21 16 / 18%);
 }
 
 @layer base {

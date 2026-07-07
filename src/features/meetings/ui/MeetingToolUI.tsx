@@ -1,0 +1,811 @@
+"use client";
+
+import {
+  CalendarPlusIcon,
+  VideoIcon,
+  CircleIcon,
+  SquareIcon,
+  PauseIcon,
+  PlayIcon,
+  CalendarSearchIcon,
+  CalendarCheckIcon,
+  CalendarXIcon,
+  BotIcon,
+  FileTextIcon,
+  ExternalLinkIcon,
+  LoaderIcon,
+  CheckIcon,
+  ListChecksIcon,
+  UsersIcon,
+  ShieldCheckIcon,
+  CoinsIcon,
+  type LucideIcon,
+} from "lucide-react";
+import { makeAssistantToolUI, useThreadRuntime } from "@assistant-ui/react";
+import { cn } from "@/shared/lib/utils";
+
+/**
+ * ToolUIs do agente de reuniões — cards visuais que SUBSTITUEM o JSON cru das
+ * tool-calls. Cada uma mapeia uma tool local (create_calendar_event, bots,
+ * gravação, agenda) para um card com o que o usuário precisa ver.
+ *
+ * Registradas no AssistantRuntimeProvider do MeetingAssistant. Sem registro, a
+ * tool cai no ToolFallback (JSON). Com registro, o usuário vê só o essencial.
+ */
+
+function shortId(id: string) {
+  return id.length > 12 ? `${id.slice(0, 6)}…${id.slice(-4)}` : id;
+}
+
+/** Encurta uma URL de reunião para "host/id" legível, sem truncar no meio. */
+function shortMeetUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    const id = u.pathname.replace(/^\/+/, "").split("/")[0] || "";
+    return id ? `${u.host}/${id}` : u.host;
+  } catch {
+    return url.length > 40 ? `${url.slice(0, 37)}…` : url;
+  }
+}
+
+/** Formata um ISO em "dd/mm HH:MM" no fuso local do browser. */
+function fmtTime(iso: string | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+/* ── create_calendar_event ─────────────────────────────────────────── */
+
+export const CreateEventToolUI = makeAssistantToolUI<
+  { summary: string; startIso: string; endIso: string; sendBot?: boolean },
+  {
+    ok: boolean;
+    eventId: string;
+    htmlLink: string;
+    meetingUrl: string | null;
+    botId: string | null;
+  }
+>({
+  toolName: "create_calendar_event",
+  render: ({ args, result, status }) => {
+    if (status.type === "running")
+      return (
+        <ToolCard
+          icon={CalendarPlusIcon}
+          label="criar reunião"
+          running
+          meta={args.summary}
+        />
+      );
+    if (!result?.ok) return null;
+    return (
+      <ToolCard icon={CalendarPlusIcon} label="reunião criada" tone="success">
+        <Row k="título" v={args.summary} />
+        <Row k="início" v={fmtTime(args.startIso)} />
+        <Row k="término" v={fmtTime(args.endIso)} />
+        {result.botId ? (
+          <Row k="bot" v={`gravando · ${shortId(result.botId)}`} />
+        ) : null}
+        {result.meetingUrl ? (
+          <>
+            <Dashed />
+            <LinkRow
+              icon={VideoIcon}
+              label="entrar no google meet"
+              href={result.meetingUrl}
+            />
+          </>
+        ) : null}
+        {result.htmlLink ? (
+          <LinkRow
+            icon={ExternalLinkIcon}
+            label="abrir no calendário"
+            href={result.htmlLink}
+          />
+        ) : null}
+      </ToolCard>
+    );
+  },
+});
+
+/* ── send_bot_to_meeting ───────────────────────────────────────────── */
+
+export const SendBotToolUI = makeAssistantToolUI<
+  { meetingUrl: string; botName?: string; joinAt?: string },
+  { ok: boolean; botId: string; reused: boolean; scheduled: boolean }
+>({
+  toolName: "send_bot_to_meeting",
+  render: ({ args, result, status }) => {
+    if (status.type === "running")
+      return (
+        <ToolCard
+          icon={BotIcon}
+          label="enviar bot"
+          running
+          meta={shortMeetUrl(args.meetingUrl)}
+        />
+      );
+    if (!result?.ok) return null;
+    return (
+      <ToolCard
+        icon={BotIcon}
+        label={result.scheduled ? "bot agendado" : "bot enviado"}
+        tone="success"
+        meta={result.reused ? "reutilizado" : undefined}
+      >
+        <Row k="reunião" v={shortMeetUrl(args.meetingUrl)} />
+        {args.joinAt ? <Row k="entra em" v={fmtTime(args.joinAt)} /> : null}
+        <Row k="bot" v={shortId(result.botId)} />
+        <Row k="gravação" v="aguardando comando" />
+      </ToolCard>
+    );
+  },
+});
+
+/* ── recording: start / stop / pause / resume ──────────────────────── */
+
+function makeRecordingUI(
+  toolName: string,
+  label: string,
+  icon: LucideIcon,
+  tone: Tone,
+) {
+  return makeAssistantToolUI<{ botId: string }, { ok: boolean }>({
+    toolName,
+    render: ({ result, status }) => {
+      if (status.type === "running")
+        return <ToolCard icon={icon} label={label} running />;
+      if (!result?.ok) return null;
+      return <ToolCard icon={icon} label={label} tone={tone} meta="ok" />;
+    },
+  });
+}
+
+export const StartRecordingToolUI = makeRecordingUI(
+  "start_recording",
+  "gravação iniciada",
+  CircleIcon,
+  "success",
+);
+export const StopRecordingToolUI = makeRecordingUI(
+  "stop_recording",
+  "gravação parada",
+  SquareIcon,
+  "default",
+);
+export const PauseRecordingToolUI = makeRecordingUI(
+  "pause_recording",
+  "gravação pausada",
+  PauseIcon,
+  "caution",
+);
+export const ResumeRecordingToolUI = makeRecordingUI(
+  "resume_recording",
+  "gravação retomada",
+  PlayIcon,
+  "success",
+);
+
+/* ── remove_bot ────────────────────────────────────────────────────── */
+
+export const RemoveBotToolUI = makeAssistantToolUI<
+  { botId: string },
+  { ok: boolean; action: "unscheduled" | "left_call" }
+>({
+  toolName: "remove_bot",
+  render: ({ result, status }) => {
+    if (status.type === "running")
+      return <ToolCard icon={CalendarXIcon} label="remover bot" running />;
+    if (!result?.ok) return null;
+    const meta =
+      result.action === "left_call" ? "saiu da call" : "desagendado";
+    return <ToolCard icon={CalendarXIcon} label="bot removido" meta={meta} />;
+  },
+});
+
+/* ── list_calendar_events ──────────────────────────────────────────── */
+
+type EventRow = {
+  eventId: string;
+  startTime: string;
+  meetingUrl: string | null;
+  platform: string | null;
+  scheduledBots: number;
+};
+
+export const ListEventsToolUI = makeAssistantToolUI<
+  Record<string, never>,
+  { count: number; events: EventRow[] }
+>({
+  toolName: "list_calendar_events",
+  render: ({ result, status }) => {
+    if (status.type === "running")
+      return <ToolCard icon={CalendarSearchIcon} label="buscar eventos" running />;
+    if (!result) return null;
+    // events pode chegar undefined (resposta parcial durante streaming ou erro
+    // do tool); normaliza antes de qualquer .slice/.length.
+    const events = result.events ?? [];
+    if (result.count === 0 || events.length === 0)
+      return (
+        <ToolCard
+          icon={CalendarSearchIcon}
+          label="próximos eventos"
+          meta="nenhum"
+        />
+      );
+    return (
+      <ToolCard
+        icon={CalendarSearchIcon}
+        label="próximos eventos"
+        meta={`${result.count}`}
+      >
+        {events.slice(0, 8).map((e) => (
+          <div
+            key={e.eventId}
+            className="flex items-center gap-2 rounded-[5px] border bg-background px-2.5 py-1.5"
+          >
+            <CalendarCheckIcon className="size-3 shrink-0 text-(--thread-accent-primary)" />
+            <span className="min-w-0 flex-1 truncate font-mono text-xs">
+              {fmtTime(e.startTime)}
+            </span>
+            {e.meetingUrl ? (
+              <span className="font-mono text-[10px] text-muted-foreground">
+                {e.platform ?? "meet"}
+              </span>
+            ) : null}
+            {e.scheduledBots > 0 ? (
+              <span className="inline-flex items-center gap-1 rounded-[4px] bg-(--thread-accent-primary-soft) px-1.5 py-0.5 font-mono text-[10px] text-(--thread-accent-primary)">
+                <BotIcon className="size-2.5" />
+                {e.scheduledBots}
+              </span>
+            ) : null}
+          </div>
+        ))}
+      </ToolCard>
+    );
+  },
+});
+
+/* ── schedule_bot_for_event / remove_bot_from_event ────────────────── */
+
+export const ScheduleEventBotToolUI = makeAssistantToolUI<
+  { eventId: string },
+  { ok: boolean; eventId: string; scheduledBots: number }
+>({
+  toolName: "schedule_bot_for_event",
+  render: ({ result, status }) => {
+    if (status.type === "running")
+      return <ToolCard icon={CalendarCheckIcon} label="agendar bot no evento" running />;
+    if (!result?.ok) return null;
+    return (
+      <ToolCard
+        icon={CalendarCheckIcon}
+        label="bot agendado no evento"
+        tone="success"
+        meta={`${result.scheduledBots} bot(s)`}
+      />
+    );
+  },
+});
+
+export const RemoveEventBotToolUI = makeAssistantToolUI<
+  { eventId: string },
+  { ok: boolean; eventId: string }
+>({
+  toolName: "remove_bot_from_event",
+  render: ({ result, status }) => {
+    if (status.type === "running")
+      return <ToolCard icon={CalendarXIcon} label="remover bot do evento" running />;
+    if (!result?.ok) return null;
+    return <ToolCard icon={CalendarXIcon} label="bot removido do evento" />;
+  },
+});
+
+/* ── get_transcript ────────────────────────────────────────────────── */
+
+export const TranscriptToolUI = makeAssistantToolUI<
+  { botId: string },
+  {
+    botId: string;
+    state: "ready" | "processing" | "none";
+    transcript: string | null;
+    speakers?: string[];
+  }
+>({
+  toolName: "get_transcript",
+  render: ({ result, status }) => {
+    if (status.type === "running")
+      return <ToolCard icon={FileTextIcon} label="ler transcrição" running />;
+    if (!result) return null;
+    if (result.state === "processing")
+      return (
+        <ToolCard
+          icon={FileTextIcon}
+          label="transcrição"
+          meta="processando…"
+        />
+      );
+    if (result.state === "none" || !result.transcript)
+      return (
+        <ToolCard icon={FileTextIcon} label="transcrição" meta="indisponível" />
+      );
+    return (
+      <ToolCard
+        icon={FileTextIcon}
+        label="transcrição"
+        tone="success"
+        meta={
+          result.speakers?.length
+            ? `${result.speakers.length} participante(s)`
+            : undefined
+        }
+      >
+        <pre className="max-h-64 overflow-y-auto whitespace-pre-wrap font-mono text-xs leading-relaxed text-foreground/90">
+          {result.transcript}
+        </pre>
+      </ToolCard>
+    );
+  },
+});
+
+/* ── get_recording ─────────────────────────────────────────────────── */
+
+type MediaRow = {
+  kind: string;
+  status: string | null;
+  downloadUrl: string | null;
+};
+
+export const RecordingToolUI = makeAssistantToolUI<
+  { botId: string },
+  { botId: string; recordingStatus: string | null; media: MediaRow[] }
+>({
+  toolName: "get_recording",
+  render: ({ result, status }) => {
+    if (status.type === "running")
+      return <ToolCard icon={VideoIcon} label="buscar gravação" running />;
+    if (!result) return null;
+    const labels: Record<string, string> = {
+      video_mixed: "vídeo",
+      audio_mixed: "áudio",
+      transcript: "transcrição",
+    };
+    return (
+      <ToolCard
+        icon={VideoIcon}
+        label="gravação"
+        meta={result.recordingStatus ?? undefined}
+      >
+        {result.media.map((m) => (
+          <div
+            key={m.kind}
+            className="flex items-center justify-between gap-3 rounded-[5px] border bg-background px-2.5 py-1.5"
+          >
+            <span className="font-mono text-[11px] text-muted-foreground uppercase tracking-wider">
+              {labels[m.kind] ?? m.kind}
+            </span>
+            {m.downloadUrl ? (
+              <a
+                href={m.downloadUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 font-mono text-[11px] text-(--thread-accent-primary) hover:underline"
+              >
+                <ExternalLinkIcon className="size-3" />
+                baixar
+              </a>
+            ) : (
+              <span className="font-mono text-[10px] text-muted-foreground">
+                {m.status ?? "—"}
+              </span>
+            )}
+          </div>
+        ))}
+      </ToolCard>
+    );
+  },
+});
+
+/* ── summarize_meeting ─────────────────────────────────────────────── */
+
+type ActionItem = { task: string; owner: string | null };
+
+type SummaryResult = {
+  botId: string;
+  state: "ready" | "processing" | "none";
+  summary: string | null;
+  decisions?: string[];
+  actionItems?: ActionItem[];
+  topics?: string[];
+};
+
+/** Heurística leve: a linha parece um pagamento (tem valor + CSPR)? */
+function looksLikePayment(text: string): boolean {
+  return /\b\d[\d.,]*\s*(cspr|casper)\b/i.test(text);
+}
+
+/**
+ * Card da ata — agora ACIONÁVEL. Além de mostrar resumo/decisões/tarefas, oferece
+ * os próximos passos on-chain no exato momento de maior intenção (logo após a
+ * ata): "Notarizar ata" (prova imutável) e, em decisões/tarefas que parecem
+ * pagamento, "Pagar via multisig". Os botões empurram uma instrução em linguagem
+ * natural para o agente (thread.append) — o agente já tem as tools notarize_meeting
+ * e prepare_multisig_payment; aqui só disparamos a intenção no contexto certo.
+ */
+function SummaryCard({ result }: { result: SummaryResult }) {
+  const thread = useThreadRuntime();
+
+  function ask(message: string) {
+    thread.append({ role: "user", content: [{ type: "text", text: message }] });
+  }
+
+  const notarize = () =>
+    ask(
+      `Notarize a ata desta reunião (botId ${result.botId}) on-chain com notarize_meeting. ` +
+        `Use o resumo e as decisões desta ata como record. Ao final, me informe o meetingHash, o transactionHash e o explorerUrl.`,
+    );
+
+  const payViaMultisig = (item: string) =>
+    ask(
+      `A partir desta decisão da reunião: "${item}". ` +
+        `Prepare um pagamento multisig com prepare_multisig_payment. ` +
+        `Pergunte-me o endereço de destino, o valor exato em CSPR e as public keys dos signatários antes de montar.`,
+    );
+
+  return (
+    <ToolCard icon={ListChecksIcon} label="resumo da reunião" tone="success">
+      <p className="text-sm leading-relaxed text-foreground/90">
+        {result.summary}
+      </p>
+
+      {result.decisions?.length ? (
+        <>
+          <Dashed />
+          <SectionTitle>decisões</SectionTitle>
+          <ul className="flex flex-col gap-1.5">
+            {result.decisions.map((d, i) => (
+              <li
+                key={i}
+                className="flex items-start justify-between gap-3 rounded-[5px] border bg-background px-2.5 py-1.5"
+              >
+                <span className="flex min-w-0 flex-1 gap-2 text-sm">
+                  <CheckIcon className="mt-0.5 size-3.5 shrink-0 text-(--thread-accent-primary)" />
+                  <span className="min-w-0">{d}</span>
+                </span>
+                {looksLikePayment(d) ? (
+                  <ActionButton
+                    icon={CoinsIcon}
+                    label="Pagar via multisig"
+                    onClick={() => payViaMultisig(d)}
+                  />
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
+
+      {result.actionItems?.length ? (
+        <>
+          <Dashed />
+          <SectionTitle>tarefas</SectionTitle>
+          <ul className="flex flex-col gap-1.5">
+            {result.actionItems.map((a, i) => (
+              <li
+                key={i}
+                className="flex items-start justify-between gap-3 rounded-[5px] border bg-background px-2.5 py-1.5"
+              >
+                <span className="min-w-0 flex-1 text-sm">{a.task}</span>
+                <span className="flex shrink-0 items-center gap-1.5">
+                  {looksLikePayment(a.task) ? (
+                    <ActionButton
+                      icon={CoinsIcon}
+                      label="Pagar via multisig"
+                      onClick={() => payViaMultisig(a.task)}
+                    />
+                  ) : null}
+                  {a.owner ? (
+                    <span className="rounded-[4px] bg-(--thread-accent-primary-soft) px-1.5 py-0.5 font-mono text-[10px] text-(--thread-accent-primary)">
+                      {a.owner}
+                    </span>
+                  ) : null}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
+
+      {result.topics?.length ? (
+        <>
+          <Dashed />
+          <div className="flex flex-wrap gap-1.5">
+            {result.topics.map((t, i) => (
+              <span
+                key={i}
+                className="rounded-[4px] border bg-background px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
+              >
+                {t}
+              </span>
+            ))}
+          </div>
+        </>
+      ) : null}
+
+      {/* CTA principal: selar a ata inteira on-chain (prova imutável). */}
+      <Dashed />
+      <button
+        type="button"
+        onClick={notarize}
+        className="inline-flex items-center justify-center gap-2 rounded-[6px] bg-(--thread-accent-primary) px-3 py-2 font-mono text-sm text-background transition-colors hover:opacity-90"
+      >
+        <ShieldCheckIcon className="size-3.5" />
+        Notarizar ata on-chain
+      </button>
+    </ToolCard>
+  );
+}
+
+export const SummarizeToolUI = makeAssistantToolUI<
+  { botId: string; focus?: string },
+  SummaryResult
+>({
+  toolName: "summarize_meeting",
+  render: ({ result, status }) => {
+    if (status.type === "running")
+      return <ToolCard icon={ListChecksIcon} label="resumir reunião" running />;
+    if (!result) return null;
+    if (result.state === "processing")
+      return (
+        <ToolCard icon={ListChecksIcon} label="resumo" meta="processando…" />
+      );
+    if (result.state === "none" || !result.summary)
+      return (
+        <ToolCard icon={ListChecksIcon} label="resumo" meta="indisponível" />
+      );
+    return <SummaryCard result={result} />;
+  },
+});
+
+/** Botão de ação compacto reusado nas linhas da ata. */
+function ActionButton({
+  icon: Icon,
+  label,
+  onClick,
+}: {
+  icon: LucideIcon;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex shrink-0 items-center gap-1 rounded-[4px] border border-(--thread-accent-primary)/40 bg-(--thread-accent-primary-soft) px-1.5 py-0.5 font-mono text-[10px] text-(--thread-accent-primary) transition-colors hover:bg-(--thread-accent-primary) hover:text-background"
+    >
+      <Icon className="size-3" />
+      {label}
+    </button>
+  );
+}
+
+/* ── get_participants ──────────────────────────────────────────────── */
+
+type ParticipantRow = {
+  name: string;
+  isHost: boolean | null;
+  speakingSeconds: number;
+};
+
+function fmtDuration(s: number): string {
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return rem ? `${m}m ${rem}s` : `${m}m`;
+}
+
+export const ParticipantsToolUI = makeAssistantToolUI<
+  { botId: string },
+  {
+    botId: string;
+    state: "ready" | "processing" | "none";
+    participants?: ParticipantRow[];
+  }
+>({
+  toolName: "get_participants",
+  render: ({ result, status }) => {
+    if (status.type === "running")
+      return <ToolCard icon={UsersIcon} label="ver participantes" running />;
+    if (!result) return null;
+    if (result.state !== "ready" || !result.participants?.length)
+      return (
+        <ToolCard
+          icon={UsersIcon}
+          label="participantes"
+          meta={result.state === "processing" ? "processando…" : "indisponível"}
+        />
+      );
+
+    const max = Math.max(
+      1,
+      ...result.participants.map((p) => p.speakingSeconds),
+    );
+    return (
+      <ToolCard
+        icon={UsersIcon}
+        label="participantes"
+        tone="success"
+        meta={`${result.participants.length}`}
+      >
+        {result.participants.map((p, i) => (
+          <div key={i} className="flex flex-col gap-1">
+            <div className="flex items-center justify-between gap-3">
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span className="truncate text-sm">{p.name}</span>
+                {p.isHost ? (
+                  <span className="shrink-0 rounded-[4px] bg-(--thread-accent-primary-soft) px-1 py-0.5 font-mono text-[9px] text-(--thread-accent-primary)">
+                    host
+                  </span>
+                ) : null}
+              </span>
+              <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
+                {fmtDuration(p.speakingSeconds)}
+              </span>
+            </div>
+            <div className="h-1 overflow-hidden rounded-full bg-(--thread-frame-outer)">
+              <div
+                className="h-full rounded-full bg-(--thread-accent-primary)"
+                style={{ width: `${(p.speakingSeconds / max) * 100}%` }}
+              />
+            </div>
+          </div>
+        ))}
+      </ToolCard>
+    );
+  },
+});
+
+/** Agrupa todas as ToolUIs do meeting agent num só componente. */
+export function MeetingToolUIs() {
+  return (
+    <>
+      <CreateEventToolUI />
+      <SendBotToolUI />
+      <TranscriptToolUI />
+      <RecordingToolUI />
+      <SummarizeToolUI />
+      <ParticipantsToolUI />
+      <StartRecordingToolUI />
+      <StopRecordingToolUI />
+      <PauseRecordingToolUI />
+      <ResumeRecordingToolUI />
+      <RemoveBotToolUI />
+      <ListEventsToolUI />
+      <ScheduleEventBotToolUI />
+      <RemoveEventBotToolUI />
+    </>
+  );
+}
+
+/* ── primitivos visuais (espelham CasperToolUI) ────────────────────── */
+
+type Tone = "default" | "success" | "caution" | "risk";
+
+function ToolCard({
+  icon: Icon,
+  label,
+  meta,
+  tone = "default",
+  running = false,
+  children,
+}: {
+  icon: LucideIcon;
+  label: string;
+  meta?: string;
+  tone?: Tone;
+  running?: boolean;
+  children?: React.ReactNode;
+}) {
+  const accent =
+    tone === "success"
+      ? "bg-(--thread-accent-primary)"
+      : tone === "caution"
+        ? "bg-amber-500"
+        : tone === "risk"
+          ? "bg-(--thread-accent-secondary)"
+          : "bg-(--thread-accent-secondary)";
+
+  return (
+    <div className="my-2 rounded-[8px] bg-(--thread-frame-outer) p-1">
+      <div className="flex items-center justify-between px-2 py-1.5">
+        <span className="flex items-center gap-1.5 font-mono text-muted-foreground text-xs">
+          {running ? (
+            <LoaderIcon className="size-3.5 animate-spin [animation-duration:0.6s]" />
+          ) : (
+            <Icon className="size-3.5" />
+          )}
+          meeting / {label}
+        </span>
+        {running ? (
+          <span className="flex items-center gap-1.5 font-mono text-[10px] text-muted-foreground">
+            <span
+              aria-hidden
+              className={cn("size-1.5 animate-pulse rounded-[1px]", accent)}
+            />
+            running
+          </span>
+        ) : tone === "success" ? (
+          <span className="flex items-center gap-1 font-mono text-[10px] text-(--thread-accent-primary)">
+            <CheckIcon className="size-3" />
+            {meta ?? "done"}
+          </span>
+        ) : (
+          meta && (
+            <span className="flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground">
+              <span aria-hidden className={cn("size-2 rounded-[1px]", accent)} />
+              {meta}
+            </span>
+          )
+        )}
+      </div>
+
+      {children && (
+        <div className="flex flex-col gap-1.5 rounded-[5px] border bg-background p-3">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Row({ k, v }: { k: string; v: string }) {
+  return (
+    <div className="flex items-center justify-between gap-4">
+      <span className="font-mono text-[11px] text-muted-foreground uppercase tracking-wider">
+        {k}
+      </span>
+      <span className="min-w-0 truncate text-right font-mono text-sm">{v}</span>
+    </div>
+  );
+}
+
+function LinkRow({
+  icon: Icon,
+  label,
+  href,
+}: {
+  icon: LucideIcon;
+  label: string;
+  href: string;
+}) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex items-center gap-1.5 font-mono text-[11px] text-(--thread-accent-primary) hover:underline"
+    >
+      <Icon className="size-3" />
+      {label}
+    </a>
+  );
+}
+
+function Dashed() {
+  return <div className="my-1 border-t border-dashed border-border" />;
+}
+
+function SectionTitle({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="font-mono text-[10px] text-muted-foreground uppercase tracking-wider">
+      {children}
+    </span>
+  );
+}

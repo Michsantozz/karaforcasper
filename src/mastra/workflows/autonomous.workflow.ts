@@ -24,8 +24,8 @@ const perceive = createStep({
     );
     // O texto é informativo; o estado canônico vem das tools chamadas.
     // Lemos direto da chain para ter dados confiáveis (sem depender do parse do LLM).
-    const { getAgentPublicKeyHex } = await import("@/lib/casper/client");
-    const { getBalanceCspr } = await import("@/lib/casper/transfer");
+    const { getAgentPublicKeyHex } = await import("@/server/casper/client");
+    const { getBalanceCspr } = await import("@/server/casper/transfer");
     const publicKey = await getAgentPublicKeyHex();
     const balanceCspr = await getBalanceCspr(publicKey).catch(() => "0");
     void res;
@@ -34,7 +34,83 @@ const perceive = createStep({
 });
 
 // 2. DECIDIR + AGIR — o LLM avalia o estado e decide autonomamente se age.
-//    Se decidir agir, chama as tools (transfer_cspr) e gera tx real on-chain.
+//    A decisão de GASTAR é determinística (código), não parse de texto do LLM:
+//    um agente autônomo (sem humano no loop) NUNCA deve mover fundos com base em
+//    regex sobre a saída do modelo — alucinação do padrão = transferência. Aqui
+//    a política ("saldo > mínimo → heartbeat de valor fixo") é avaliada em TS, e
+//    transferCspr ainda aplica teto/allowlist/fail-closed por baixo.
+const AUTONOMOUS_MIN_BALANCE_CSPR = Number(
+  process.env.CASPER_AUTONOMOUS_MIN_BALANCE_CSPR ?? "5",
+);
+const AUTONOMOUS_HEARTBEAT_CSPR = Number(
+  process.env.CASPER_AUTONOMOUS_HEARTBEAT_CSPR ?? "1",
+);
+
+/** Efetua a transferência de heartbeat. Injetável para teste. */
+type TransferFn = (args: {
+  toPublicKeyHex: string;
+  amountCspr: number;
+}) => Promise<{ transactionHash: string }>;
+
+export interface DecideAndActConfig {
+  /** Destino do heartbeat (vazio = não configurado → não age). */
+  heartbeatTarget: string;
+  minBalanceCspr: number;
+  heartbeatCspr: number;
+}
+
+export interface DecideResult {
+  decision: string;
+  acted: boolean;
+}
+
+/**
+ * Decisão determinística de GASTAR — o coração do loop autônomo, isolado do wire
+ * Inngest para ser testável sem a infra. Um agente sem humano no loop NUNCA move
+ * fundos por parse de texto do LLM; a política é puro código aqui, e `transfer`
+ * ainda aplica teto/allowlist/fail-closed por baixo.
+ *
+ * Contrato fail-closed: qualquer erro de `transfer` → { acted: false }. Nunca
+ * reporta sucesso ambíguo.
+ */
+export async function decideAction(
+  balanceCspr: string,
+  cfg: DecideAndActConfig,
+  transfer: TransferFn,
+): Promise<DecideResult> {
+  const balance = Number(balanceCspr);
+
+  if (!cfg.heartbeatTarget) {
+    return {
+      decision: "AGUARDANDO: CASPER_HEARTBEAT_TARGET não definido.",
+      acted: false,
+    };
+  }
+  if (!Number.isFinite(balance) || balance <= cfg.minBalanceCspr) {
+    return {
+      decision: `AGUARDANDO: saldo insuficiente | SALDO: ${balanceCspr} CSPR | MÍNIMO: ${cfg.minBalanceCspr} CSPR`,
+      acted: false,
+    };
+  }
+
+  try {
+    const res = await transfer({
+      toPublicKeyHex: cfg.heartbeatTarget,
+      amountCspr: cfg.heartbeatCspr,
+    });
+    return {
+      decision: `AÇÃO: transfer | MOTIVO: heartbeat autônomo | SALDO: ${balanceCspr} CSPR | TX: ${res.transactionHash}`,
+      acted: true,
+    };
+  } catch (err) {
+    const code = err instanceof Error ? err.message : "erro desconhecido";
+    return {
+      decision: `BLOQUEADO pela política de gasto: ${code}`,
+      acted: false,
+    };
+  }
+}
+
 const decideAndAct = createStep({
   id: "decide-and-act",
   inputSchema: z.object({
@@ -45,25 +121,17 @@ const decideAndAct = createStep({
     decision: z.string(),
     acted: z.boolean(),
   }),
-  execute: async ({ inputData, mastra }) => {
-    const agent = mastra!.getAgent("casperAgent");
-    const response = await agent.generate(
-      [
-        {
-          role: "user",
-          content: [
-            "Você está rodando em modo autônomo (sem humano no loop).",
-            `Estado atual: endereço=${inputData.publicKey} saldo=${inputData.balanceCspr} CSPR.`,
-            "Avalie segundo sua política operacional e DECIDA sozinho se deve executar alguma ação on-chain.",
-            "Se decidir agir, execute a transação via as tools disponíveis.",
-            "Responda em 1-2 frases: qual decisão tomou e por quê.",
-          ].join(" "),
-        },
-      ],
+  execute: async ({ inputData }) => {
+    const { transferCspr } = await import("@/server/casper/transfer");
+    return decideAction(
+      inputData.balanceCspr,
+      {
+        heartbeatTarget: process.env.CASPER_HEARTBEAT_TARGET ?? "",
+        minBalanceCspr: AUTONOMOUS_MIN_BALANCE_CSPR,
+        heartbeatCspr: AUTONOMOUS_HEARTBEAT_CSPR,
+      },
+      transferCspr,
     );
-    const text = response.text ?? "";
-    const acted = /transactionHash|tx |transação|transfer/i.test(text);
-    return { decision: text, acted };
   },
 });
 

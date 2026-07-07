@@ -1,10 +1,18 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { Geist } from "next/font/google";
-import { cn } from "@/lib/utils";
-import { TooltipProvider } from "@/components/ui/tooltip";
+import { Geist, JetBrains_Mono } from "next/font/google";
+import { cn } from "@/shared/lib/utils";
+import { TooltipProvider } from "@/shared/ui/tooltip";
+import { ThemeProvider } from "@/shared/ui/theme-provider";
+import { QueryProvider } from "@/shared/ui/QueryProvider";
+import { Toaster } from "@/shared/ui/sonner";
+import { NotificationBell } from "@/features/notifications";
 
 const geist = Geist({ subsets: ["latin"], variable: "--font-sans" });
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ["latin"],
+  variable: "--font-mono",
+});
 
 export const metadata: Metadata = {
   title: "Casper Agent",
@@ -17,9 +25,25 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="pt-BR" className={cn("dark font-sans", geist.variable)}>
+    <html
+      lang="pt-BR"
+      suppressHydrationWarning
+      className={cn("font-sans", geist.variable, jetbrainsMono.variable)}
+    >
       <body>
-        <TooltipProvider>{children}</TooltipProvider>
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="dark"
+          enableSystem
+          disableTransitionOnChange
+        >
+          <QueryProvider>
+            <TooltipProvider>{children}</TooltipProvider>
+            {/* Sino global de notificações — auto-contido, só aparece logado. */}
+            <NotificationBell />
+            <Toaster />
+          </QueryProvider>
+        </ThemeProvider>
       </body>
     </html>
   );
