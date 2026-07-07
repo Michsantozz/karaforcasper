@@ -92,7 +92,7 @@ function toLocalIso(d: Date): string {
  */
 const pending = new Map<string, (r: PickDateResult) => void>();
 
-function PickDateCard({
+export function PickDateCard({
   args,
   result,
   toolCallId,
