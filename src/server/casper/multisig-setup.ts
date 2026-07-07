@@ -14,7 +14,7 @@ import { putTx } from "./tx-store";
 // Gas para os deploys de session (key management). ~3 CSPR é folgado.
 const SETUP_PAYMENT_MOTES = 3_000_000_000;
 
-const WASM_DIR = path.join(process.cwd(), "src/lib/casper/wasm");
+const WASM_DIR = path.join(process.cwd(), "src/server/casper/wasm");
 
 async function loadWasm(name: string): Promise<Uint8Array> {
   const buf = await readFile(path.join(WASM_DIR, name));
