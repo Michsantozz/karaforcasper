@@ -1,12 +1,13 @@
 "use client";
 
 /**
- * Camada TanStack Query das notificações in-app.
+ * TanStack Query layer for in-app notifications.
  *
- * O backend (GET /api/notifications, POST /api/notifications/:id/read) já existe;
- * aqui ficam a query key, o tipo e os hooks que o sino global (NotificationBell)
- * consome. Slice próprio para o AppShell (feature auth) poder renderizar o sino
- * sem cruzar a fronteira para `multisig` — notifications é transversal ao produto.
+ * The backend (GET /api/notifications, POST /api/notifications/:id/read) already
+ * exists; this file holds the query key, the type, and the hooks that the
+ * global bell (NotificationBell) consumes. Its own slice so the AppShell (auth
+ * feature) can render the bell without crossing the boundary into `multisig`
+ * — notifications is cross-cutting to the product.
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -15,7 +16,7 @@ export interface Notification {
   id: string;
   type: string;
   message: string;
-  /** Request multisig relacionada (deep-link para /sign/:id), se houver. */
+  /** Related multisig request (deep-link to /sign/:id), if any. */
   requestId: string | null;
   readAt: string | null;
   createdAt: string;
@@ -26,9 +27,9 @@ interface NotificationsResponse {
   unreadCount: number;
 }
 
-// Key própria do slice (o dashboard /multisig usa ["notifications"] com um
-// select diferente; isolamos para nossas opções de polling/refetch não
-// vazarem para a query dele).
+// Slice's own key (the /multisig dashboard uses ["notifications"] with a
+// different select; we isolate this so our polling/refetch options don't
+// leak into its query).
 const notificationsKey = ["notifications", "bell"] as const;
 
 async function getJson<T>(url: string): Promise<T> {
@@ -38,9 +39,9 @@ async function getJson<T>(url: string): Promise<T> {
 }
 
 /**
- * Lista as notificações do usuário autenticado. Faz polling leve (30s) para o
- * sino refletir novas convocações de assinatura / atas prontas sem reload.
- * `enabled=false` (ex.: deslogado) desativa a query e o polling.
+ * Lists the authenticated user's notifications. Does light polling (30s) so
+ * the bell reflects new signature requests / ready minutes without a reload.
+ * `enabled=false` (e.g. logged out) disables the query and the polling.
  */
 export function useNotifications(enabled = true) {
   return useQuery({
@@ -52,7 +53,7 @@ export function useNotifications(enabled = true) {
   });
 }
 
-/** Marca uma notificação como lida e revalida a lista/contador. */
+/** Marks a notification as read and revalidates the list/counter. */
 export function useMarkNotificationRead() {
   const client = useQueryClient();
   return useMutation({

@@ -11,15 +11,16 @@ import {
 import { withAlgorithmTag } from "./user-sign";
 
 /**
- * Carteiras Casper vinculadas a usuários do app.
+ * Casper wallets linked to app users.
  *
- * Serve dois propósitos no fluxo multisig:
- *  - resolver carteira → user, para notificar in-app os signatários que têm conta;
- *  - montar o dashboard "aguardando minha assinatura" (match por publicKeyHex).
+ * Serves two purposes in the multisig flow:
+ *  - resolving wallet → user, to notify in-app the signers who have an account;
+ *  - building the "awaiting my signature" dashboard (match by publicKeyHex).
  *
- * Vínculo exige PROVA DE POSSE (SIWE-style): o usuário assina um nonce com a
- * chave e o server verifica a assinatura antes de gravar. Sem isso, qualquer um
- * vincularia a pubkey alheia. publicKeyHex é sempre normalizada (lowercase).
+ * Linking requires PROOF OF POSSESSION (SIWE-style): the user signs a nonce
+ * with the key and the server verifies the signature before persisting.
+ * Without this, anyone could link someone else's pubkey. publicKeyHex is
+ * always normalized (lowercase).
  */
 
 function norm(hex: string): string {
@@ -30,23 +31,23 @@ function norm(hex: string): string {
 const VALID_PUBKEY = /^(?:01[0-9a-f]{64}|02[0-9a-f]{66})$/;
 const NONCE_TTL_MS = 5 * 60 * 1000; // 5 min
 
-/** Valida o formato de uma public key Casper (ED25519 ou SECP256K1). */
+/** Validates the format of a Casper public key (ED25519 or SECP256K1). */
 export function isValidPublicKeyHex(hex: string): boolean {
   return VALID_PUBKEY.test(norm(hex));
 }
 
 /**
- * A Casper Wallet assina mensagens prefixando o header "Casper Message:\n".
- * Para verificar a assinatura de um nonce, reconstruímos a mesma mensagem.
+ * The Casper Wallet signs messages by prefixing the header "Casper Message:\n".
+ * To verify a nonce's signature, we reconstruct the same message.
  */
 function casperMessageBytes(message: string): Uint8Array {
   return new TextEncoder().encode(`Casper Message:\n${message}`);
 }
 
 /**
- * Verifica criptograficamente que `signatureHex` foi produzida por
- * `publicKeyHex` sobre `message` (formato signMessage da Casper Wallet).
- * A assinatura da carteira é crua (64 bytes); o SDK espera a tag de algoritmo.
+ * Cryptographically verifies that `signatureHex` was produced by
+ * `publicKeyHex` over `message` (Casper Wallet's signMessage format).
+ * The wallet's signature is raw (64 bytes); the SDK expects the algorithm tag.
  */
 export function verifyMessageSignature(args: {
   message: string;
@@ -55,9 +56,9 @@ export function verifyMessageSignature(args: {
 }): boolean {
   try {
     const pub = PublicKey.fromHex(args.publicKeyHex);
-    // verifySignature do SDK espera a assinatura COM a tag de algoritmo (65
-    // bytes: 01/02 + 64 raw). A Casper Wallet devolve a assinatura crua (64
-    // bytes), então withAlgorithmTag prefixa a tag conforme a curva da pubkey.
+    // The SDK's verifySignature expects the signature WITH the algorithm tag
+    // (65 bytes: 01/02 + 64 raw). The Casper Wallet returns the raw signature
+    // (64 bytes), so withAlgorithmTag prefixes the tag based on the pubkey's curve.
     const tagged = withAlgorithmTag(args.signatureHex, args.publicKeyHex);
     return pub.verifySignature(casperMessageBytes(args.message), tagged);
   } catch {
@@ -66,11 +67,11 @@ export function verifyMessageSignature(args: {
 }
 
 /**
- * Emite um nonce de uso único (5 min) para o usuário provar posse de uma
- * carteira. O client assina este nonce (signMessage) e devolve a assinatura.
+ * Issues a single-use nonce (5 min) for the user to prove possession of a
+ * wallet. The client signs this nonce (signMessage) and returns the signature.
  */
 export async function createWalletLinkNonce(userId: string): Promise<string> {
-  const nonce = `Vincular carteira ao CasperAgent — ${randomUUID()}`;
+  const nonce = `Link wallet to CasperAgent — ${randomUUID()}`;
   await db.insert(walletLinkNonces).values({
     nonce,
     userId,
@@ -80,8 +81,8 @@ export async function createWalletLinkNonce(userId: string): Promise<string> {
 }
 
 /**
- * Consome um nonce: valida que existe, pertence ao usuário, não expirou e não
- * foi usado. Marca como consumido. Lança em caso de violação.
+ * Consumes a nonce: validates that it exists, belongs to the user, hasn't
+ * expired, and hasn't been used. Marks it as consumed. Throws on violation.
  */
 async function consumeNonce(nonce: string, userId: string): Promise<void> {
   const rows = await db
@@ -100,12 +101,13 @@ async function consumeNonce(nonce: string, userId: string): Promise<void> {
 }
 
 /**
- * Vincula uma carteira a um usuário COM PROVA DE POSSE.
+ * Links a wallet to a user WITH PROOF OF POSSESSION.
  *
- * Exige: o `nonce` emitido por createWalletLinkNonce + a `signatureHex` desse
- * nonce assinada pela carteira. Verifica criptograficamente (verifyMessageSignature)
- * que a assinatura corresponde à publicKey antes de gravar. Marca verifiedAt.
- * Idempotente por (userId, publicKeyHex). Lança em caso de prova inválida.
+ * Requires: the `nonce` issued by createWalletLinkNonce + the `signatureHex`
+ * of that nonce signed by the wallet. Cryptographically verifies
+ * (verifyMessageSignature) that the signature matches the publicKey before
+ * persisting. Sets verifiedAt. Idempotent per (userId, publicKeyHex). Throws
+ * on invalid proof.
  */
 export async function linkWallet(input: {
   userId: string;
@@ -117,9 +119,9 @@ export async function linkWallet(input: {
   if (!isValidPublicKeyHex(input.publicKeyHex)) {
     throw new Error("invalid_public_key");
   }
-  // Consome o nonce (uso único, do próprio usuário, não expirado).
+  // Consumes the nonce (single-use, belonging to this user, not expired).
   await consumeNonce(input.nonce, input.userId);
-  // Prova de posse: a assinatura do nonce tem que bater com a publicKey.
+  // Proof of possession: the nonce's signature must match the publicKey.
   const ok = verifyMessageSignature({
     message: input.nonce,
     publicKeyHex: input.publicKeyHex,
@@ -142,7 +144,7 @@ export async function linkWallet(input: {
     });
 }
 
-/** Remove o vínculo de uma carteira de um usuário. */
+/** Removes a user's wallet link. */
 export async function unlinkWallet(
   userId: string,
   publicKeyHex: string,
@@ -157,7 +159,7 @@ export async function unlinkWallet(
     );
 }
 
-/** Carteiras VERIFICADAS vinculadas a um usuário. */
+/** VERIFIED wallets linked to a user. */
 export async function listWalletsByUser(
   userId: string,
 ): Promise<UserWalletRow[]> {
@@ -170,8 +172,8 @@ export async function listWalletsByUser(
 }
 
 /**
- * Resolve carteira → userId (vínculo VERIFICADO), ou null. Usado para notificar.
- * Só carteiras com posse provada contam.
+ * Resolves wallet → userId (VERIFIED link), or null. Used for notifications.
+ * Only wallets with proven possession count.
  */
 export async function resolveUserByWallet(
   publicKeyHex: string,
@@ -190,9 +192,9 @@ export async function resolveUserByWallet(
 }
 
 /**
- * Resolve um lote de carteiras → mapa publicKeyHex(normalizada) → userId. Só
- * inclui vínculos VERIFICADOS. Usado ao criar uma request para notificar de uma
- * vez todos os signatários que têm conta com posse provada.
+ * Resolves a batch of wallets → map of publicKeyHex(normalized) → userId.
+ * Only includes VERIFIED links. Used when creating a request to notify, in
+ * one shot, all signers who have an account with proven possession.
  */
 export async function resolveUsersByWallets(
   publicKeysHex: string[],
@@ -217,7 +219,7 @@ export async function resolveUsersByWallets(
   return map;
 }
 
-/** Sweep de nonces expirados/consumidos (housekeeping, chamado pelo cron). */
+/** Sweeps expired/consumed nonces (housekeeping, called by the cron). */
 export async function sweepExpiredNonces(): Promise<void> {
   await db
     .delete(walletLinkNonces)

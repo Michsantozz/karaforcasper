@@ -2,13 +2,14 @@
 
 import type { CasperWalletProvider } from "./types";
 
-// Timeout das requisições à extensão (30 min — default oficial).
+// Timeout for requests to the extension (30 min — official default).
 const REQUESTS_TIMEOUT_MS = 30 * 60 * 1000;
 
 /**
- * Acesso ao provider injetado pela extensão, fora do ciclo React. Usado pelos
- * `execute` das frontend tools (connect_wallet/sign_with_wallet), que rodam no
- * browser quando o modelo chama a tool mas não têm acesso a hooks.
+ * Access to the provider injected by the extension, outside the React cycle.
+ * Used by the `execute` of frontend tools (connect_wallet/sign_with_wallet),
+ * which run in the browser when the model calls the tool but have no access
+ * to hooks.
  */
 export function getCasperWalletProvider(): CasperWalletProvider | null {
   if (typeof window === "undefined") return null;
@@ -23,19 +24,19 @@ export interface ConnectOutcome {
   error?: string;
 }
 
-/** Abre o popup de conexão da extensão e retorna a conta ativa. */
+/** Opens the extension's connection popup and returns the active account. */
 export async function connectWallet(): Promise<ConnectOutcome> {
   const p = getCasperWalletProvider();
   if (!p)
     return {
       connected: false,
       activeKey: null,
-      error: "Casper Wallet não instalada.",
+      error: "Casper Wallet not installed.",
     };
   try {
     const ok = await p.requestConnection();
     if (!ok)
-      return { connected: false, activeKey: null, error: "Conexão recusada." };
+      return { connected: false, activeKey: null, error: "Connection refused." };
     const activeKey = await p.getActivePublicKey();
     return { connected: true, activeKey };
   } catch (e) {
@@ -54,9 +55,9 @@ export interface SignOutcome {
 }
 
 /**
- * Assina uma mensagem arbitrária (texto) com a conta dada. Usado na prova de
- * posse do vínculo de carteira: o usuário assina o nonce emitido pelo backend.
- * A extensão prefixa "Casper Message:\n" internamente — passa-se o nonce cru.
+ * Signs an arbitrary message (text) with the given account. Used in the wallet
+ * link's proof of possession: the user signs the nonce issued by the backend.
+ * The extension prefixes "Casper Message:\n" internally — the raw nonce is passed.
  */
 export async function signMessageWithWallet(
   message: string,
@@ -67,12 +68,12 @@ export async function signMessageWithWallet(
     return {
       signed: false,
       signatureHex: null,
-      error: "Casper Wallet não instalada.",
+      error: "Casper Wallet not installed.",
     };
   try {
     const res = await p.signMessage(message, signerPublicKeyHex);
     if (res.cancelled)
-      return { signed: false, signatureHex: null, error: "Assinatura cancelada." };
+      return { signed: false, signatureHex: null, error: "Signature cancelled." };
     return { signed: true, signatureHex: res.signatureHex };
   } catch (e) {
     return {
@@ -83,7 +84,7 @@ export async function signMessageWithWallet(
   }
 }
 
-/** Abre o popup de assinatura para o deploy/tx JSON com a conta dada. */
+/** Opens the signing popup for the deploy/tx JSON with the given account. */
 export async function signWithWallet(
   deployJson: string,
   signerPublicKeyHex: string,
@@ -93,12 +94,12 @@ export async function signWithWallet(
     return {
       signed: false,
       signatureHex: null,
-      error: "Casper Wallet não instalada.",
+      error: "Casper Wallet not installed.",
     };
   try {
     const res = await p.sign(deployJson, signerPublicKeyHex);
     if (res.cancelled)
-      return { signed: false, signatureHex: null, error: "Assinatura cancelada." };
+      return { signed: false, signatureHex: null, error: "Signature cancelled." };
     return { signed: true, signatureHex: res.signatureHex };
   } catch (e) {
     return {

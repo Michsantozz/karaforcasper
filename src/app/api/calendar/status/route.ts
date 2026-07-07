@@ -3,9 +3,9 @@ import { listCalendarsByUser } from "@/server/recall/calendar-repository";
 import { getSession } from "@/features/auth/model/session";
 
 /**
- * Status das agendas conectadas do usuário autenticado.
+ * Status of the authenticated user's connected calendars.
  *
- * Usado pela UI do /meetings para mostrar se há agenda conectada e quais.
+ * Used by the /meetings UI to show whether a calendar is connected and which ones.
  */
 export async function GET() {
   const session = await getSession();

@@ -4,9 +4,10 @@ import { LoginScreen } from "@/features/auth/ui/LoginScreen";
 import { getSession } from "@/features/auth/model/session";
 
 /**
- * Home gateada: o chat consome LLM e expõe tools on-chain, então exige login
- * (o /api/chat também rejeita sem sessão — defesa em profundidade). Sem sessão,
- * mostra a tela de entrada; com sessão, o chat + atalho de auth/multisig.
+ * Gated home: the chat consumes an LLM and exposes on-chain tools, so it
+ * requires sign in (/api/chat also rejects without a session — defense in
+ * depth). Without a session, shows the sign-in screen; with a session, the
+ * chat + auth/multisig shortcut.
  */
 export default async function Home() {
   const session = await getSession();

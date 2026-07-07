@@ -2,14 +2,15 @@ import "server-only";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
 /**
- * `state` assinado para o OAuth de calendar (CSRF / account-linking).
+ * Signed `state` for calendar OAuth (CSRF / account-linking).
  *
- * Antes o callback usava o `state` cru como userId, SEM sessão nem verificação:
- * um atacante iniciava o próprio fluxo, capturava seu `code`, e chamava
- * /callback?code=SEU_CODE&state=ID_DA_VÍTIMA — vinculando a própria agenda à
- * conta da vítima. Aqui o `state` é um token HMAC-assinado que amarra o userId
- * (da sessão em /start) + nonce + expiração; o callback valida a assinatura e a
- * validade ANTES de confiar no userId. Sem o secret, o token não pode ser forjado.
+ * Previously the callback used the raw `state` as userId, WITHOUT session or
+ * verification: an attacker would start their own flow, capture their `code`,
+ * and call /callback?code=THEIR_CODE&state=VICTIM_ID — linking their own
+ * calendar to the victim's account. Here `state` is an HMAC-signed token that
+ * binds the userId (from the /start session) + nonce + expiration; the
+ * callback validates the signature and validity BEFORE trusting the userId.
+ * Without the secret, the token can't be forged.
  */
 
 function stateSecret(): string {
@@ -20,13 +21,13 @@ function stateSecret(): string {
   return secret;
 }
 
-const TTL_MS = 10 * 60 * 1000; // 10 min — janela do consent screen.
+const TTL_MS = 10 * 60 * 1000; // 10 min — consent screen window.
 
 function sign(payload: string): string {
   return createHmac("sha256", stateSecret()).update(payload).digest("base64url");
 }
 
-/** Gera um `state` assinado para o userId (chamado em /start, autenticado). */
+/** Generates a signed `state` for the userId (called in /start, authenticated). */
 export function signOAuthState(userId: string): string {
   const nonce = randomBytes(16).toString("hex");
   const exp = Date.now() + TTL_MS;
@@ -36,8 +37,8 @@ export function signOAuthState(userId: string): string {
 }
 
 /**
- * Valida o `state` do callback e devolve o userId embutido. Lança se a assinatura
- * não bater (comparação timing-safe) ou o token tiver expirado.
+ * Validates the callback's `state` and returns the embedded userId. Throws if
+ * the signature doesn't match (timing-safe comparison) or the token has expired.
  */
 export function verifyOAuthState(state: string): string {
   let decoded: string;

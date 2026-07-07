@@ -17,14 +17,14 @@ function short(hex: string) {
   return hex.length > 12 ? `${hex.slice(0, 6)}…${hex.slice(-4)}` : hex;
 }
 
-// Tools MCP retornam { content: [{ type: "text", text: "<json|texto>" }] }.
-// Extrai o texto cru do primeiro bloco.
+// MCP tools return { content: [{ type: "text", text: "<json|text>" }] }.
+// Extracts the raw text from the first block.
 function mcpText(result: unknown): string | null {
   const content = (result as { content?: Array<{ text?: string }> })?.content;
   return content?.[0]?.text ?? null;
 }
 
-// ToolUI da carteira do agente.
+// ToolUI for the agent's wallet.
 export const WalletToolUI = makeAssistantToolUI<
   Record<string, never>,
   { publicKey: string; balanceCspr: string }
@@ -43,7 +43,7 @@ export const WalletToolUI = makeAssistantToolUI<
   },
 });
 
-// ToolUI de consulta de saldo.
+// ToolUI for the balance query.
 export const BalanceToolUI = makeAssistantToolUI<
   { publicKeyHex: string },
   { balanceCspr: string }
@@ -61,7 +61,7 @@ export const BalanceToolUI = makeAssistantToolUI<
   },
 });
 
-// ToolUI da transferência on-chain — mostra hash + link do explorer.
+// ToolUI for the on-chain transfer — shows hash + explorer link.
 export const TransferToolUI = makeAssistantToolUI<
   { toPublicKeyHex: string; amountCspr: number },
   {
@@ -94,7 +94,7 @@ export const TransferToolUI = makeAssistantToolUI<
         <div className="flex items-center gap-1.5 rounded-[4px] bg-(--thread-accent-secondary)/10 px-2 py-1">
           <WalletIcon className="size-3 text-(--thread-accent-secondary)" />
           <span className="font-mono text-[10px] text-muted-foreground uppercase tracking-wider">
-            carteira do agente — pago pelo agente, sem assinatura sua
+            agent wallet — paid by the agent, no signature needed from you
           </span>
         </div>
         <Row k="amount" v={`${result.amountCspr} CSPR`} />
@@ -116,7 +116,7 @@ export const TransferToolUI = makeAssistantToolUI<
   },
 });
 
-// ToolUI MCP — cotação de swap (csprTrade get_quote).
+// MCP ToolUI — swap quote (csprTrade get_quote).
 type QuoteResult = {
   amountInFormatted: string;
   amountOutFormatted: string;
@@ -187,15 +187,15 @@ export const QuoteToolUI = makeAssistantToolUI<
         </div>
         <Row k="slippage" v={`${(Number(q.recommendedSlippageBps) / 100).toFixed(2)}%`} />
         <p className="pt-1 font-mono text-[10px] text-muted-foreground">
-          Cotação indicativa — o preço pode variar até a execução. Reconsulte se
-          demorar.
+          Indicative quote — the price may vary until execution. Re-check if it
+          takes a while.
         </p>
       </ToolCard>
     );
   },
 });
 
-// ToolUI MCP — análise de trade (csprTrade analyze_trade). Result é texto livre.
+// MCP ToolUI — trade analysis (csprTrade analyze_trade). Result is free text.
 export const AnalyzeTradeToolUI = makeAssistantToolUI<
   { token_in: string; token_out: string; amount: string },
   unknown
@@ -231,7 +231,7 @@ export const AnalyzeTradeToolUI = makeAssistantToolUI<
   },
 });
 
-// Extrai métricas "label: valor" das linhas com emoji do analyze_trade.
+// Extracts "label: value" metrics from analyze_trade's emoji lines.
 function parseAnalyzeMetrics(text: string): Array<{ k: string; v: string }> {
   const map: Array<[RegExp, string]> = [
     [/Price Impact:\s*([^\n]+)/i, "price impact"],
@@ -249,7 +249,7 @@ function parseAnalyzeMetrics(text: string): Array<{ k: string; v: string }> {
 
 type Tone = "default" | "success" | "caution" | "risk";
 
-// Severity por price impact: <1% ok, <3% atenção, ≥3% risco.
+// Severity by price impact: <1% ok, <3% caution, ≥3% risk.
 function impactTone(impact: number): Tone {
   if (Number.isNaN(impact)) return "default";
   if (impact < 1) return "success";
@@ -291,7 +291,7 @@ function ToolCard({
 
   return (
     <div className="my-2 rounded-[8px] bg-(--thread-frame-outer) p-1">
-      {/* Header bar mono */}
+      {/* Mono header bar */}
       <div className="flex items-center justify-between px-2 py-1.5">
         <span className="flex items-center gap-1.5 font-mono text-muted-foreground text-xs">
           {running ? (

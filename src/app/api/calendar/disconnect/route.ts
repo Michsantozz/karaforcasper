@@ -8,11 +8,11 @@ import {
 import { getSession } from "@/features/auth/model/session";
 
 /**
- * Desconecta a(s) agenda(s) do usuário autenticado.
+ * Disconnects the authenticated user's calendar(s).
  *
- * Body opcional `{ calendarId }` desconecta um calendar específico (que deve
- * pertencer ao usuário). Sem ele, desconecta todos os calendars do usuário.
- * Deleta no Recall (DELETE /v2/calendars/{id}) e remove o vínculo no DB.
+ * Optional body `{ calendarId }` disconnects a specific calendar (which must
+ * belong to the user). Without it, disconnects all of the user's calendars.
+ * Deletes in Recall (DELETE /v2/calendars/{id}) and removes the mapping in the DB.
  */
 export async function POST(req: Request) {
   const session = await getSession();
@@ -24,7 +24,7 @@ export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}) as { calendarId?: string });
   const calendarId = (body as { calendarId?: string }).calendarId;
 
-  // Resolve quais calendars desconectar — sempre escopado ao usuário.
+  // Resolve which calendars to disconnect — always scoped to the user.
   let targets: string[];
   if (calendarId) {
     const mapping = await findCalendarById(calendarId);
@@ -42,7 +42,7 @@ export async function POST(req: Request) {
     try {
       await recallFetch({ method: "DELETE", path: `v2/calendars/${id}/` });
     } catch {
-      // Mesmo que o Recall já tenha removido, limpamos o vínculo local.
+      // Even if Recall already removed it, we clean up the local mapping.
     }
     await deleteCalendarMapping(id);
     removed += 1;

@@ -25,19 +25,20 @@ import { makeAssistantToolUI, useThreadRuntime } from "@assistant-ui/react";
 import { cn } from "@/shared/lib/utils";
 
 /**
- * ToolUIs do agente de reuniões — cards visuais que SUBSTITUEM o JSON cru das
- * tool-calls. Cada uma mapeia uma tool local (create_calendar_event, bots,
- * gravação, agenda) para um card com o que o usuário precisa ver.
+ * ToolUIs for the meeting agent — visual cards that REPLACE the raw JSON of
+ * tool-calls. Each one maps a local tool (create_calendar_event, bots,
+ * recording, calendar) to a card with what the user needs to see.
  *
- * Registradas no AssistantRuntimeProvider do MeetingAssistant. Sem registro, a
- * tool cai no ToolFallback (JSON). Com registro, o usuário vê só o essencial.
+ * Registered in MeetingAssistant's AssistantRuntimeProvider. Without
+ * registration, the tool falls back to ToolFallback (JSON). With
+ * registration, the user only sees the essentials.
  */
 
 function shortId(id: string) {
   return id.length > 12 ? `${id.slice(0, 6)}…${id.slice(-4)}` : id;
 }
 
-/** Encurta uma URL de reunião para "host/id" legível, sem truncar no meio. */
+/** Shortens a meeting URL to readable "host/id", without truncating mid-string. */
 function shortMeetUrl(url: string): string {
   try {
     const u = new URL(url);
@@ -48,12 +49,12 @@ function shortMeetUrl(url: string): string {
   }
 }
 
-/** Formata um ISO em "dd/mm HH:MM" no fuso local do browser. */
+/** Formats an ISO string as "dd/mm HH:MM" in the browser's local timezone. */
 function fmtTime(iso: string | undefined): string {
   if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString("pt-BR", {
+  return d.toLocaleString("en-US", {
     day: "2-digit",
     month: "2-digit",
     hour: "2-digit",
@@ -79,26 +80,26 @@ export const CreateEventToolUI = makeAssistantToolUI<
       return (
         <ToolCard
           icon={CalendarPlusIcon}
-          label="criar reunião"
+          label="create meeting"
           running
           meta={args.summary}
         />
       );
     if (!result?.ok) return null;
     return (
-      <ToolCard icon={CalendarPlusIcon} label="reunião criada" tone="success">
-        <Row k="título" v={args.summary} />
-        <Row k="início" v={fmtTime(args.startIso)} />
-        <Row k="término" v={fmtTime(args.endIso)} />
+      <ToolCard icon={CalendarPlusIcon} label="meeting created" tone="success">
+        <Row k="title" v={args.summary} />
+        <Row k="start" v={fmtTime(args.startIso)} />
+        <Row k="end" v={fmtTime(args.endIso)} />
         {result.botId ? (
-          <Row k="bot" v={`gravando · ${shortId(result.botId)}`} />
+          <Row k="bot" v={`recording · ${shortId(result.botId)}`} />
         ) : null}
         {result.meetingUrl ? (
           <>
             <Dashed />
             <LinkRow
               icon={VideoIcon}
-              label="entrar no google meet"
+              label="join google meet"
               href={result.meetingUrl}
             />
           </>
@@ -106,7 +107,7 @@ export const CreateEventToolUI = makeAssistantToolUI<
         {result.htmlLink ? (
           <LinkRow
             icon={ExternalLinkIcon}
-            label="abrir no calendário"
+            label="open in calendar"
             href={result.htmlLink}
           />
         ) : null}
@@ -127,7 +128,7 @@ export const SendBotToolUI = makeAssistantToolUI<
       return (
         <ToolCard
           icon={BotIcon}
-          label="enviar bot"
+          label="send bot"
           running
           meta={shortMeetUrl(args.meetingUrl)}
         />
@@ -136,14 +137,14 @@ export const SendBotToolUI = makeAssistantToolUI<
     return (
       <ToolCard
         icon={BotIcon}
-        label={result.scheduled ? "bot agendado" : "bot enviado"}
+        label={result.scheduled ? "bot scheduled" : "bot sent"}
         tone="success"
-        meta={result.reused ? "reutilizado" : undefined}
+        meta={result.reused ? "reused" : undefined}
       >
-        <Row k="reunião" v={shortMeetUrl(args.meetingUrl)} />
-        {args.joinAt ? <Row k="entra em" v={fmtTime(args.joinAt)} /> : null}
+        <Row k="meeting" v={shortMeetUrl(args.meetingUrl)} />
+        {args.joinAt ? <Row k="joins at" v={fmtTime(args.joinAt)} /> : null}
         <Row k="bot" v={shortId(result.botId)} />
-        <Row k="gravação" v="aguardando comando" />
+        <Row k="recording" v="awaiting command" />
       </ToolCard>
     );
   },
@@ -170,25 +171,25 @@ function makeRecordingUI(
 
 export const StartRecordingToolUI = makeRecordingUI(
   "start_recording",
-  "gravação iniciada",
+  "recording started",
   CircleIcon,
   "success",
 );
 export const StopRecordingToolUI = makeRecordingUI(
   "stop_recording",
-  "gravação parada",
+  "recording stopped",
   SquareIcon,
   "default",
 );
 export const PauseRecordingToolUI = makeRecordingUI(
   "pause_recording",
-  "gravação pausada",
+  "recording paused",
   PauseIcon,
   "caution",
 );
 export const ResumeRecordingToolUI = makeRecordingUI(
   "resume_recording",
-  "gravação retomada",
+  "recording resumed",
   PlayIcon,
   "success",
 );
@@ -202,11 +203,11 @@ export const RemoveBotToolUI = makeAssistantToolUI<
   toolName: "remove_bot",
   render: ({ result, status }) => {
     if (status.type === "running")
-      return <ToolCard icon={CalendarXIcon} label="remover bot" running />;
+      return <ToolCard icon={CalendarXIcon} label="remove bot" running />;
     if (!result?.ok) return null;
     const meta =
-      result.action === "left_call" ? "saiu da call" : "desagendado";
-    return <ToolCard icon={CalendarXIcon} label="bot removido" meta={meta} />;
+      result.action === "left_call" ? "left the call" : "unscheduled";
+    return <ToolCard icon={CalendarXIcon} label="bot removed" meta={meta} />;
   },
 });
 
@@ -227,23 +228,23 @@ export const ListEventsToolUI = makeAssistantToolUI<
   toolName: "list_calendar_events",
   render: ({ result, status }) => {
     if (status.type === "running")
-      return <ToolCard icon={CalendarSearchIcon} label="buscar eventos" running />;
+      return <ToolCard icon={CalendarSearchIcon} label="fetch events" running />;
     if (!result) return null;
-    // events pode chegar undefined (resposta parcial durante streaming ou erro
-    // do tool); normaliza antes de qualquer .slice/.length.
+    // events may arrive undefined (partial response during streaming or a
+    // tool error); normalize before any .slice/.length.
     const events = result.events ?? [];
     if (result.count === 0 || events.length === 0)
       return (
         <ToolCard
           icon={CalendarSearchIcon}
-          label="próximos eventos"
-          meta="nenhum"
+          label="upcoming events"
+          meta="none"
         />
       );
     return (
       <ToolCard
         icon={CalendarSearchIcon}
-        label="próximos eventos"
+        label="upcoming events"
         meta={`${result.count}`}
       >
         {events.slice(0, 8).map((e) => (
@@ -282,12 +283,12 @@ export const ScheduleEventBotToolUI = makeAssistantToolUI<
   toolName: "schedule_bot_for_event",
   render: ({ result, status }) => {
     if (status.type === "running")
-      return <ToolCard icon={CalendarCheckIcon} label="agendar bot no evento" running />;
+      return <ToolCard icon={CalendarCheckIcon} label="schedule bot for event" running />;
     if (!result?.ok) return null;
     return (
       <ToolCard
         icon={CalendarCheckIcon}
-        label="bot agendado no evento"
+        label="bot scheduled for event"
         tone="success"
         meta={`${result.scheduledBots} bot(s)`}
       />
@@ -302,9 +303,9 @@ export const RemoveEventBotToolUI = makeAssistantToolUI<
   toolName: "remove_bot_from_event",
   render: ({ result, status }) => {
     if (status.type === "running")
-      return <ToolCard icon={CalendarXIcon} label="remover bot do evento" running />;
+      return <ToolCard icon={CalendarXIcon} label="remove bot from event" running />;
     if (!result?.ok) return null;
-    return <ToolCard icon={CalendarXIcon} label="bot removido do evento" />;
+    return <ToolCard icon={CalendarXIcon} label="bot removed from event" />;
   },
 });
 
@@ -322,28 +323,28 @@ export const TranscriptToolUI = makeAssistantToolUI<
   toolName: "get_transcript",
   render: ({ result, status }) => {
     if (status.type === "running")
-      return <ToolCard icon={FileTextIcon} label="ler transcrição" running />;
+      return <ToolCard icon={FileTextIcon} label="read transcript" running />;
     if (!result) return null;
     if (result.state === "processing")
       return (
         <ToolCard
           icon={FileTextIcon}
-          label="transcrição"
-          meta="processando…"
+          label="transcript"
+          meta="processing…"
         />
       );
     if (result.state === "none" || !result.transcript)
       return (
-        <ToolCard icon={FileTextIcon} label="transcrição" meta="indisponível" />
+        <ToolCard icon={FileTextIcon} label="transcript" meta="unavailable" />
       );
     return (
       <ToolCard
         icon={FileTextIcon}
-        label="transcrição"
+        label="transcript"
         tone="success"
         meta={
           result.speakers?.length
-            ? `${result.speakers.length} participante(s)`
+            ? `${result.speakers.length} participant(s)`
             : undefined
         }
       >
@@ -370,17 +371,17 @@ export const RecordingToolUI = makeAssistantToolUI<
   toolName: "get_recording",
   render: ({ result, status }) => {
     if (status.type === "running")
-      return <ToolCard icon={VideoIcon} label="buscar gravação" running />;
+      return <ToolCard icon={VideoIcon} label="fetch recording" running />;
     if (!result) return null;
     const labels: Record<string, string> = {
-      video_mixed: "vídeo",
-      audio_mixed: "áudio",
-      transcript: "transcrição",
+      video_mixed: "video",
+      audio_mixed: "audio",
+      transcript: "transcript",
     };
     return (
       <ToolCard
         icon={VideoIcon}
-        label="gravação"
+        label="recording"
         meta={result.recordingStatus ?? undefined}
       >
         {result.media.map((m) => (
@@ -399,7 +400,7 @@ export const RecordingToolUI = makeAssistantToolUI<
                 className="inline-flex items-center gap-1 font-mono text-[11px] text-(--thread-accent-primary) hover:underline"
               >
                 <ExternalLinkIcon className="size-3" />
-                baixar
+                download
               </a>
             ) : (
               <span className="font-mono text-[10px] text-muted-foreground">
@@ -426,18 +427,19 @@ type SummaryResult = {
   topics?: string[];
 };
 
-/** Heurística leve: a linha parece um pagamento (tem valor + CSPR)? */
+/** Light heuristic: does the line look like a payment (has an amount + CSPR)? */
 function looksLikePayment(text: string): boolean {
   return /\b\d[\d.,]*\s*(cspr|casper)\b/i.test(text);
 }
 
 /**
- * Card da ata — agora ACIONÁVEL. Além de mostrar resumo/decisões/tarefas, oferece
- * os próximos passos on-chain no exato momento de maior intenção (logo após a
- * ata): "Notarizar ata" (prova imutável) e, em decisões/tarefas que parecem
- * pagamento, "Pagar via multisig". Os botões empurram uma instrução em linguagem
- * natural para o agente (thread.append) — o agente já tem as tools notarize_meeting
- * e prepare_multisig_payment; aqui só disparamos a intenção no contexto certo.
+ * Minutes card — now ACTIONABLE. Besides showing the summary/decisions/tasks,
+ * it offers the next on-chain steps at the exact moment of highest intent
+ * (right after the minutes): "Notarize minutes" (immutable proof) and, on
+ * decisions/tasks that look like a payment, "Pay via multisig". The buttons
+ * push a natural-language instruction to the agent (thread.append) — the
+ * agent already has the notarize_meeting and prepare_multisig_payment tools;
+ * here we just trigger the intent at the right context.
  */
 function SummaryCard({ result }: { result: SummaryResult }) {
   const thread = useThreadRuntime();
@@ -448,19 +450,19 @@ function SummaryCard({ result }: { result: SummaryResult }) {
 
   const notarize = () =>
     ask(
-      `Notarize a ata desta reunião (botId ${result.botId}) on-chain com notarize_meeting. ` +
-        `Use o resumo e as decisões desta ata como record. Ao final, me informe o meetingHash, o transactionHash e o explorerUrl.`,
+      `Notarize this meeting's minutes (botId ${result.botId}) on-chain with notarize_meeting. ` +
+        `Use the summary and decisions from these minutes as the record. When done, tell me the meetingHash, the transactionHash, and the explorerUrl.`,
     );
 
   const payViaMultisig = (item: string) =>
     ask(
-      `A partir desta decisão da reunião: "${item}". ` +
-        `Prepare um pagamento multisig com prepare_multisig_payment. ` +
-        `Pergunte-me o endereço de destino, o valor exato em CSPR e as public keys dos signatários antes de montar.`,
+      `Based on this meeting decision: "${item}". ` +
+        `Prepare a multisig payment with prepare_multisig_payment. ` +
+        `Ask me for the destination address, the exact amount in CSPR, and the signers' public keys before building it.`,
     );
 
   return (
-    <ToolCard icon={ListChecksIcon} label="resumo da reunião" tone="success">
+    <ToolCard icon={ListChecksIcon} label="meeting summary" tone="success">
       <p className="text-sm leading-relaxed text-foreground/90">
         {result.summary}
       </p>
@@ -468,7 +470,7 @@ function SummaryCard({ result }: { result: SummaryResult }) {
       {result.decisions?.length ? (
         <>
           <Dashed />
-          <SectionTitle>decisões</SectionTitle>
+          <SectionTitle>decisions</SectionTitle>
           <ul className="flex flex-col gap-1.5">
             {result.decisions.map((d, i) => (
               <li
@@ -482,7 +484,7 @@ function SummaryCard({ result }: { result: SummaryResult }) {
                 {looksLikePayment(d) ? (
                   <ActionButton
                     icon={CoinsIcon}
-                    label="Pagar via multisig"
+                    label="Pay via multisig"
                     onClick={() => payViaMultisig(d)}
                   />
                 ) : null}
@@ -495,7 +497,7 @@ function SummaryCard({ result }: { result: SummaryResult }) {
       {result.actionItems?.length ? (
         <>
           <Dashed />
-          <SectionTitle>tarefas</SectionTitle>
+          <SectionTitle>action items</SectionTitle>
           <ul className="flex flex-col gap-1.5">
             {result.actionItems.map((a, i) => (
               <li
@@ -507,7 +509,7 @@ function SummaryCard({ result }: { result: SummaryResult }) {
                   {looksLikePayment(a.task) ? (
                     <ActionButton
                       icon={CoinsIcon}
-                      label="Pagar via multisig"
+                      label="Pay via multisig"
                       onClick={() => payViaMultisig(a.task)}
                     />
                   ) : null}
@@ -539,7 +541,7 @@ function SummaryCard({ result }: { result: SummaryResult }) {
         </>
       ) : null}
 
-      {/* CTA principal: selar a ata inteira on-chain (prova imutável). */}
+      {/* Main CTA: seal the whole minutes on-chain (immutable proof). */}
       <Dashed />
       <button
         type="button"
@@ -547,7 +549,7 @@ function SummaryCard({ result }: { result: SummaryResult }) {
         className="inline-flex items-center justify-center gap-2 rounded-[6px] bg-(--thread-accent-primary) px-3 py-2 font-mono text-sm text-background transition-colors hover:opacity-90"
       >
         <ShieldCheckIcon className="size-3.5" />
-        Notarizar ata on-chain
+        Notarize minutes on-chain
       </button>
     </ToolCard>
   );
@@ -560,21 +562,21 @@ export const SummarizeToolUI = makeAssistantToolUI<
   toolName: "summarize_meeting",
   render: ({ result, status }) => {
     if (status.type === "running")
-      return <ToolCard icon={ListChecksIcon} label="resumir reunião" running />;
+      return <ToolCard icon={ListChecksIcon} label="summarize meeting" running />;
     if (!result) return null;
     if (result.state === "processing")
       return (
-        <ToolCard icon={ListChecksIcon} label="resumo" meta="processando…" />
+        <ToolCard icon={ListChecksIcon} label="summary" meta="processing…" />
       );
     if (result.state === "none" || !result.summary)
       return (
-        <ToolCard icon={ListChecksIcon} label="resumo" meta="indisponível" />
+        <ToolCard icon={ListChecksIcon} label="summary" meta="unavailable" />
       );
     return <SummaryCard result={result} />;
   },
 });
 
-/** Botão de ação compacto reusado nas linhas da ata. */
+/** Compact action button reused across the minutes' rows. */
 function ActionButton({
   icon: Icon,
   label,
@@ -622,14 +624,14 @@ export const ParticipantsToolUI = makeAssistantToolUI<
   toolName: "get_participants",
   render: ({ result, status }) => {
     if (status.type === "running")
-      return <ToolCard icon={UsersIcon} label="ver participantes" running />;
+      return <ToolCard icon={UsersIcon} label="view participants" running />;
     if (!result) return null;
     if (result.state !== "ready" || !result.participants?.length)
       return (
         <ToolCard
           icon={UsersIcon}
-          label="participantes"
-          meta={result.state === "processing" ? "processando…" : "indisponível"}
+          label="participants"
+          meta={result.state === "processing" ? "processing…" : "unavailable"}
         />
       );
 
@@ -640,7 +642,7 @@ export const ParticipantsToolUI = makeAssistantToolUI<
     return (
       <ToolCard
         icon={UsersIcon}
-        label="participantes"
+        label="participants"
         tone="success"
         meta={`${result.participants.length}`}
       >
@@ -672,7 +674,7 @@ export const ParticipantsToolUI = makeAssistantToolUI<
   },
 });
 
-/** Agrupa todas as ToolUIs do meeting agent num só componente. */
+/** Groups all the meeting agent's ToolUIs into a single component. */
 export function MeetingToolUIs() {
   return (
     <>
@@ -694,7 +696,7 @@ export function MeetingToolUIs() {
   );
 }
 
-/* ── primitivos visuais (espelham CasperToolUI) ────────────────────── */
+/* ── visual primitives (mirror CasperToolUI) ────────────────────── */
 
 type Tone = "default" | "success" | "caution" | "risk";
 

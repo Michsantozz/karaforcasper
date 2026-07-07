@@ -1,8 +1,8 @@
 import { MeetingDetail } from "@/features/meetings";
 import { AppShell } from "@/features/auth/ui/AppShell";
 
-// Detalhe de uma reunião: player + transcrição karaoke + notas de IA.
-// Rota: /meetings/:botId
+// Meeting detail: player + karaoke transcript + AI notes.
+// Route: /meetings/:botId
 export default async function MeetingDetailPage({
   params,
 }: {

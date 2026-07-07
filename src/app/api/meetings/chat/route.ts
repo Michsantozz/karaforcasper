@@ -6,9 +6,9 @@ import { getSession } from "@/features/auth/model/session";
 export const maxDuration = 60;
 
 /**
- * Chat do agente de reuniões. Exige sessão: as tools de agenda dependem do
- * usuário autenticado (better-auth). A sessão é lida via cookies pelo próprio
- * getSession dentro das tools; aqui só barramos o acesso não autenticado.
+ * Meetings agent chat. Requires a session: calendar tools depend on the
+ * authenticated user (better-auth). The session is read via cookies by
+ * getSession itself inside the tools; here we only block unauthenticated access.
  */
 export async function POST(req: Request) {
   const session = await getSession();

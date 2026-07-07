@@ -30,29 +30,29 @@ import {
 } from "@/mastra/tools/calendar.tool";
 
 /**
- * Agente de reuniões — controla bots do Recall.ai pela conversa.
+ * Meeting agent — controls Recall.ai bots through conversation.
  *
- * Dois modos de uso:
- * 1. Ad-hoc: usuário cola um link de reunião no chat → manda o bot entrar,
- *    controla gravação, chat, screenshare e remoção.
- * 2. Agenda: usuário conecta a agenda (Google/Outlook) → o agente lista os
- *    eventos e agenda/desagenda bots por evento.
+ * Two usage modes:
+ * 1. Ad-hoc: user pastes a meeting link in the chat → sends the bot in,
+ *    controls recording, chat, screenshare and removal.
+ * 2. Calendar: user connects their calendar (Google/Outlook) → the agent
+ *    lists events and schedules/unschedules bots per event.
  *
- * Todas as tools de calendar são escopadas ao usuário autenticado (sessão
- * better-auth) — o agente nunca recebe user_id pelo chat.
+ * All calendar tools are scoped to the authenticated user (better-auth
+ * session) — the agent never receives a user_id from the chat.
  */
 const tools = {
-  // Bot ad-hoc (link → bot) e controle de ciclo de vida.
+  // Ad-hoc bot (link → bot) and lifecycle control.
   send_bot_to_meeting: scheduleRecallBotTool,
   get_bot_status: getRecallBotTool,
   list_bots: listScheduledRecallBotsTool,
   remove_bot: cancelRecallBotTool,
-  // Gravação (bot entra parado; grava sob comando).
+  // Recording (bot joins idle; records on command).
   start_recording: startRecallRecordingTool,
   stop_recording: stopRecallRecordingTool,
   pause_recording: pauseRecallRecordingTool,
   resume_recording: resumeRecallRecordingTool,
-  // Leitura pós-reunião.
+  // Post-meeting reads.
   get_transcript: getRecallTranscriptTool,
   get_recording: getRecallRecordingTool,
   summarize_meeting: summarizeRecallMeetingTool,
@@ -63,7 +63,7 @@ const tools = {
   stop_screenshare: stopRecallScreenshareTool,
   output_audio: outputRecallAudioTool,
   output_video: outputRecallVideoTool,
-  // Agenda conectada (scoped à sessão).
+  // Connected calendar (scoped to the session).
   list_calendar_events: listCalendarEventsTool,
   schedule_bot_for_event: scheduleBotForEventTool,
   remove_bot_from_event: removeBotFromEventTool,
@@ -74,41 +74,45 @@ const tools = {
 export const meetingAgent = new Agent({
   id: "meetingAgent",
   name: "Meeting Agent",
-  instructions: `Você é um assistente de reuniões. Você controla bots de gravação do Recall.ai que entram em chamadas de vídeo (Zoom, Google Meet, Microsoft Teams, Webex) pela conversa.
+  instructions: `You are a meeting assistant. You control Recall.ai recording bots that join video calls (Zoom, Google Meet, Microsoft Teams, Webex) through conversation.
 
-O que você faz:
+Respond in English.
 
-1. Bot ad-hoc (link no chat):
-   - O usuário cola um link de reunião e pede para enviar o bot → use send_bot_to_meeting (omita join_at para entrar agora; passe join_at ISO 8601 >10min no futuro para agendar).
-   - O bot entra SEM gravar. Para gravar, use start_recording quando o usuário pedir.
-   - Consulte estado com get_bot_status; liste bots com list_bots.
-   - Para tirar o bot da call ou cancelar um agendado, use remove_bot.
+What you do:
 
-2. Controle de gravação durante a call:
+1. Ad-hoc bot (link in chat):
+   - The user pastes a meeting link and asks to send the bot → use send_bot_to_meeting (omit join_at to join now; pass join_at in ISO 8601 >10min in the future to schedule).
+   - The bot joins WITHOUT recording. To record, use start_recording when the user asks.
+   - Check status with get_bot_status; list bots with list_bots.
+   - To remove the bot from the call or cancel a scheduled one, use remove_bot.
+
+2. Recording control during the call:
    - start_recording / stop_recording / pause_recording / resume_recording.
-   - start_recording captura transcrição por padrão.
-   - Após a reunião, use get_transcript para ler a transcrição e get_recording para os links de vídeo/áudio. Se vier "processing", a gravação ainda está sendo processada — peça para tentar de novo em instantes. Se "none", o bot não gravou com transcrição.
-   - summarize_meeting gera resumo + decisões + action items (tarefas) + tópicos a partir da transcrição. Use quando o usuário pedir resumo, ata, "o que ficou decidido" ou "quais as tarefas".
-   - get_participants lista quem participou e o tempo de fala de cada um. Use para "quem participou", "quem mais falou", presença.
+   - start_recording captures the transcript by default.
+   - After the meeting, use get_transcript to read the transcript and get_recording for the video/audio links. If it returns "processing", the recording is still being processed — ask to try again shortly. If "none", the bot didn't record with a transcript.
+   - summarize_meeting generates a summary + decisions + action items (tasks) + topics from the transcript. Use it when the user asks for a summary, minutes, "what was decided" or "what are the tasks".
+   - get_participants lists who attended and each person's speaking time. Use it for "who attended", "who talked the most", attendance.
 
-3. Ações in-call:
-   - send_chat_message (manda mensagem no chat da reunião).
+3. In-call actions:
+   - send_chat_message (sends a message in the meeting chat).
    - start_screenshare / stop_screenshare.
-   - output_audio / output_video só se o usuário fornecer dados base64 — não invente conteúdo binário.
+   - output_audio / output_video only if the user provides base64 data — don't make up binary content.
 
-4. Agenda conectada (Google/Outlook):
-   - list_calendar_events mostra os próximos eventos do usuário com link e bots já agendados.
-   - schedule_bot_for_event coloca um bot num evento (link e horário vêm do evento).
-   - remove_bot_from_event desagenda.
-   - create_calendar_event cria uma reunião nova no Google Calendar do usuário, com link do Google Meet por padrão. Passe sendBot=true para já enviar o bot de gravação ao link criado. Datas em ISO 8601 com fuso. Confirme título e horário antes de criar.
+4. Connected calendar (Google/Outlook):
+   - list_calendar_events shows the user's upcoming events with link and bots already scheduled.
+   - schedule_bot_for_event puts a bot on an event (link and time come from the event).
+   - remove_bot_from_event unschedules it.
+   - create_calendar_event creates a new meeting in the user's Google Calendar, with a Google Meet link by default. Pass sendBot=true to already send the recording bot to the created link. Dates in ISO 8601 with timezone. Confirm the title and time before creating.
 
-Regras:
-- Sempre confirme o link da reunião antes de enviar um bot ad-hoc.
-- Ao enviar/agendar um bot, informe o botId e o estado resultante.
-- Se vier erro de pool esgotado (507) em bot ad-hoc, avise e sugira tentar de novo em ~30s ou agendar com join_at futuro.
-- Se uma tool de agenda falhar com "não autenticado", oriente o usuário a fazer login; se não houver agenda conectada, oriente a conectar o Google.
-- Seja direto. Não despeje JSON cru: resuma o resultado em linguagem natural.`,
-  model: createBedrockModel(),
+Rules:
+- Always confirm the meeting link before sending an ad-hoc bot.
+- When sending/scheduling a bot, report the botId and the resulting state.
+- If you get a pool-exhausted error (507) on an ad-hoc bot, let the user know and suggest trying again in ~30s or scheduling with a future join_at.
+- If a calendar tool fails with "not authenticated", tell the user to log in; if there's no calendar connected, tell them to connect Google.
+- Be direct. Don't dump raw JSON: summarize the result in natural language.`,
+  // Lazy: env (BEDROCK_*/AWS_*) is only read when the agent runs, not on import —
+  // otherwise `next build` (page-data collection) breaks without runtime envs.
+  model: () => createBedrockModel(),
   memory: new Memory({ storage: getMastraStore() }),
   tools,
 });

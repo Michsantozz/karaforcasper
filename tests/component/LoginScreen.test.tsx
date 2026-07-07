@@ -59,6 +59,48 @@ describe("LoginScreen — Google", () => {
   });
 });
 
+describe("LoginScreen — erro de verificação do magic link (?error=)", () => {
+  function stubLocation(search: string) {
+    const replaceState = vi.fn();
+    Object.defineProperty(window, "location", {
+      value: { href: "", search, pathname: "/" },
+      writable: true,
+    });
+    Object.defineProperty(window, "history", {
+      value: { replaceState },
+      writable: true,
+    });
+    return replaceState;
+  }
+
+  it("token inválido na URL vira toast e limpa a query", async () => {
+    const replaceState = stubLocation("?error=INVALID_TOKEN");
+    render(<LoginScreen />);
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(
+        "Link inválido ou já usado. Peça um novo abaixo.",
+      ),
+    );
+    expect(replaceState).toHaveBeenCalledWith({}, "", "/");
+  });
+
+  it("erro desconhecido cai na mensagem genérica", async () => {
+    stubLocation("?error=weird_thing");
+    render(<LoginScreen />);
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith("Falha ao entrar. Tente de novo."),
+    );
+  });
+
+  it("sem ?error não dispara toast", async () => {
+    stubLocation("");
+    render(<LoginScreen />);
+    // Deixa o effect rodar; nenhum toast de erro deve sair.
+    await waitFor(() => expect(document.body).toBeInTheDocument());
+    expect(toastError).not.toHaveBeenCalled();
+  });
+});
+
 describe("LoginScreen — magic link (tab default)", () => {
   it("envia o link e mostra confirmação", async () => {
     magicLink.mockResolvedValue({ error: null });
@@ -68,7 +110,12 @@ describe("LoginScreen — magic link (tab default)", () => {
     await user.type(screen.getByPlaceholderText("voce@email.com"), "a@b.com");
     await user.click(screen.getByRole("button", { name: /enviar link/i }));
 
-    expect(magicLink).toHaveBeenCalledWith({ email: "a@b.com", callbackURL: "/" });
+    expect(magicLink).toHaveBeenCalledWith({
+      email: "a@b.com",
+      callbackURL: "/",
+      // Token inválido/expirado na verificação volta pra home com ?error=.
+      errorCallbackURL: "/",
+    });
     await waitFor(() =>
       expect(screen.getByText(/enviamos um link de acesso/i)).toBeInTheDocument(),
     );

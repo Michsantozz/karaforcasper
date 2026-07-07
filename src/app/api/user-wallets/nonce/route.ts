@@ -4,9 +4,9 @@ import { createWalletLinkNonce } from "@/server/casper/user-wallets";
 import { assertSameOrigin } from "@/shared/lib/http";
 
 /**
- * Emite um nonce para o usuário PROVAR posse de uma carteira antes de vinculá-la.
- * O client assina este nonce (signMessage) e envia a assinatura ao POST
- * /api/user-wallets, que verifica criptograficamente antes de gravar.
+ * Issues a nonce for the user to PROVE possession of a wallet before linking it.
+ * The client signs this nonce (signMessage) and sends the signature to POST
+ * /api/user-wallets, which verifies it cryptographically before recording it.
  */
 export async function POST() {
   const csrf = await assertSameOrigin();

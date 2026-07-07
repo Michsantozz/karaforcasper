@@ -56,7 +56,7 @@ export const account = pgTable(
     accessTokenExpiresAt: timestamp("access_token_expires_at"),
     refreshTokenExpiresAt: timestamp("refresh_token_expires_at"),
     scope: text("scope"),
-    // better-auth 1.7-beta: scopes efetivamente concedidos pelo provider.
+    // better-auth 1.7-beta: scopes actually granted by the provider.
     grantedScopes: text("granted_scopes"),
     password: text("password"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -83,9 +83,9 @@ export const verification = pgTable(
   (table) => [index("verification_identifier_idx").on(table.identifier)],
 );
 
-// Tabela do rate limiter do better-auth (rateLimit.storage="database"). Contador
-// por chave (rota+identificador) com janela deslizante. Persistente → funciona
-// em serverless e entre instâncias, ao contrário de storage="memory".
+// better-auth rate limiter table (rateLimit.storage="database"). Counter per
+// key (route+identifier) with a sliding window. Persistent → works in
+// serverless and across instances, unlike storage="memory".
 export const rateLimit = pgTable("rate_limit", {
   id: text("id").primaryKey(),
   key: text("key"),

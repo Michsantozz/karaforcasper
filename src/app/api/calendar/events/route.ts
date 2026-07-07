@@ -7,13 +7,13 @@ import {
 import { getSession } from "@/features/auth/model/session";
 
 /**
- * Lista eventos das agendas conectadas do usuário autenticado.
+ * Lists events from the authenticated user's connected calendars.
  *
- * Query opcional `calendar_id` restringe a um calendar específico (que deve
- * pertencer ao usuário). Sem ele, agrega todos os calendars do usuário.
+ * Optional `calendar_id` query restricts to a specific calendar (which must
+ * belong to the user). Without it, aggregates across all of the user's calendars.
  *
- * Filtra `is_deleted=false` (Recall mantém eventos deletados como histórico;
- * pra exibir ao usuário, só os vivos). Retorna campos enxutos pra UI.
+ * Filters `is_deleted=false` (Recall keeps deleted events as history; for
+ * display to the user, only the live ones). Returns lean fields for the UI.
  */
 export async function GET(req: Request) {
   const session = await getSession();
@@ -26,7 +26,7 @@ export async function GET(req: Request) {
   const calendarId = url.searchParams.get("calendar_id");
 
   try {
-    // Resolve os calendars a consultar — sempre escopados ao usuário da sessão.
+    // Resolve which calendars to query — always scoped to the session user.
     let calendarIds: string[];
     if (calendarId) {
       const mapping = await findCalendarById(calendarId);
@@ -39,21 +39,21 @@ export async function GET(req: Request) {
       calendarIds = mappings.map((m) => m.recallCalendarId);
     }
 
-    // Lista eventos de cada calendar (1ª página). Pagina via `next` se precisar.
+    // Lists events for each calendar (1st page). Paginate via `next` if needed.
     const events = (
       await Promise.all(
         calendarIds.map(async (cid) => {
           const { results } = await listCalendarEvents({
             calendarId: cid,
             isDeleted: false,
-            startTimeGte: new Date().toISOString(), // só futuros
+            startTimeGte: new Date().toISOString(), // only future events
           });
           return results;
         }),
       )
     ).flat();
 
-    // Projeta o necessário pra UI.
+    // Projects only what the UI needs.
     const projected = events
       .map((e) => ({
         id: e.id,

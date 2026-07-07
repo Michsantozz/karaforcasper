@@ -4,9 +4,14 @@ import { getSession } from "@/features/auth/model/session";
 import {
   createSignatureRequest,
   listRequestsByCreator,
+  partitionSignerNotifications,
 } from "@/server/casper/signature-request";
 import { resolveUsersByWallets } from "@/server/casper/user-wallets";
 import { createNotificationsForUsers } from "@/server/casper/notifications";
+import {
+  emailSignatureRequested,
+  emailExternalSignatureRequested,
+} from "@/server/email";
 import { assertSameOrigin, parseBody, publicKeyHexSchema } from "@/shared/lib/http";
 import type { SignatureRequestStatus } from "@/shared/db/schema";
 
@@ -19,6 +24,8 @@ const createSchema = z.object({
       z.object({
         publicKeyHex: publicKeyHexSchema,
         label: z.string().max(100).optional(),
+        // Optional: invite an external signer (no linked wallet) by email.
+        email: z.string().email().max(200).optional(),
       }),
     )
     .min(1)
@@ -27,7 +34,7 @@ const createSchema = z.object({
   chainName: z.string().max(50).optional(),
 });
 
-// Erros estáveis da lib (validação de tx) → status HTTP.
+// Stable lib errors (tx validation) → HTTP status.
 const CREATE_ERROR_STATUS: Record<string, number> = {
   transaction_too_large: 413,
   invalid_transaction_json: 422,
@@ -35,9 +42,9 @@ const CREATE_ERROR_STATUS: Record<string, number> = {
 };
 
 /**
- * Cria uma solicitação de assinatura multisig (auth). Recebe a tx base + os
- * signatários exigidos + o quórum. Ao criar, notifica in-app cada signatário que
- * tem conta vinculada (resolve carteira → user).
+ * Creates a multisig signature request (auth). Receives the base tx + the
+ * required signers + the quorum. On creation, notifies in-app each signer that
+ * has a linked account (resolves wallet → user).
  */
 export async function POST(req: Request) {
   const csrf = await assertSameOrigin();
@@ -70,27 +77,55 @@ export async function POST(req: Request) {
     );
   }
 
-  // Notifica signatários que têm conta (exceto o próprio criador).
+  // Resolve linked wallets → users, then partition who gets notified (no
+  // overlap between account signers and external email invites). The dedup rule
+  // lives in the pure partitionSignerNotifications (unit-tested).
   const walletToUser = await resolveUsersByWallets(
     request.requiredSigners.map((s) => s.publicKeyHex),
   );
-  const targets = Array.from(walletToUser.values()).filter(
-    (uid) => uid !== session.user.id,
-  );
+  const { accountUserIds, externalEmails } = partitionSignerNotifications({
+    requiredSigners: request.requiredSigners,
+    walletToUser,
+    createdByUserId: session.user.id,
+  });
+
   await createNotificationsForUsers({
-    userIds: targets,
+    userIds: accountUserIds,
     type: "signature_requested",
     message: request.description
-      ? `Assinatura solicitada: ${request.description}`
-      : "Há uma transação aguardando sua assinatura.",
+      ? `Signature requested: ${request.description}`
+      : "There is a transaction awaiting your signature.",
     requestId: request.id,
   });
+
+  // External push: email with a direct link to /sign/{id}. Reaches the signer
+  // even when logged out, complementing the in-app bell. Best-effort — sendEmail
+  // never throws (degrades to a no-op without RESEND_API_KEY), so creation
+  // doesn't fail if the email fails. Fired in parallel; we await all before
+  // responding.
+  await Promise.all([
+    ...accountUserIds.map((userId) =>
+      emailSignatureRequested({
+        userId,
+        requestId: request.id,
+        description: request.description,
+      }),
+    ),
+    ...externalEmails.map((to) =>
+      emailExternalSignatureRequested({
+        to,
+        requestId: request.id,
+        description: request.description,
+      }),
+    ),
+  ]);
 
   return NextResponse.json({
     id: request.id,
     status: request.status,
     link: `/sign/${request.id}`,
-    notified: targets.length,
+    notified: accountUserIds.length,
+    invitedExternal: externalEmails.length,
   });
 }
 
@@ -104,8 +139,8 @@ const VALID_STATUS: SignatureRequestStatus[] = [
 ];
 
 /**
- * Lista as solicitações criadas pelo usuário autenticado. Suporta filtro por
- * status (?status=pending,ready) e paginação (?limit=&offset=) para o histórico.
+ * Lists the requests created by the authenticated user. Supports filtering by
+ * status (?status=pending,ready) and pagination (?limit=&offset=) for history.
  */
 export async function GET(req: Request) {
   const session = await getSession();

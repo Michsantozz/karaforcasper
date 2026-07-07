@@ -9,28 +9,28 @@ import {
 } from "@/shared/db/schema";
 
 /**
- * Billing web3 — prepaid ledger + on-chain anchor (camada capability).
+ * Web3 billing — prepaid ledger + on-chain anchor (capability layer).
  *
- * Saldo = Σ depósitos (créditos, lastreados por tx on-chain) − Σ uso (débitos).
- * Tudo em MOTES (bigint) para não perder precisão. O settle não move fundos por
- * minuto: ele NOTARIZA o batch de uso on-chain (ver settleUsage no worker).
+ * Balance = Σ deposits (credits, backed by on-chain tx) − Σ usage (debits).
+ * Everything in MOTES (bigint) to avoid losing precision. Settle doesn't move
+ * funds per minute: it NOTARIZES the usage batch on-chain (see settleUsage in the worker).
  */
 
 export const MOTES_PER_CSPR = 1_000_000_000n;
 
-/** Preço por minuto de gravação, em motes. Default 0.5 CSPR/min. */
+/** Price per minute of recording, in motes. Default 0.5 CSPR/min. */
 export function pricePerMinuteMotes(): bigint {
   const env = process.env.BILLING_PRICE_PER_MINUTE_CSPR;
   const cspr = env ? Number(env) : 0.5;
   return BigInt(Math.round(cspr * Number(MOTES_PER_CSPR)));
 }
 
-/** Custo de uma reunião (motes) a partir dos minutos. */
+/** Cost of a meeting (motes) from the minutes. */
 export function costForMinutes(minutes: number): bigint {
   return BigInt(Math.max(0, Math.ceil(minutes))) * pricePerMinuteMotes();
 }
 
-/** Soma total de depósitos do usuário (motes). */
+/** Total sum of the user's deposits (motes). */
 async function totalDeposits(userId: string): Promise<bigint> {
   const rows = await scopedDb()
     .select({ amount: billingDeposits.amountMotes })
@@ -39,7 +39,7 @@ async function totalDeposits(userId: string): Promise<bigint> {
   return rows.reduce((acc, r) => acc + BigInt(r.amount), 0n);
 }
 
-/** Soma total de uso do usuário (motes), settled ou não. */
+/** Total sum of the user's usage (motes), settled or not. */
 async function totalUsage(userId: string): Promise<bigint> {
   const rows = await scopedDb()
     .select({ cost: usageLedger.costMotes })
@@ -48,7 +48,7 @@ async function totalUsage(userId: string): Promise<bigint> {
   return rows.reduce((acc, r) => acc + BigInt(r.cost), 0n);
 }
 
-/** Saldo disponível do usuário em motes (pode ser negativo se estourou). */
+/** Available balance of the user in motes (can be negative if overdrawn). */
 export async function balanceMotes(userId: string): Promise<bigint> {
   const [deposits, usage] = await Promise.all([
     totalDeposits(userId),
@@ -57,15 +57,15 @@ export async function balanceMotes(userId: string): Promise<bigint> {
   return deposits - usage;
 }
 
-/** Saldo em CSPR (string, para exibição). */
+/** Balance in CSPR (string, for display). */
 export async function balanceCspr(userId: string): Promise<string> {
   const motes = await balanceMotes(userId);
   return (Number(motes) / Number(MOTES_PER_CSPR)).toString();
 }
 
 /**
- * Credita um depósito. Idempotente por txHash (PK). Chamado após verificar a tx
- * on-chain (que os fundos chegaram à conta do app). Retorna false se já creditado.
+ * Credits a deposit. Idempotent by txHash (PK). Called after verifying the
+ * on-chain tx (that the funds arrived at the app's account). Returns false if already credited.
  */
 export async function creditDeposit(input: {
   txHash: string;
@@ -87,8 +87,8 @@ export async function creditDeposit(input: {
 }
 
 /**
- * Registra o débito de uso de uma reunião. Idempotente por botId (PK): medir a
- * mesma reunião duas vezes não dobra a cobrança.
+ * Records the usage debit of a meeting. Idempotent by botId (PK): measuring
+ * the same meeting twice doesn't double the charge.
  */
 export async function recordUsage(input: {
   botId: string;
@@ -108,8 +108,8 @@ export async function recordUsage(input: {
 }
 
 /**
- * Gate de saldo: true se o usuário tem crédito para (pelo menos) mais uma
- * reunião do tamanho estimado. Usado antes de agendar/criar um bot.
+ * Balance gate: true if the user has credit for (at least) one more meeting
+ * of the estimated size. Used before scheduling/creating a bot.
  */
 export async function hasBalanceForMinutes(
   userId: string,
@@ -122,7 +122,7 @@ export async function hasBalanceForMinutes(
   return balance >= needed;
 }
 
-/** Débitos ainda não ancorados on-chain, de um usuário. */
+/** Debits not yet anchored on-chain, for a user. */
 export async function listUnsettledUsage(
   userId: string,
 ): Promise<UsageLedgerRow[]> {
@@ -135,31 +135,32 @@ export async function listUnsettledUsage(
 }
 
 /**
- * Prefixo do claim otimista de settle. Marca uma linha como "em processo de
- * ancoragem por este tick" antes de submeter a tx on-chain (lenta). Como o
- * settle roda a rede FORA da transação Postgres, dois ticks de cron sobrepostos
- * leriam as mesmas linhas não-settled e ancorariam o MESMO batch duas vezes
- * (gas dobrado). O claim atômico resolve: o UPDATE condicional
- * (WHERE settled_tx_hash IS NULL) só captura as linhas que ainda ninguém pegou,
- * então cada débito é ancorado por exatamente um tick. É um lock por-linha
- * durável (sobrevive a crash: um claim órfão é limpo por releaseUsageClaim no
- * retry) sem advisory lock de sessão (que vazaria no pool).
+ * Prefix of the optimistic settle claim. Marks a row as "being anchored by
+ * this tick" before submitting the (slow) on-chain tx. Since settle runs the
+ * network OUTSIDE the Postgres transaction, two overlapping cron ticks would
+ * read the same unsettled rows and anchor the SAME batch twice (double gas).
+ * The atomic claim solves this: the conditional UPDATE
+ * (WHERE settled_tx_hash IS NULL) only captures rows nobody has taken yet,
+ * so each debit is anchored by exactly one tick. It's a durable per-row lock
+ * (survives a crash: an orphaned claim is cleaned up by releaseUsageClaim on
+ * retry) without a session advisory lock (which would leak in the pool).
  */
 export const SETTLE_CLAIM_PREFIX = "claiming:";
 
 /**
- * Reivindica atomicamente os débitos não-settled de um usuário para este tick.
- * Retorna só as linhas efetivamente capturadas (as que estavam livres). Um tick
- * concorrente que rode ao mesmo tempo captura um subconjunto disjunto (ou vazio).
- * O claimToken deve ser único por tick (ex.: derivado do batchHash).
+ * Atomically claims the unsettled debits of a user for this tick. Returns
+ * only the rows actually captured (those that were free). A concurrent tick
+ * running at the same time captures a disjoint subset (or empty).
+ * The claimToken must be unique per tick (e.g. derived from batchHash).
  */
 export async function claimUnsettledUsage(
   userId: string,
   claimToken: string,
 ): Promise<UsageLedgerRow[]> {
-  // Grava settledAt = agora no claim: serve de timestamp do lock para o reaper
-  // (reapStaleClaims) liberar claims órfãos deixados por um tick que crashou
-  // entre o claim e o mark. Só é sobrescrito com o instante real no markUsageSettled.
+  // Writes settledAt = now on the claim: serves as the lock timestamp for the
+  // reaper (reapStaleClaims) to release orphaned claims left by a tick that
+  // crashed between the claim and the mark. Only overwritten with the real
+  // instant in markUsageSettled.
   return scopedDb()
     .update(usageLedger)
     .set({ settledTxHash: SETTLE_CLAIM_PREFIX + claimToken, settledAt: new Date() })
@@ -170,11 +171,11 @@ export async function claimUnsettledUsage(
 }
 
 /**
- * Libera claims órfãos: linhas presas em "claiming:*" cujo claim é mais velho
- * que staleMs — sinal de que o tick que as reivindicou morreu antes de ancorar.
- * Chamado no início de cada ciclo de settle. Volta a coluna para NULL para que
- * o próximo tick as capture de novo. staleMs deve ser > que a duração máxima
- * esperada de uma submissão on-chain, para não roubar um claim ainda em voo.
+ * Releases orphaned claims: rows stuck in "claiming:*" whose claim is older
+ * than staleMs — a sign that the tick that claimed them died before anchoring.
+ * Called at the start of each settle cycle. Resets the column to NULL so the
+ * next tick captures them again. staleMs should be > the maximum expected
+ * duration of an on-chain submission, so as not to steal a claim still in flight.
  */
 export async function reapStaleClaims(staleMs: number): Promise<number> {
   const cutoff = new Date(Date.now() - staleMs);
@@ -191,7 +192,7 @@ export async function reapStaleClaims(staleMs: number): Promise<number> {
   return res.length;
 }
 
-/** Libera um claim (volta a coluna para NULL) — usado quando a tx on-chain falha. */
+/** Releases a claim (resets the column to NULL) — used when the on-chain tx fails. */
 export async function releaseUsageClaim(
   botIds: string[],
   claimToken: string,
@@ -208,7 +209,7 @@ export async function releaseUsageClaim(
     );
 }
 
-/** Usuários com uso não ancorado (para o cron de settle iterar). */
+/** Users with unanchored usage (for the settle cron to iterate over). */
 export async function listUsersWithUnsettledUsage(): Promise<string[]> {
   const rows = await scopedDb()
     .selectDistinct({ userId: usageLedger.userId })
@@ -218,9 +219,9 @@ export async function listUsersWithUnsettledUsage(): Promise<string[]> {
 }
 
 /**
- * Finaliza os débitos reivindicados por este tick, gravando o txHash real do
- * anchor. Casa pelo claimToken (não por IS NULL): as linhas já saíram de NULL no
- * claim, então só quem detém este claim as finaliza — dois ticks não colidem.
+ * Finalizes the debits claimed by this tick, writing the real txHash of the
+ * anchor. Matches by claimToken (not by IS NULL): the rows already left NULL
+ * at claim time, so only whoever holds this claim finalizes them — two ticks don't collide.
  */
 export async function markUsageSettled(
   botIds: string[],
@@ -240,8 +241,8 @@ export async function markUsageSettled(
 }
 
 /**
- * Hash determinístico de um batch de uso — id do anchor on-chain. Mesma lista de
- * (botId, cost) → mesmo hash, independente da ordem.
+ * Deterministic hash of a usage batch — the id of the on-chain anchor. Same
+ * list of (botId, cost) → same hash, regardless of order.
  */
 export function hashUsageBatch(
   rows: Array<{ botId: string; costMotes: string }>,

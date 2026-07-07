@@ -3,12 +3,12 @@ import { getDayAvailability } from "@/server/recall/availability";
 import { getSession } from "@/features/auth/model/session";
 
 /**
- * Disponibilidade de um DIA para o usuário autenticado — a grade de horário
- * comercial já classificada (livre/ocupado) contra a agenda real.
+ * Availability for a single DAY for the authenticated user — the business-hours
+ * grid already classified (free/busy) against the real calendar.
  *
- * Consumida pelo PickDateToolUI (client): a UI não pode importar `server/`, então
- * pede aqui. Query: `date` (yyyy-mm-dd, obrigatório) e `tz` (IANA, opcional —
- * default America/Sao_Paulo).
+ * Consumed by PickDateToolUI (client): the UI can't import `server/`, so it
+ * fetches here. Query: `date` (yyyy-mm-dd, required) and `tz` (IANA, optional —
+ * defaults to America/Sao_Paulo).
  */
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -24,11 +24,11 @@ export async function GET(req: Request) {
 
   if (!dateIso || !DATE_RE.test(dateIso)) {
     return NextResponse.json(
-      { error: "bad date", detail: "esperado ?date=yyyy-mm-dd" },
+      { error: "bad date", detail: "expected ?date=yyyy-mm-dd" },
       { status: 400 },
     );
   }
-  // Valida o IANA tz cedo — um tz inválido explodiria dentro do Intl.
+  // Validate the IANA tz early — an invalid tz would blow up inside Intl.
   try {
     new Intl.DateTimeFormat("en-US", { timeZone });
   } catch {

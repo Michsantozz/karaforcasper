@@ -9,17 +9,17 @@ import { autoScheduleForCalendar } from "@/server/recall/auto-schedule";
 import { withSystemScope } from "@/shared/db/rls";
 
 /**
- * Webhook do Recall (Calendar V2, entregue via Svix).
+ * Recall webhook (Calendar V2, delivered via Svix).
  *
- * Dois eventos:
- * - `calendar.update`     → status mudou (ex: disconnected). Re-fetch e persiste.
- * - `calendar.sync_events`→ eventos mudaram. Re-fetch eventos e (de)agenda bots.
+ * Two events:
+ * - `calendar.update`      → status changed (e.g. disconnected). Re-fetch and persist.
+ * - `calendar.sync_events` → events changed. Re-fetch events and (un)schedule bots.
  *
- * Segurança: verificamos a assinatura Svix (svix-id/svix-timestamp/svix-signature)
- * com o signing secret do endpoint ANTES de confiar no corpo. `wh.verify` faz
- * HMAC-SHA256 + comparação timing-safe + janela de timestamp (anti-replay, 5min),
- * exatamente como `stripe.webhooks.constructEvent`. A verificação exige o corpo
- * CRU (req.text()) — nunca req.json(), que re-serializa e quebra a assinatura.
+ * Security: we verify the Svix signature (svix-id/svix-timestamp/svix-signature)
+ * with the endpoint's signing secret BEFORE trusting the body. `wh.verify` does
+ * HMAC-SHA256 + timing-safe comparison + timestamp window (anti-replay, 5min),
+ * exactly like `stripe.webhooks.constructEvent`. Verification requires the RAW
+ * body (req.text()) — never req.json(), which re-serializes and breaks the signature.
  */
 
 type CalendarUpdate = {
@@ -35,8 +35,8 @@ type RecallWebhook = CalendarUpdate | CalendarSyncEvents;
 export async function POST(req: Request) {
   const secret = process.env.RECALL_WEBHOOK_SECRET;
   if (!secret) {
-    // Fail-closed: sem o secret não há como autenticar a origem. Recusa em vez
-    // de processar corpo não confiável.
+    // Fail-closed: without the secret there's no way to authenticate the origin.
+    // Refuse instead of processing an untrusted body.
     return NextResponse.json(
       { error: "webhook_not_configured" },
       { status: 500 },
@@ -63,8 +63,8 @@ export async function POST(req: Request) {
   try {
     switch (payload.event) {
       case "calendar.update": {
-        // Re-fetch para pegar o status mais recente e persistir. Tabela tenant →
-        // system scope (webhook age em nome do dono do calendar).
+        // Re-fetch to get the latest status and persist it. Tenant table →
+        // system scope (the webhook acts on behalf of the calendar owner).
         const calendarId = payload.data.calendar_id;
         const mapping = await withSystemScope(() =>
           findCalendarById(calendarId),
@@ -79,10 +79,10 @@ export async function POST(req: Request) {
       }
 
       case "calendar.sync_events": {
-        // Eventos mudaram. Se o calendar tem gravação automática ligada (opt-in),
-        // agenda bots nos próximos eventos com meeting_url. Sem opt-in, não faz
-        // nada (não gravamos reunião sem consentimento). O dedup por evento no
-        // Recall garante idempotência com o cron de varredura.
+        // Events changed. If the calendar has auto-recording enabled (opt-in),
+        // schedule bots on upcoming events that have a meeting_url. Without
+        // opt-in, do nothing (we don't record a meeting without consent). Recall's
+        // per-event dedup guarantees idempotency with the sweep cron.
         const calendarId = payload.data.calendar_id;
         const mapping = await withSystemScope(() =>
           findCalendarById(calendarId),
@@ -97,12 +97,12 @@ export async function POST(req: Request) {
       }
 
       default:
-        // Evento desconhecido — ack pra não reentregar.
+        // Unknown event — ack so it doesn't get redelivered.
         break;
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : "unknown error";
-    // 5xx faz o Svix reentregar. Use com cautela em erros não-transientes.
+    // 5xx makes Svix redeliver. Use with caution for non-transient errors.
     return NextResponse.json(
       { error: "webhook processing failed", detail: message },
       { status: 500 },

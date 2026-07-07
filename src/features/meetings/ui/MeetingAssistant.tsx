@@ -19,11 +19,11 @@ import { MeetingToolUIs } from "@/features/meetings/ui/MeetingToolUI";
 import { signIn, signOut, useSession } from "@/features/auth/model/auth-client";
 
 /**
- * Chat do agente de reuniões (/meetings).
+ * Meeting agent chat (/meetings).
  *
- * Gate de login: sem sessão, mostra "Entrar com Google". Com sessão, abre a
- * thread apontando para /api/meetings/chat, com barra de topo que reflete o
- * estado da agenda (conectada vs. conectar) e botão de sair.
+ * Login gate: without a session, shows "Sign in with Google". With a
+ * session, opens the thread pointing to /api/meetings/chat, with a top bar
+ * reflecting the calendar state (connected vs. connect) and a sign-out button.
  */
 export function MeetingAssistant() {
   const { data: session, isPending } = useSession();
@@ -31,7 +31,7 @@ export function MeetingAssistant() {
   if (isPending) {
     return (
       <div className="flex h-dvh items-center justify-center text-sm text-muted-foreground">
-        carregando…
+        loading…
       </div>
     );
   }
@@ -49,11 +49,11 @@ function LoginGate() {
           <VideoIcon className="size-5 text-(--thread-accent-primary)" />
         </span>
         <h1 className="font-semibold text-lg tracking-tight">
-          Assistente de Reuniões
+          Meeting Assistant
         </h1>
         <p className="max-w-sm text-sm text-muted-foreground">
-          Entre para enviar bots a reuniões, controlar a gravação e agendar bots
-          pela sua agenda — tudo pela conversa.
+          Sign in to send bots to meetings, control the recording, and
+          schedule bots from your calendar — all through conversation.
         </p>
       </div>
       <Button
@@ -61,7 +61,7 @@ function LoginGate() {
           signIn.social({ provider: "google", callbackURL: "/meetings" })
         }
       >
-        Entrar com Google
+        Sign in with Google
       </Button>
     </div>
   );
@@ -90,16 +90,16 @@ function MeetingThread({ userName }: { userName: string }) {
       const res = await fetch("/api/calendar/status");
       if (res.ok) setCalendar(await res.json());
     } catch {
-      /* mantém estado anterior */
+      /* keep previous state */
     }
   }, []);
 
   useEffect(() => {
-    // Busca inicial do status do calendar (fetch → setState async). É I/O de
-    // montagem, não estado derivável em render.
+    // Initial calendar status fetch (fetch → async setState). This is
+    // mount-time I/O, not state derivable at render time.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     refreshStatus();
-    // ?connected=1 volta do OAuth de calendar — limpa a query e re-busca status.
+    // ?connected=1 comes back from calendar OAuth — clear the query and refetch status.
     const params = new URLSearchParams(window.location.search);
     if (params.get("connected")) {
       window.history.replaceState({}, "", "/meetings");
@@ -124,7 +124,7 @@ function MeetingThread({ userName }: { userName: string }) {
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      {/* ToolUIs registradas — substituem o JSON cru das tool-calls por cards. */}
+      {/* Registered ToolUIs — replace raw tool-call JSON with cards. */}
       <MeetingToolUIs />
       <div className="flex h-dvh flex-col">
         <header className="flex items-center justify-between border-b px-4 py-2 pl-14 md:pl-4">
@@ -137,7 +137,7 @@ function MeetingThread({ userName }: { userName: string }) {
               <>
                 <span className="flex items-center gap-1.5 rounded-[6px] border border-(--thread-accent-primary) bg-(--thread-accent-primary-soft) px-2.5 py-1 font-mono text-[11px] text-(--thread-accent-primary)">
                   <CalendarCheckIcon className="size-3.5" />
-                  agenda conectada
+                  calendar connected
                   {primaryEmail ? (
                     <span className="text-muted-foreground">
                       · {primaryEmail}
@@ -154,10 +154,10 @@ function MeetingThread({ userName }: { userName: string }) {
                   size="sm"
                   onClick={disconnect}
                   disabled={disconnecting}
-                  aria-label="Desconectar agenda"
+                  aria-label="Disconnect calendar"
                 >
                   <CalendarXIcon className="size-3.5" />
-                  {disconnecting ? "desconectando…" : "Desconectar"}
+                  {disconnecting ? "disconnecting…" : "Disconnect"}
                 </Button>
               </>
             ) : (
@@ -169,17 +169,17 @@ function MeetingThread({ userName }: { userName: string }) {
                 }}
               >
                 <CalendarPlusIcon className="size-3.5" />
-                Conectar agenda
+                Connect calendar
               </Button>
             )}
             <Button
               variant="ghost"
               size="sm"
               onClick={() => signOut()}
-              aria-label="Sair"
+              aria-label="Sign out"
             >
               <LogOutIcon className="size-3.5" />
-              Sair
+              Sign out
             </Button>
           </div>
         </header>
@@ -191,7 +191,7 @@ function MeetingThread({ userName }: { userName: string }) {
   );
 }
 
-/** Empty state próprio do agente de reuniões (substitui o welcome do Casper). */
+/** Meeting agent's own empty state (replaces the Casper welcome). */
 function MeetingWelcome() {
   return (
     <div className="mb-6 flex flex-col items-center gap-2 px-4 text-center">
@@ -203,11 +203,11 @@ function MeetingWelcome() {
         meeting agent · recall.ai
       </span>
       <h1 className="text-2xl font-semibold tracking-tight">
-        Quem entra na sua reunião?
+        Who&apos;s joining your meeting?
       </h1>
       <p className="max-w-md text-sm text-muted-foreground">
-        Cole um link de reunião para enviar um bot, controle a gravação, ou
-        conecte sua agenda e agende bots por evento — tudo pela conversa.
+        Paste a meeting link to send a bot, control the recording, or connect
+        your calendar and schedule bots per event — all through conversation.
       </p>
     </div>
   );

@@ -3,8 +3,8 @@ import { getSession } from "@/features/auth/model/session";
 import { listNotifications } from "@/server/casper/notifications";
 
 /**
- * Notificações in-app do usuário autenticado (sininho do dashboard /multisig).
- * Query `?unread=1` filtra só as não lidas.
+ * In-app notifications for the authenticated user (the /multisig dashboard bell).
+ * Query `?unread=1` filters to unread only.
  */
 export async function GET(req: Request) {
   const session = await getSession();

@@ -10,25 +10,25 @@ import { Buffer } from "node:buffer";
 import { CHAIN_NAME, getRpc } from "./client";
 
 const MOTES_PER_CSPR = 1_000_000_000n;
-// Gas de payment p/ transfer nativo no Testnet (~0.1 CSPR).
+// Payment gas for a native transfer on Testnet (~0.1 CSPR).
 const TRANSFER_PAYMENT_MOTES = 100_000_000;
-// Gas de payment p/ delegate/undelegate (~2.5 CSPR — operação de auction).
+// Payment gas for delegate/undelegate (~2.5 CSPR — an auction operation).
 const STAKING_PAYMENT_MOTES = 2_500_000_000;
 
 function toMotes(amountCspr: number): string {
   return BigInt(Math.round(amountCspr * Number(MOTES_PER_CSPR))).toString();
 }
 
-// Tag de algoritmo (= prefixo da public key): 01 = ED25519, 02 = SECP256K1.
-// A Casper Wallet retorna a assinatura crua (64 bytes); o nó exige a tag no
-// primeiro byte. Prefixa-a se ainda não estiver presente (idempotente).
+// Algorithm tag (= public key prefix): 01 = ED25519, 02 = SECP256K1.
+// The Casper Wallet returns the raw signature (64 bytes); the node requires
+// the tag as the first byte. Prefixes it if not already present (idempotent).
 export function withAlgorithmTag(
   signatureHex: string,
   signerPublicKeyHex: string,
 ): Uint8Array {
   const raw = Uint8Array.from(Buffer.from(signatureHex, "hex"));
   const tag = signerPublicKeyHex.slice(0, 2).toLowerCase() === "01" ? 0x01 : 0x02;
-  // 64 bytes = assinatura crua (precisa de tag); 65 = já prefixada.
+  // 64 bytes = raw signature (needs tag); 65 = already prefixed.
   if (raw.length === 65 && (raw[0] === 0x01 || raw[0] === 0x02)) return raw;
   const tagged = new Uint8Array(raw.length + 1);
   tagged[0] = tag;
@@ -37,9 +37,9 @@ export function withAlgorithmTag(
 }
 
 export interface PreparedUserTransfer {
-  /** JSON da tx (sem assinatura) — enviado ao client p/ a Casper Wallet assinar. */
+  /** Tx JSON (unsigned) — sent to the client for the Casper Wallet to sign. */
   transactionJson: string;
-  /** Public key (hex) que DEVE assinar — a conta ativa na carteira do usuário. */
+  /** Public key (hex) that MUST sign — the active account in the user's wallet. */
   signerPublicKeyHex: string;
   amountCspr: string;
   to: string;
@@ -47,10 +47,10 @@ export interface PreparedUserTransfer {
 }
 
 /**
- * Monta um transfer nativo de CSPR a partir da carteira do USUÁRIO (não a do
- * agente) — sem assinar. O JSON resultante vai ao browser, onde a extensão
- * Casper Wallet assina (popup). A assinatura volta e é anexada em
- * broadcastUserSignedTransfer.
+ * Builds a native CSPR transfer from the USER's wallet (not the agent's) —
+ * without signing. The resulting JSON goes to the browser, where the Casper
+ * Wallet extension signs it (popup). The signature comes back and is attached
+ * in broadcastUserSignedTransfer.
  */
 export function prepareUserTransfer(args: {
   fromPublicKeyHex: string;
@@ -80,18 +80,18 @@ export function prepareUserTransfer(args: {
 }
 
 export interface PreparedUserStaking {
-  /** JSON da tx (sem assinatura) — enviado ao client p/ a carteira assinar. */
+  /** Tx JSON (unsigned) — sent to the client for the wallet to sign. */
   transactionJson: string;
   signerPublicKeyHex: string;
   amountCspr: string;
-  /** Public key do validador (delegate/undelegate). */
+  /** Validator's public key (delegate/undelegate). */
   validator: string;
   chainName: string;
 }
 
 /**
- * Monta (sem assinar) uma delegação de CSPR da carteira do USUÁRIO a um
- * validador. Stakear gera recompensas. O JSON vai ao browser p/ assinatura.
+ * Builds (without signing) a CSPR delegation from the USER's wallet to a
+ * validator. Staking generates rewards. The JSON goes to the browser for signing.
  */
 export function prepareUserDelegate(args: {
   fromPublicKeyHex: string;
@@ -119,8 +119,9 @@ export function prepareUserDelegate(args: {
 }
 
 /**
- * Monta (sem assinar) o resgate (undelegate) de CSPR previamente stakeado da
- * carteira do USUÁRIO num validador. O JSON vai ao browser p/ assinatura.
+ * Builds (without signing) the redemption (undelegate) of CSPR previously
+ * staked from the USER's wallet with a validator. The JSON goes to the
+ * browser for signing.
  */
 export function prepareUserUndelegate(args: {
   fromPublicKeyHex: string;
@@ -153,8 +154,8 @@ export interface BroadcastResult {
 }
 
 /**
- * Recebe o JSON da tx (mesmo que prepareUserTransfer emitiu) + a assinatura
- * hex produzida pela carteira do usuário. Anexa a approval e submete on-chain.
+ * Receives the tx JSON (the same one prepareUserTransfer emitted) + the hex
+ * signature produced by the user's wallet. Attaches the approval and submits on-chain.
  */
 export async function broadcastUserSignedTransfer(args: {
   transactionJson: string;
@@ -164,9 +165,9 @@ export async function broadcastUserSignedTransfer(args: {
   const tx = Transaction.fromJSON(JSON.parse(args.transactionJson));
   const signer = PublicKey.fromHex(args.signerPublicKeyHex);
 
-  // A Casper Wallet devolve a assinatura CRUA (64 bytes, sem o byte de
-  // algoritmo). O nó/SDK esperam a assinatura prefixada com a tag da curva:
-  // 01 = ED25519, 02 = SECP256K1 — a mesma tag que prefixa a public key.
+  // The Casper Wallet returns the RAW signature (64 bytes, no algorithm
+  // byte). The node/SDK expect the signature prefixed with the curve tag:
+  // 01 = ED25519, 02 = SECP256K1 — the same tag that prefixes the public key.
   const sig = withAlgorithmTag(args.signatureHex, args.signerPublicKeyHex);
   tx.setSignature(sig, signer);
 

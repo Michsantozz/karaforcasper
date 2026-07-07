@@ -2,13 +2,13 @@ import "server-only";
 import { requireEnv } from "@/mastra/env";
 
 /**
- * Cliente REST mínimo para a API do Recall.ai.
+ * Minimal REST client for the Recall.ai API.
  *
  * Auth: header `Authorization: Token <RECALL_API_KEY>`.
- * Base URL regional (RECALL_REGION) — recursos são region-local; use a mesma
- * região onde a conta/API key foi criada. Default: us-east-1.
+ * Regional base URL (RECALL_REGION) — resources are region-local; use the same
+ * region where the account/API key was created. Default: us-east-1.
  *
- * Regiões válidas: us-west-2 | us-east-1 | eu-central-1 | ap-northeast-1.
+ * Valid regions: us-west-2 | us-east-1 | eu-central-1 | ap-northeast-1.
  */
 
 const DEFAULT_REGION = "us-east-1";
@@ -29,7 +29,7 @@ export class RecallError extends Error {
   }
 }
 
-/** Indica esgotamento do pool de bots ad-hoc — retentável após ~30s. */
+/** Indicates ad-hoc bot pool depletion — retryable after ~30s. */
 export class RecallAdhocPoolError extends RecallError {
   constructor(body: unknown) {
     super("Recall ad-hoc bot pool depleted (507). Retry in ~30s.", 507, body);
@@ -39,13 +39,13 @@ export class RecallAdhocPoolError extends RecallError {
 
 type RecallRequest = {
   method: "GET" | "POST" | "PATCH" | "DELETE";
-  /** Caminho relativo a /api/, ex: "v1/bot/" ou "v1/bot/<id>/leave_call/". */
+  /** Path relative to /api/, e.g.: "v1/bot/" or "v1/bot/<id>/leave_call/". */
   path: string;
   query?: Record<string, string | number | string[] | undefined>;
   body?: unknown;
 };
 
-/** Executa uma requisição autenticada contra a REST API do Recall.ai. */
+/** Executes an authenticated request against the Recall.ai REST API. */
 export async function recallFetch<T = unknown>(req: RecallRequest): Promise<T> {
   const apiKey = requireEnv("RECALL_API_KEY");
 
@@ -69,7 +69,7 @@ export async function recallFetch<T = unknown>(req: RecallRequest): Promise<T> {
     body: req.body === undefined ? undefined : JSON.stringify(req.body),
   });
 
-  // 204 / corpo vazio (ex: alguns DELETE) — retorna undefined.
+  // 204 / empty body (e.g. some DELETEs) — returns undefined.
   const text = await res.text();
   const parsed = text ? safeJson(text) : undefined;
 

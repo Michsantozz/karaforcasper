@@ -2,25 +2,26 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 
 /**
- * Store em memória de transações pendentes de assinatura.
+ * In-memory store of transactions pending signature.
  *
- * Motivo: o JSON de uma transação (sobretudo session/wasm, ~14KB) é grande
- * demais para trafegar como argumento de tool pelo LLM — o modelo trunca/corrompe
- * o texto, e a assinatura falha silenciosamente. Em vez disso, o servidor guarda
- * o JSON e expõe um ID curto; o modelo só repassa o ID, e o cliente busca o JSON
- * íntegro via /api/tx/:id na hora de assinar.
+ * Reason: the JSON of a transaction (especially session/wasm, ~14KB) is too
+ * large to travel as a tool argument through the LLM — the model
+ * truncates/corrupts the text, and the signature silently fails. Instead,
+ * the server holds the JSON and exposes a short ID; the model only passes
+ * along the ID, and the client fetches the full JSON via /api/tx/:id at
+ * signing time.
  *
- * Não é durável (perde no restart) — adequado para o fluxo efêmero de
- * assinatura. Entradas expiram para não vazar memória.
+ * Not durable (lost on restart) — suited to the ephemeral signing flow.
+ * Entries expire so as not to leak memory.
  */
 const TTL_MS = 30 * 60 * 1000; // 30 min
 
 /**
- * Metadados legíveis da tx, exibidos ao usuário ANTES de assinar para que ele
- * saiba o que está aprovando. Independente do que o LLM repassa como args.
+ * Human-readable metadata of the tx, shown to the user BEFORE signing so they
+ * know what they're approving. Independent of whatever the LLM passes as args.
  */
 export interface TxMeta {
-  kind?: string; // ex: "transfer", "delegate", "undelegate", "setup_multisig"
+  kind?: string; // e.g.: "transfer", "delegate", "undelegate", "setup_multisig"
   amountCspr?: string;
   from?: string;
   to?: string;
@@ -41,7 +42,7 @@ function sweep() {
   }
 }
 
-/** Guarda o JSON da tx (+ metadados legíveis) e retorna um ID curto. */
+/** Holds the tx JSON (+ human-readable metadata) and returns a short ID. */
 export function putTx(json: string, meta?: TxMeta): string {
   sweep();
   const id = randomUUID().slice(0, 8);
@@ -49,12 +50,12 @@ export function putTx(json: string, meta?: TxMeta): string {
   return id;
 }
 
-/** Recupera o JSON íntegro pelo ID. */
+/** Retrieves the full JSON by ID. */
 export function getTx(id: string): string | null {
   return getEntry(id)?.json ?? null;
 }
 
-/** Recupera os metadados legíveis pelo ID (para exibir antes de assinar). */
+/** Retrieves the human-readable metadata by ID (to display before signing). */
 export function getTxMeta(id: string): TxMeta | null {
   return getEntry(id)?.meta ?? null;
 }

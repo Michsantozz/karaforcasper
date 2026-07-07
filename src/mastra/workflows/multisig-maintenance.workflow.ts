@@ -2,13 +2,13 @@ import { z } from "zod";
 import { createWorkflow, createStep } from "@/inngest/client";
 
 /**
- * Manutenção periódica do multisig SaaS (sem humano no loop):
- *  1. expira requests pending|ready cujo prazo passou (sweep proativo);
- *  2. reconcilia requests "broadcast" contra a rede → promove a "confirmed";
- *  3. limpa nonces de prova de posse expirados.
+ * Periodic maintenance of the SaaS multisig (no human in the loop):
+ *  1. expires pending|ready requests whose deadline has passed (proactive sweep);
+ *  2. reconciles "broadcast" requests against the network → promotes to "confirmed";
+ *  3. cleans up expired proof-of-possession nonces.
  *
- * Roda a cada 15 min. Substitui a expiração lazy (que só acontecia quando alguém
- * tentava assinar) por um job determinístico.
+ * Runs every 15 min. Replaces the lazy expiration (which only happened when someone
+ * tried to sign) with a deterministic job.
  */
 const maintenance = createStep({
   id: "multisig-maintenance",

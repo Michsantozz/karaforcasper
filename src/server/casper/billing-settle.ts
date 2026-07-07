@@ -13,13 +13,14 @@ import {
 } from "./billing";
 import { withSystemScope } from "@/shared/db/rls";
 
-// Anchor = transfer mínimo para o próprio agente, carregando o hash do batch no
-// transfer id. Mesma mecânica de meeting-notary: prova imutável on-chain de que
-// aquele conjunto de cobranças existiu neste estado, sem mover fundos por minuto.
-const ANCHOR_AMOUNT_MOTES = "2500000000"; // 2.5 CSPR (mínimo de transfer)
-const ANCHOR_PAYMENT_MOTES = 100_000_000; // ~0.1 CSPR de gas
-// Claim mais velho que isto é considerado órfão (tick morreu antes de ancorar) e
-// é liberado no início do ciclo. Folgado vs. a duração de uma submissão on-chain.
+// Anchor = minimal self-transfer to the agent itself, carrying the batch hash
+// in the transfer id. Same mechanism as meeting-notary: immutable on-chain
+// proof that that set of charges existed in this state, without moving funds per minute.
+const ANCHOR_AMOUNT_MOTES = "2500000000"; // 2.5 CSPR (transfer minimum)
+const ANCHOR_PAYMENT_MOTES = 100_000_000; // ~0.1 CSPR gas
+// A claim older than this is considered orphaned (the tick died before
+// anchoring) and is released at the start of the cycle. Generous relative to
+// the duration of an on-chain submission.
 const STALE_CLAIM_MS = 15 * 60 * 1000; // 15 min
 
 export interface SettleUserResult {
@@ -31,19 +32,20 @@ export interface SettleUserResult {
 }
 
 /**
- * Ancora on-chain o uso não-settled de UM usuário: agrega os débitos, calcula o
- * hash determinístico do batch, submete um transfer com o id derivado do hash e
- * marca as linhas como settled com o txHash. Idempotente: se não há uso, no-op.
+ * Anchors ONE user's unsettled usage on-chain: aggregates the debits,
+ * computes the batch's deterministic hash, submits a transfer with the id
+ * derived from the hash, and marks the rows as settled with the txHash.
+ * Idempotent: if there's no usage, no-op.
  */
 export async function settleUserUsage(
   userId: string,
 ): Promise<SettleUserResult | null> {
-  // Reivindica atomicamente o uso pendente sob system scope (transação curta): o
-  // UPDATE condicional marca as linhas com um claimToken ÚNICO POR TICK e devolve
-  // só as capturadas. Dois ticks de cron sobrepostos usam tokens distintos, então
-  // cada débito é capturado por exatamente um tick — nunca ancoram o mesmo batch
-  // duas vezes (gas dobrado). A tx on-chain (lenta, rede) roda FORA da transação
-  // Postgres para não prender conexão do pool.
+  // Atomically claims the pending usage under system scope (short
+  // transaction): the conditional UPDATE marks the rows with a claimToken
+  // UNIQUE PER TICK and returns only the captured ones. Two overlapping cron
+  // ticks use distinct tokens, so each debit is captured by exactly one tick —
+  // never anchoring the same batch twice (double gas). The on-chain tx (slow,
+  // network) runs OUTSIDE the Postgres transaction to avoid holding a pool connection.
   const claimToken = randomUUID();
   const rows = await withSystemScope(() =>
     claimUnsettledUsage(userId, claimToken),
@@ -60,7 +62,7 @@ export async function settleUserUsage(
 
   const tx = new NativeTransferBuilder()
     .from(key.publicKey)
-    .target(PublicKey.fromHex(notary)) // para si mesmo: só ancora
+    .target(PublicKey.fromHex(notary)) // to itself: anchoring only
     .amount(ANCHOR_AMOUNT_MOTES)
     .id(transferId)
     .chainName(CHAIN_NAME)
@@ -73,7 +75,7 @@ export async function settleUserUsage(
     const res = await getRpc().putTransaction(tx);
     transactionHash = res.transactionHash.toHex();
   } catch (err) {
-    // A tx on-chain falhou → libera o claim para o próximo tick retentar.
+    // The on-chain tx failed → release the claim for the next tick to retry.
     await withSystemScope(() =>
       releaseUsageClaim(
         rows.map((r) => r.botId),
@@ -83,7 +85,7 @@ export async function settleUserUsage(
     throw err;
   }
 
-  // Finaliza o claim com o txHash real. Casa pelo claimToken, não por IS NULL.
+  // Finalizes the claim with the real txHash. Matches by claimToken, not by IS NULL.
   await withSystemScope(() =>
     markUsageSettled(
       rows.map((r) => r.botId),
@@ -102,15 +104,15 @@ export async function settleUserUsage(
 }
 
 /**
- * Settle de todos os usuários com uso pendente. Chamado pelo cron. Retorna
- * quantos usuários foram ancorados e quantas reuniões no total.
+ * Settles all users with pending usage. Called by the cron. Returns how many
+ * users were anchored and how many meetings in total.
  */
 export async function settleAllUsage(): Promise<{
   users: number;
   meetings: number;
 }> {
-  // Libera claims órfãos (ticks anteriores que crasharam entre claim e anchor)
-  // antes de varrer — senão ficariam presos em "claiming:*" e nunca settlariam.
+  // Releases orphaned claims (previous ticks that crashed between claim and
+  // anchor) before sweeping — otherwise they'd stay stuck in "claiming:*" and never settle.
   await withSystemScope(() => reapStaleClaims(STALE_CLAIM_MS));
 
   const userIds = await withSystemScope(() => listUsersWithUnsettledUsage());

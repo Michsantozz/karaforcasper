@@ -15,45 +15,46 @@ import { emailMeetingSummaryReady } from "@/server/email";
 import { withSystemScope } from "@/shared/db/rls";
 
 /**
- * Worker de enrichment de ata — lógica durável compartilhada entre:
- *  - o webhook de bot (dispara best-effort imediato no caminho feliz);
- *  - o cron de reconciliação (reprocessa pending/stuck se o webhook falhar).
+ * Meeting-minutes enrichment worker — durable logic shared between:
+ *  - the bot webhook (fires an immediate best-effort attempt on the happy path);
+ *  - the reconciliation cron (reprocesses pending/stuck records if the webhook fails).
  *
- * Idempotente: uma ata já "done" não é reprocessada; a transcrição/ata ficam
- * persistidas em meeting_records (o Recall limpa os artefatos dias depois).
+ * Idempotent: minutes already "done" are not reprocessed; the transcript/minutes
+ * are persisted in meeting_records (Recall cleans up the artifacts days later).
  */
 
-/** Nº máximo de tentativas antes de marcar a ata como failed. */
+/** Max number of attempts before marking the minutes as failed. */
 const MAX_ATTEMPTS = 5;
 
 export type EnrichResult =
   | { state: "done"; notified: boolean }
-  | { state: "processing" } // transcrição ainda não pronta — reagendar
+  | { state: "processing" } // transcript not ready yet — reschedule
   | { state: "skipped"; reason: string }
   | { state: "failed"; error: string };
 
 /**
- * Processa (ou reprocessa) a ata de um bot: gera o resumo estruturado, persiste
- * em meeting_records e — na primeira vez que fica "done" — notifica o dono.
+ * Processes (or reprocesses) a bot's meeting minutes: generates the structured
+ * summary, persists it in meeting_records, and — the first time it becomes
+ * "done" — notifies the owner.
  */
 export async function enrichMeeting(botId: string): Promise<EnrichResult> {
-  // Cada operação de banco roda no seu PRÓPRIO system scope (transação curta).
-  // As etapas lentas — summarizeMeeting (LLM/rede) e notifyOwner (e-mail) —
-  // ficam FORA de qualquer transação Postgres, para não prender conexão do pool.
+  // Each db operation runs in its OWN system scope (short transaction).
+  // The slow steps — summarizeMeeting (LLM/network) and notifyOwner (email) —
+  // stay OUTSIDE any Postgres transaction, so they don't hold a pool connection.
   const existing = await withSystemScope(() => findMeetingRecord(botId));
   if (existing?.status === "done") {
     return { state: "skipped", reason: "already done" };
   }
 
   const claimed = await withSystemScope(() => claimMeetingRecord(botId));
-  // Sem linha (webhook ainda não enfileirou) ou já done: nada a fazer aqui.
+  // No row (webhook hasn't enqueued yet) or already done: nothing to do here.
   if (!claimed) return { state: "skipped", reason: "no pending record" };
 
   try {
     const summary = await summarizeMeeting(botId);
 
     if (summary.state === "processing") {
-      // Transcrição ainda não ficou pronta: volta para pending (o cron retenta).
+      // Transcript still not ready: goes back to pending (the cron retries).
       await withSystemScope(() =>
         requeueMeetingRecord(botId, "transcript still processing"),
       );
@@ -81,9 +82,10 @@ export async function enrichMeeting(botId: string): Promise<EnrichResult> {
         talkShares: summary.talkShares ?? [],
       });
 
-      // Metering: debita o uso (idempotente por botId). Só há a quem cobrar se o
-      // dono for conhecido; sem dono, a ata é gerada mas não faturada. Na mesma
-      // transação que o complete: ata persistida ⇔ uso debitado, atomicamente.
+      // Metering: debits usage (idempotent by botId). There's only someone to
+      // bill if the owner is known; without an owner, the minutes are generated
+      // but not billed. In the same transaction as complete: minutes persisted
+      // ⇔ usage debited, atomically.
       if (claimed.userId && typeof summary.durationMinutes === "number") {
         await recordUsage({
           botId,
@@ -97,8 +99,8 @@ export async function enrichMeeting(botId: string): Promise<EnrichResult> {
     return { state: "done", notified };
   } catch (err) {
     const message = err instanceof Error ? err.message : "unknown error";
-    // Esgotou as tentativas → failed definitivo; senão deixa como failed
-    // transitório (o cron de reconcile vai retentar via claim).
+    // Ran out of attempts → permanent failed; otherwise leaves it as
+    // transient failed (the reconcile cron will retry via claim).
     if (claimed.attempts >= MAX_ATTEMPTS) {
       await withSystemScope(() =>
         failMeetingRecord(botId, `max attempts: ${message}`),
@@ -110,7 +112,7 @@ export async function enrichMeeting(botId: string): Promise<EnrichResult> {
   }
 }
 
-/** Notifica o dono da ata (in-app + e-mail best-effort). */
+/** Notifies the minutes owner (in-app + best-effort email). */
 async function notifyOwner(
   botId: string,
   recordUserId: string | null,
@@ -123,16 +125,16 @@ async function notifyOwner(
   const decisions = summary.decisions?.length ?? 0;
   const tasks = summary.actionItems?.length ?? 0;
   const parts: string[] = [];
-  if (decisions) parts.push(`${decisions} decisão${decisions > 1 ? "ões" : ""}`);
-  if (tasks) parts.push(`${tasks} tarefa${tasks > 1 ? "s" : ""}`);
+  if (decisions) parts.push(`${decisions} decision${decisions > 1 ? "s" : ""}`);
+  if (tasks) parts.push(`${tasks} task${tasks > 1 ? "s" : ""}`);
   const detail = parts.length ? ` — ${parts.join(", ")}` : "";
 
-  // notifications tem RLS: cria sob system scope (a notificação é do userId).
+  // notifications has RLS: create under system scope (the notification belongs to userId).
   await withSystemScope(() =>
     createNotification({
       userId,
       type: "meeting_summary_ready",
-      message: `Ata da reunião pronta${detail}. Abra para revisar e agir on-chain.`,
+      message: `Meeting minutes ready${detail}. Open to review and act on-chain.`,
     }),
   );
   await emailMeetingSummaryReady({ userId, detail });
@@ -140,14 +142,14 @@ async function notifyOwner(
 }
 
 /**
- * Varre atas presas (pending/processing além do prazo) e reprocessa cada uma.
- * Chamado pelo cron de reconciliação. Retorna contagem por resultado.
+ * Sweeps stuck minutes (pending/processing past the deadline) and reprocesses
+ * each one. Called by the reconciliation cron. Returns counts per outcome.
  */
 export async function reconcileStuckMeetings(
   staleMs = 5 * 60_000,
 ): Promise<{ processed: number; done: number; stillPending: number }> {
-  // Leitura de sistema (o scan cruza usuários). enrichMeeting abre o próprio
-  // system scope por bot.
+  // System read (the scan crosses users). enrichMeeting opens its own
+  // system scope per bot.
   const botIds = await withSystemScope(() => listStuckMeetingRecords(staleMs));
   let done = 0;
   let stillPending = 0;

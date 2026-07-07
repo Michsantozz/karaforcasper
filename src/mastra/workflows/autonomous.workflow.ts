@@ -1,15 +1,15 @@
 import { z } from "zod";
 import { createWorkflow, createStep } from "@/inngest/client";
 
-// Loop autônomo genérico do agente — percebe → decide → age, sem humano no loop.
-// Este é o componente AGÊNTICO exigido pelo buildathon: o agente roda em schedule,
-// avalia o estado on-chain e decide sozinho se executa transação.
+// Generic autonomous loop for the agent — perceive → decide → act, no human in the loop.
+// This is the AGENTIC component required by the buildathon: the agent runs on a
+// schedule, evaluates on-chain state, and decides on its own whether to execute a transaction.
 //
-// É genérico de propósito: a política de decisão vive no prompt do agente, então
-// serve qualquer ideia (yield-routing, RWA oracle, treasury, KYC...). Trocar a
-// estratégia = trocar instruções, não o wire.
+// It's generic by design: the decision policy lives in the agent's prompt, so it
+// serves any idea (yield-routing, RWA oracle, treasury, KYC...). Swapping the
+// strategy = swapping instructions, not the wiring.
 
-// 1. PERCEBER — lê o estado atual do agente on-chain (saldo + endereço).
+// 1. PERCEIVE — reads the agent's current on-chain state (balance + address).
 const perceive = createStep({
   id: "perceive",
   inputSchema: z.object({}),
@@ -20,10 +20,10 @@ const perceive = createStep({
   execute: async ({ mastra }) => {
     const agent = mastra!.getAgent("casperAgent");
     const res = await agent.generate(
-      "Consulte a carteira do agente e retorne APENAS o estado atual (endereço e saldo). Não execute transações nesta etapa.",
+      "Check the agent's wallet and return ONLY the current state (address and balance). Do not execute any transactions in this step.",
     );
-    // O texto é informativo; o estado canônico vem das tools chamadas.
-    // Lemos direto da chain para ter dados confiáveis (sem depender do parse do LLM).
+    // The text is informational; the canonical state comes from the tools called.
+    // We read directly from the chain to get reliable data (without depending on LLM parsing).
     const { getAgentPublicKeyHex } = await import("@/server/casper/client");
     const { getBalanceCspr } = await import("@/server/casper/transfer");
     const publicKey = await getAgentPublicKeyHex();
@@ -33,29 +33,29 @@ const perceive = createStep({
   },
 });
 
-// 2. DECIDIR + AGIR — o LLM avalia o estado e decide autonomamente se age.
-//    A decisão de GASTAR é determinística (código), não parse de texto do LLM:
-//    um agente autônomo (sem humano no loop) NUNCA deve mover fundos com base em
-//    regex sobre a saída do modelo — alucinação do padrão = transferência. Aqui
-//    a política ("saldo > mínimo → heartbeat de valor fixo") é avaliada em TS, e
-//    transferCspr ainda aplica teto/allowlist/fail-closed por baixo.
+// 2. DECIDE + ACT — the LLM evaluates the state and autonomously decides whether to act.
+//    The decision to SPEND is deterministic (code), not LLM text parsing:
+//    an autonomous agent (no human in the loop) must NEVER move funds based on
+//    regex over the model's output — pattern hallucination = transfer. Here
+//    the policy ("balance > minimum → fixed-amount heartbeat") is evaluated in TS, and
+//    transferCspr still applies cap/allowlist/fail-closed underneath.
 const AUTONOMOUS_MIN_BALANCE_CSPR = Number(
   process.env.CASPER_AUTONOMOUS_MIN_BALANCE_CSPR ?? "5",
 );
-// Default = piso da rede (2.5). Abaixo disso a policy recusa (amount_below_minimum)
-// e o heartbeat nunca completaria — o default precisa ser >= MIN_TRANSFER_CSPR.
+// Default = network floor (2.5). Below this the policy rejects (amount_below_minimum)
+// and the heartbeat would never complete — the default must be >= MIN_TRANSFER_CSPR.
 const AUTONOMOUS_HEARTBEAT_CSPR = Number(
   process.env.CASPER_AUTONOMOUS_HEARTBEAT_CSPR ?? "2.5",
 );
 
-/** Efetua a transferência de heartbeat. Injetável para teste. */
+/** Performs the heartbeat transfer. Injectable for testing. */
 type TransferFn = (args: {
   toPublicKeyHex: string;
   amountCspr: number;
 }) => Promise<{ transactionHash: string }>;
 
 export interface DecideAndActConfig {
-  /** Destino do heartbeat (vazio = não configurado → não age). */
+  /** Heartbeat target (empty = not configured → does not act). */
   heartbeatTarget: string;
   minBalanceCspr: number;
   heartbeatCspr: number;
@@ -67,13 +67,13 @@ export interface DecideResult {
 }
 
 /**
- * Decisão determinística de GASTAR — o coração do loop autônomo, isolado do wire
- * Inngest para ser testável sem a infra. Um agente sem humano no loop NUNCA move
- * fundos por parse de texto do LLM; a política é puro código aqui, e `transfer`
- * ainda aplica teto/allowlist/fail-closed por baixo.
+ * Deterministic decision to SPEND — the heart of the autonomous loop, isolated from the
+ * Inngest wiring so it's testable without the infra. An agent with no human in the
+ * loop must NEVER move funds via LLM text parsing; the policy is pure code here, and
+ * `transfer` still applies cap/allowlist/fail-closed underneath.
  *
- * Contrato fail-closed: qualquer erro de `transfer` → { acted: false }. Nunca
- * reporta sucesso ambíguo.
+ * Fail-closed contract: any error from `transfer` → { acted: false }. Never
+ * reports ambiguous success.
  */
 export async function decideAction(
   balanceCspr: string,
@@ -84,13 +84,13 @@ export async function decideAction(
 
   if (!cfg.heartbeatTarget) {
     return {
-      decision: "AGUARDANDO: CASPER_HEARTBEAT_TARGET não definido.",
+      decision: "WAITING: CASPER_HEARTBEAT_TARGET not set.",
       acted: false,
     };
   }
   if (!Number.isFinite(balance) || balance <= cfg.minBalanceCspr) {
     return {
-      decision: `AGUARDANDO: saldo insuficiente | SALDO: ${balanceCspr} CSPR | MÍNIMO: ${cfg.minBalanceCspr} CSPR`,
+      decision: `WAITING: insufficient balance | BALANCE: ${balanceCspr} CSPR | MINIMUM: ${cfg.minBalanceCspr} CSPR`,
       acted: false,
     };
   }
@@ -101,13 +101,13 @@ export async function decideAction(
       amountCspr: cfg.heartbeatCspr,
     });
     return {
-      decision: `AÇÃO: transfer | MOTIVO: heartbeat autônomo | SALDO: ${balanceCspr} CSPR | TX: ${res.transactionHash}`,
+      decision: `ACTION: transfer | REASON: autonomous heartbeat | BALANCE: ${balanceCspr} CSPR | TX: ${res.transactionHash}`,
       acted: true,
     };
   } catch (err) {
-    const code = err instanceof Error ? err.message : "erro desconhecido";
+    const code = err instanceof Error ? err.message : "unknown error";
     return {
-      decision: `BLOQUEADO pela política de gasto: ${code}`,
+      decision: `BLOCKED by spending policy: ${code}`,
       acted: false,
     };
   }
@@ -144,8 +144,8 @@ export const autonomousWorkflow = createWorkflow({
     decision: z.string(),
     acted: z.boolean(),
   }),
-  // Roda de hora em hora. Override via env não suportado pelo cron literal;
-  // ajuste aqui se a demo precisar de cadência menor.
+  // Runs every hour. Override via env not supported by literal cron;
+  // adjust here if the demo needs a shorter cadence.
   cron: "0 * * * *",
 })
   .then(perceive)

@@ -35,8 +35,8 @@ const useFileSrc = (file: File | undefined) => {
       return;
     }
 
-    // objectURL só existe client-side e precisa de cleanup (revoke); é I/O de
-    // ciclo de vida, não estado derivável em render.
+    // objectURL only exists client-side and needs cleanup (revoke); it's
+    // lifecycle I/O, not state derivable during render.
     const objectUrl = URL.createObjectURL(file);
     setSrc(objectUrl);
 
@@ -70,8 +70,8 @@ type AttachmentPreviewProps = {
 const AttachmentPreview: FC<AttachmentPreviewProps> = ({ src }) => {
   const [isLoaded, setIsLoaded] = useState(false);
   return (
-    // Preview é um blob:/objectURL de arquivo do usuário — o otimizador do
-    // next/image não processa blob: e quebraria; <img> é o correto aqui.
+    // Preview is a blob:/objectURL of a user file — next/image's optimizer
+    // doesn't handle blob: and would break; <img> is the correct choice here.
     // eslint-disable-next-line @next/next/no-img-element
     <img
       src={src}

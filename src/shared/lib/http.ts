@@ -4,36 +4,36 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 /**
- * Helpers de borda HTTP para as rotas: proteção CSRF por Origin e parse de body
- * com zod. Centraliza para todas as rotas mutáveis aplicarem a mesma política.
+ * HTTP edge helpers for routes: CSRF protection via Origin and zod body
+ * parsing. Centralized so every mutating route applies the same policy.
  */
 
 /**
- * Public key Casper. Duas curvas, COMPRIMENTOS DIFERENTES:
+ * Casper public key. Two curves, DIFFERENT LENGTHS:
  *  - ED25519:   01 + 64 hex (32 bytes) = 66 hex
  *  - SECP256K1: 02 + 66 hex (33 bytes) = 68 hex
  */
 export const publicKeyHexSchema = z
   .string()
-  .regex(/^(?:01[0-9a-f]{64}|02[0-9a-f]{66})$/i, "public key inválida");
+  .regex(/^(?:01[0-9a-f]{64}|02[0-9a-f]{66})$/i, "invalid public key");
 
-/** Assinatura: 128 hex (crua) ou 130 (com tag). */
+/** Signature: 128 hex (raw) or 130 (with tag). */
 export const signatureHexSchema = z
   .string()
-  .regex(/^(01|02)?[0-9a-f]{128}$/i, "assinatura inválida");
+  .regex(/^(01|02)?[0-9a-f]{128}$/i, "invalid signature");
 
 /**
- * Proteção CSRF: em requests mutáveis, exige que o header Origin (quando
- * presente) bata com o host da requisição. Bloqueia POSTs cross-site. Requests
- * same-origin do próprio app (fetch) sempre passam.
+ * CSRF protection: on mutating requests, requires the Origin header (when
+ * present) to match the request's host. Blocks cross-site POSTs. Same-origin
+ * requests from the app itself (fetch) always pass.
  *
- * Retorna uma NextResponse 403 se inválido, ou null se OK.
+ * Returns a 403 NextResponse if invalid, or null if OK.
  */
 export async function assertSameOrigin(): Promise<NextResponse | null> {
   const h = await headers();
   const origin = h.get("origin");
-  // Sem Origin (ex.: navegação direta GET, alguns clients server-side) → não há
-  // vetor CSRF clássico; deixamos passar. CSRF exige um Origin cross-site.
+  // No Origin (e.g. direct GET navigation, some server-side clients) → no
+  // classic CSRF vector; let it pass. CSRF requires a cross-site Origin.
   if (!origin) return null;
 
   const host = h.get("host");
@@ -49,8 +49,8 @@ export async function assertSameOrigin(): Promise<NextResponse | null> {
 }
 
 /**
- * Parse + valida o body JSON contra um schema zod. Retorna `{ data }` ou
- * `{ response }` (NextResponse de erro) — o caller faz early-return no erro.
+ * Parses + validates the JSON body against a zod schema. Returns `{ data }`
+ * or `{ response }` (error NextResponse) — the caller early-returns on error.
  */
 export async function parseBody<T extends z.ZodTypeAny>(
   req: Request,

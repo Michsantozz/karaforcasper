@@ -4,13 +4,13 @@ import { db } from "@/shared/db";
 import { recallBots, type RecallBotRow } from "@/shared/db/schema";
 
 /**
- * Repository do mapeamento dedup_key → bot_id (fronteira capability).
+ * Repository for the dedup_key → bot_id mapping (capability boundary).
  *
- * A lógica de deduplicação vive aqui, fora da tool e fora do stream/memory:
- * a tool consulta antes de criar e persiste o receipt depois.
+ * The deduplication logic lives here, outside the tool and outside the
+ * stream/memory: the tool queries before creating and persists the receipt afterward.
  */
 
-/** Retorna o bot já mapeado para um dedup_key, ou null. */
+/** Returns the bot already mapped to a dedup_key, or null. */
 export async function findBotByDedupKey(
   dedupKey: string,
 ): Promise<RecallBotRow | null> {
@@ -22,7 +22,7 @@ export async function findBotByDedupKey(
   return rows[0] ?? null;
 }
 
-/** Retorna o bot pelo botId do Recall (usado pelo webhook de bot), ou null. */
+/** Returns the bot by Recall botId (used by the bot webhook), or null. */
 export async function findBotByBotId(
   botId: string,
 ): Promise<RecallBotRow | null> {
@@ -34,13 +34,13 @@ export async function findBotByBotId(
   return rows[0] ?? null;
 }
 
-/** Extrai o user_id dono do bot a partir da metadata persistida, se houver. */
+/** Extracts the bot owner's user_id from the persisted metadata, if any. */
 export function botOwnerUserId(row: RecallBotRow | null): string | null {
   const uid = row?.metadata?.user_id;
   return typeof uid === "string" ? uid : null;
 }
 
-/** Persiste o mapeamento. Idempotente: no-op se o dedup_key já existe. */
+/** Persists the mapping. Idempotent: no-op if the dedup_key already exists. */
 export async function saveBotMapping(input: {
   dedupKey: string;
   botId: string;
@@ -60,14 +60,14 @@ export async function saveBotMapping(input: {
     .onConflictDoNothing({ target: recallBots.dedupKey });
 }
 
-/** Remove o mapeamento (após cancelar/remover o bot). */
+/** Removes the mapping (after canceling/removing the bot). */
 export async function deleteBotMapping(dedupKey: string): Promise<void> {
   await db.delete(recallBots).where(eq(recallBots.dedupKey, dedupKey));
 }
 
 /**
- * Deriva o dedup_key padrão: um bot por instância de meeting.
- * Formato: `${joinAtIso|adhoc}-${meetingUrl}`.
+ * Derives the default dedup_key: one bot per meeting instance.
+ * Format: `${joinAtIso|adhoc}-${meetingUrl}`.
  */
 export function defaultDedupKey(meetingUrl: string, joinAt?: string): string {
   return `${joinAt ?? "adhoc"}-${meetingUrl}`;

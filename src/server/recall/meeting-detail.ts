@@ -4,26 +4,26 @@ import { findMeetingRecord } from "@/server/recall/meeting-repository";
 import type { MeetingRecordRow } from "@/shared/db/schema";
 
 /**
- * Detalhe de reunião para a UI (player + karaoke).
+ * Meeting detail for the UI (player + karaoke).
  *
- * Junta:
- *  - a ATA persistida (meeting_records) — resumo, seções, momentos, talk-shares;
- *  - a TRANSCRIÇÃO estruturada com timestamps por palavra — buscada on-demand do
- *    Recall (a persistida em meeting_records é texto plano, sem timestamps, e o
- *    karaoke precisa dos tempos para sincronizar com o playhead);
- *  - a URL do VÍDEO mixado (assinada, expira) — para o player.
+ * Joins:
+ *  - the persisted MINUTES (meeting_records) — summary, sections, moments, talk-shares;
+ *  - the structured TRANSCRIPT with per-word timestamps — fetched on-demand from
+ *    Recall (the one persisted in meeting_records is plain text, no timestamps,
+ *    and karaoke needs the times to sync with the playhead);
+ *  - the mixed VIDEO URL (signed, expires) — for the player.
  *
- * O caller deve rodar dentro de um escopo RLS (o meeting_records é tenant).
+ * The caller must run within an RLS scope (meeting_records is tenant-scoped).
  */
 
-/** Palavra com o tempo (segundos) em que é falada — base do highlight karaoke. */
+/** Word with the time (seconds) it's spoken at — basis for the karaoke highlight. */
 export interface TranscriptWordView {
   text: string;
   start: number | null;
   end: number | null;
 }
 
-/** Fala contígua de um participante. */
+/** Contiguous speech from a participant. */
 export interface TranscriptUtteranceView {
   speaker: string;
   start: number | null;
@@ -62,7 +62,7 @@ type RawSegment = {
   }>;
 };
 
-/** Monta o detalhe completo de uma reunião pelo botId. */
+/** Builds the full detail of a meeting by botId. */
 export async function getMeetingDetail(botId: string): Promise<MeetingDetail> {
   const record = await findMeetingRecord(botId);
 
@@ -73,12 +73,12 @@ export async function getMeetingDetail(botId: string): Promise<MeetingDetail> {
 
   const shortcuts = bot?.recordings?.[0]?.media_shortcuts;
 
-  // Vídeo: só se pronto (URL assinada, expira em horas).
+  // Video: only if ready (signed URL, expires in hours).
   const video = shortcuts?.video_mixed;
   const videoUrl =
     video?.status?.code === "done" ? (video.data?.download_url ?? null) : null;
 
-  // Transcrição estruturada com timestamps.
+  // Structured transcript with timestamps.
   const transcriptArtifact = shortcuts?.transcript;
   let transcript: TranscriptUtteranceView[] = [];
   let transcriptState: "ready" | "processing" | "none" = "none";
@@ -106,7 +106,7 @@ function toUtterance(seg: RawSegment): TranscriptUtteranceView {
     end: w.end_timestamp?.relative ?? null,
   }));
   return {
-    speaker: seg.participant?.name ?? "Desconhecido",
+    speaker: seg.participant?.name ?? "Unknown",
     start: words.find((w) => w.start != null)?.start ?? null,
     words,
   };

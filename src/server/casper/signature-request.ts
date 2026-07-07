@@ -15,27 +15,28 @@ import { CHAIN_NAME, getRpc } from "./client";
 import { withAlgorithmTag } from "./user-sign";
 
 /**
- * Camada de coleta distribuída de assinaturas (multisig SaaS).
+ * Distributed signature collection layer (SaaS multisig).
  *
- * Persiste uma solicitação (tx base + signatários + quórum) e acumula as
- * assinaturas como linhas em signature_approvals — uma por signatário, com
- * idempotência garantida pelo unique (requestId, signerPublicKeyHex) no schema.
+ * Persists a request (base tx + signers + quorum) and accumulates the
+ * signatures as rows in signature_approvals — one per signer, with
+ * idempotency guaranteed by the unique (requestId, signerPublicKeyHex) in the schema.
  *
- * Diferença do multisig.ts (em memória): aqui o estado é durável e cada approval
- * é um registro. A tx serializada na request é a BASE (sem approvals); só no
- * broadcast a gente reconstrói a tx acumulando cada signatura via
- * addMultisigApproval — reusando exatamente o caminho já validado.
+ * Difference from multisig.ts (in-memory): here the state is durable and each
+ * approval is a record. The tx serialized in the request is the BASE (no
+ * approvals); only at broadcast time do we rebuild the tx accumulating each
+ * signature via addMultisigApproval — reusing exactly the already-validated path.
  *
- * Enforcement: ver nota no schema — a rede só honra N assinaturas se a conta
- * pagadora for multisig nativa (multisig-setup.ts). Esta camada coleta; o
- * threshold aqui é o quórum do PRODUTO, não necessariamente o da rede.
+ * Enforcement: see the note in the schema — the network only honors N
+ * signatures if the payer account is a native multisig (multisig-setup.ts).
+ * This layer collects; the threshold here is the PRODUCT's quorum, not
+ * necessarily the network's.
  */
 
-const DEFAULT_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 dias
+const DEFAULT_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 const MAX_TX_JSON_BYTES = 64_000;
-// A Casper testnet (Condor 2.0) recusa transfer nativo abaixo deste mínimo com
-// "insufficient transfer amount" (-32016). Validamos na criação para não
-// persistir uma solicitação que nunca vai poder ser broadcastada.
+// The Casper testnet (Condor 2.0) rejects a native transfer below this
+// minimum with "insufficient transfer amount" (-32016). We validate at
+// creation time to avoid persisting a request that could never be broadcast.
 const MIN_TRANSFER_CSPR = 2.5;
 
 function norm(hex: string): string {
@@ -43,9 +44,9 @@ function norm(hex: string): string {
 }
 
 /**
- * Valida que `transactionJson` é uma tx Casper bem-formada (parseable) e dentro
- * do limite de tamanho. Lança em caso de violação. Usado ao criar a request para
- * não persistir lixo.
+ * Validates that `transactionJson` is a well-formed (parseable) Casper tx and
+ * within the size limit. Throws on violation. Used when creating the request
+ * to avoid persisting garbage.
  */
 export function assertValidTransactionJson(transactionJson: string): void {
   if (transactionJson.length > MAX_TX_JSON_BYTES) {
@@ -56,8 +57,9 @@ export function assertValidTransactionJson(transactionJson: string): void {
   } catch {
     throw new Error("invalid_transaction_json");
   }
-  // Recusa cedo transfers abaixo do mínimo da rede (senão a request fica presa
-  // em "ready" e estoura no broadcast). Best-effort: só valida se decodou o valor.
+  // Rejects transfers below the network minimum early (otherwise the request
+  // gets stuck in "ready" and blows up at broadcast). Best-effort: only
+  // validates if the amount was decoded.
   const { amountCspr } = decodeTransfer(transactionJson);
   if (amountCspr != null && Number(amountCspr) < MIN_TRANSFER_CSPR) {
     throw new Error("transfer_below_minimum");
@@ -65,24 +67,24 @@ export function assertValidTransactionJson(transactionJson: string): void {
 }
 
 export interface DecodedTransfer {
-  /** Valor real em CSPR (decodado da tx, não da descrição). */
+  /** Real amount in CSPR (decoded from the tx, not from the description). */
   amountCspr: string | null;
-  /** Destino real (account-hash ou pubkey) decodado da tx. */
+  /** Real target (account-hash or pubkey) decoded from the tx. */
   target: string | null;
 }
 
 /**
- * Decoda o valor e o destino REAIS de uma tx de transferência a partir do JSON
- * serializado — para o signatário ver o que está assinando, independente da
- * `description` (que o criador pode falsear). Best-effort: campos variam por
- * versão do SDK; retorna null no que não conseguir extrair.
+ * Decodes the REAL amount and target of a transfer tx from the serialized
+ * JSON — so the signer sees what they're signing, independent of the
+ * `description` (which the creator could falsify). Best-effort: fields vary
+ * by SDK version; returns null for what it can't extract.
  */
 export function decodeTransfer(transactionJson: string): DecodedTransfer {
   try {
     const tx = Transaction.fromJSON(JSON.parse(transactionJson));
-    // Args tipados do transfer nativo (Transaction 2.0): a V1 carrega
-    // payload.fields.args (Args), de onde lemos os CLValues 'amount'/'target'
-    // já desserializados — não os bytes crus do JSON.
+    // Typed native-transfer args (Transaction 2.0): the V1 carries
+    // payload.fields.args (Args), from which we read the already-deserialized
+    // 'amount'/'target' CLValues — not the raw JSON bytes.
     const v1 = (
       tx as unknown as {
         getTransactionV1?: () => {
@@ -113,12 +115,12 @@ export function decodeTransfer(transactionJson: string): DecodedTransfer {
 }
 
 /**
- * Verifica CRIPTOGRAFICAMENTE que `signatureHex` é uma assinatura válida de
- * `signerPublicKeyHex` sobre a tx base. Reconstrói a tx, anexa a assinatura e
- * chama tx.validate() — o SDK verifica cada approval contra o hash da tx
- * (ErrInvalidApprovalSignature em assinatura forjada). Retorna true/false.
+ * CRYPTOGRAPHICALLY verifies that `signatureHex` is a valid signature by
+ * `signerPublicKeyHex` over the base tx. Rebuilds the tx, attaches the
+ * signature, and calls tx.validate() — the SDK checks each approval against
+ * the tx hash (ErrInvalidApprovalSignature on a forged signature). Returns true/false.
  *
- * Isto barra assinaturas forjadas ANTES do broadcast (sem gastar gas na rede).
+ * This blocks forged signatures BEFORE broadcast (without spending gas on the network).
  */
 function verifyTxSignature(args: {
   transactionJson: string;
@@ -130,7 +132,7 @@ function verifyTxSignature(args: {
     const signer = PublicKey.fromHex(args.signerPublicKeyHex);
     const sig = withAlgorithmTag(args.signatureHex, args.signerPublicKeyHex);
     tx.setSignature(sig, signer);
-    tx.validate(); // lança se alguma approval não bate com o hash
+    tx.validate(); // throws if any approval doesn't match the hash
     return true;
   } catch {
     return false;
@@ -140,29 +142,29 @@ function verifyTxSignature(args: {
 export interface SignatureRequestState {
   request: SignatureRequestRow;
   approvals: SignatureApprovalRow[];
-  /** Public keys (normalizadas) que já assinaram. */
+  /** Public keys (normalized) that have already signed. */
   signed: string[];
-  /** Public keys exigidas que ainda faltam. */
+  /** Required public keys still missing. */
   pending: string[];
-  /** Atingiu o quórum (>= threshold assinaturas válidas)? */
+  /** Reached quorum (>= threshold valid signatures)? */
   ready: boolean;
 }
 
-/** Public keys exigidas (normalizadas) a partir do jsonb da request. */
+/** Required public keys (normalized) from the request's jsonb. */
 function requiredKeys(request: SignatureRequestRow): string[] {
   return request.requiredSigners.map((s) => norm(s.publicKeyHex));
 }
 
 /**
- * Deriva o estado (signed/pending/ready) das approvals persistidas.
- * Exportado para teste unitário — é a decisão de quórum antes do broadcast.
+ * Derives the state (signed/pending/ready) from the persisted approvals.
+ * Exported for unit testing — it's the quorum decision before broadcast.
  */
 export function deriveState(
   request: SignatureRequestRow,
   approvals: SignatureApprovalRow[],
 ): SignatureRequestState {
   const required = requiredKeys(request);
-  // Só conta approvals de signatários EXIGIDOS (defesa contra ruído).
+  // Only counts approvals from REQUIRED signers (defense against noise).
   const signed = approvals
     .map((a) => norm(a.signerPublicKeyHex))
     .filter((k) => required.includes(k));
@@ -178,9 +180,63 @@ export function deriveState(
   };
 }
 
+export interface SignerNotificationPlan {
+  /** Signers with a linked wallet → notify in-app + email by userId. */
+  accountUserIds: string[];
+  /** Emails of signers WITHOUT an account → direct invite (deduplicated). */
+  externalEmails: string[];
+}
+
 /**
- * Cria uma solicitação de assinatura. `transactionJson` é a tx base (montada por
- * multisig.ts/prepareMultisigPayment, por exemplo). Devolve a request criada.
+ * Decides WHO gets notified when a request is created, with no overlap:
+ *  - accountUserIds: signers whose wallet resolved to a user (except the creator
+ *    themselves — they don't notify themselves). Deduplicated by userId.
+ *  - externalEmails: signers whose wallet did NOT resolve to a user BUT whom the
+ *    creator addressed by email. This is what lets you invite someone who has
+ *    never used the app. Deduplicated by (normalized) email and excluded if
+ *    already covered by an account.
+ *
+ * Pure function (no I/O) — the "don't duplicate the invite" rule isolated and
+ * testable. Exported for unit testing: it's the critical decision of the invite
+ * flow.
+ */
+export function partitionSignerNotifications(input: {
+  requiredSigners: RequiredSigner[];
+  /** Map publicKeyHex(normalized) → userId (from resolveUsersByWallets). */
+  walletToUser: Map<string, string>;
+  /** Request creator — doesn't self-notify. */
+  createdByUserId: string;
+}): SignerNotificationPlan {
+  const { requiredSigners, walletToUser, createdByUserId } = input;
+
+  // Accounts: unique values from the map, minus the creator.
+  const accountUserIds = Array.from(
+    new Set(
+      Array.from(walletToUser.values()).filter(
+        (uid) => uid !== createdByUserId,
+      ),
+    ),
+  );
+
+  // External: has an email, the wallet did NOT resolve to a user (otherwise
+  // already covered by account), email deduplicated by normalized form.
+  const seen = new Set<string>();
+  const externalEmails: string[] = [];
+  for (const s of requiredSigners) {
+    if (!s.email) continue;
+    if (walletToUser.has(norm(s.publicKeyHex))) continue;
+    const key = s.email.trim().toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    externalEmails.push(s.email.trim());
+  }
+
+  return { accountUserIds, externalEmails };
+}
+
+/**
+ * Creates a signature request. `transactionJson` is the base tx (built by
+ * multisig.ts/prepareMultisigPayment, for example). Returns the created request.
  */
 export async function createSignatureRequest(input: {
   createdByUserId: string;
@@ -192,10 +248,10 @@ export async function createSignatureRequest(input: {
   chainName?: string;
   expiresAt?: Date | null;
 }): Promise<SignatureRequestRow> {
-  // Rejeita tx malformada/grande antes de persistir.
+  // Rejects a malformed/oversized tx before persisting.
   assertValidTransactionJson(input.transactionJson);
 
-  // ID opaco (uuid v4 completo, não fatiado) — evita enumeração.
+  // Opaque ID (full uuid v4, not truncated) — avoids enumeration.
   const id = randomUUID();
   const signers = input.requiredSigners.map((s) => ({
     publicKeyHex: norm(s.publicKeyHex),
@@ -226,7 +282,7 @@ export async function createSignatureRequest(input: {
   return rows[0];
 }
 
-/** Busca uma request pelo id, ou null. */
+/** Looks up a request by id, or null. */
 export async function getSignatureRequest(
   id: string,
 ): Promise<SignatureRequestRow | null> {
@@ -238,7 +294,7 @@ export async function getSignatureRequest(
   return rows[0] ?? null;
 }
 
-/** Approvals coletadas de uma request. */
+/** Approvals collected for a request. */
 export async function getApprovals(
   requestId: string,
 ): Promise<SignatureApprovalRow[]> {
@@ -248,7 +304,7 @@ export async function getApprovals(
     .where(eq(signatureApprovals.requestId, requestId));
 }
 
-/** request + approvals + estado derivado (signed/pending/ready). */
+/** request + approvals + derived state (signed/pending/ready). */
 export async function getSignatureRequestState(
   id: string,
 ): Promise<SignatureRequestState | null> {
@@ -259,18 +315,18 @@ export async function getSignatureRequestState(
 }
 
 /**
- * Persiste UMA assinatura. Valida que:
- *  - a request existe e está em estado coletável (pending|ready);
- *  - não expirou;
- *  - o signatário é EXIGIDO pela request (não aceita assinatura de fora);
- *  - a assinatura é CRIPTOGRAFICAMENTE válida para a tx (barra forjadas — sem
- *    isso, qualquer um marcaria a request como assinada por outro signatário).
+ * Persists ONE signature. Validates that:
+ *  - the request exists and is in a collectable state (pending|ready);
+ *  - it hasn't expired;
+ *  - the signer is REQUIRED by the request (doesn't accept an outside signature);
+ *  - the signature is CRYPTOGRAPHICALLY valid for the tx (blocks forgeries —
+ *    without this, anyone could mark the request as signed by another signer).
  *
- * Tudo dentro de uma transação do banco com guard de status no UPDATE de
- * promoção (evita race: dois approvals simultâneos não corrompem o quórum nem
- * rebaixam um estado já avançado). Idempotente por (requestId, signer).
+ * All within a single DB transaction with a status guard on the promotion
+ * UPDATE (avoids a race: two simultaneous approvals don't corrupt the quorum
+ * or downgrade an already-advanced state). Idempotent per (requestId, signer).
  *
- * Lança Error com mensagem estável em caso de violação (a rota traduz em HTTP).
+ * Throws an Error with a stable message on violation (the route translates it to HTTP).
  */
 export async function addApproval(input: {
   requestId: string;
@@ -302,7 +358,7 @@ export async function addApproval(input: {
     throw new Error("signer_not_required");
   }
 
-  // Verificação criptográfica: a assinatura tem que bater com a tx + a pubkey.
+  // Cryptographic verification: the signature must match the tx + the pubkey.
   const valid = verifyTxSignature({
     transactionJson: request.transactionJson,
     signerPublicKeyHex: signer,
@@ -310,7 +366,7 @@ export async function addApproval(input: {
   });
   if (!valid) throw new Error("invalid_signature");
 
-  // Insert da approval + recálculo + promoção, atômico.
+  // Approval insert + recompute + promotion, atomic.
   await db.transaction(async (tx) => {
     await tx
       .insert(signatureApprovals)
@@ -334,7 +390,7 @@ export async function addApproval(input: {
       .where(eq(signatureApprovals.requestId, request.id));
     const state = deriveState(request, approvals);
 
-    // Promove a "ready" só a partir de "pending" (guard no WHERE → CAS).
+    // Promotes to "ready" only from "pending" (guard in the WHERE → CAS).
     if (state.ready) {
       await tx
         .update(signatureRequests)
@@ -352,20 +408,20 @@ export async function addApproval(input: {
     }
   });
 
-  // Estado fresco pós-transação.
+  // Fresh state post-transaction.
   const fresh = await getSignatureRequest(request.id);
   const approvals = await getApprovals(request.id);
   return deriveState(fresh ?? request, approvals);
 }
 
 /**
- * Reconstrói a tx final acumulando TODAS as approvals coletadas sobre a tx base,
- * via addMultisigApproval (mesmo caminho do multisig.ts em memória), e submete
- * on-chain. Só permitido quando a request está "ready". Grava o hash e promove a
- * "broadcast". Devolve o resultado do broadcast + a request atualizada.
+ * Rebuilds the final tx by accumulating ALL collected approvals onto the base
+ * tx, via addMultisigApproval (same path as the in-memory multisig.ts), and
+ * submits it on-chain. Only allowed when the request is "ready". Records the
+ * hash and promotes to "broadcast". Returns the broadcast result + the updated request.
  *
- * Restrição de autorização (só o criador) é responsabilidade da rota — esta
- * função assume que a checagem já passou.
+ * The authorization restriction (creator only) is the route's responsibility
+ * — this function assumes the check already passed.
  */
 export async function broadcastSignatureRequest(requestId: string): Promise<{
   transactionHash: string;
@@ -380,9 +436,9 @@ export async function broadcastSignatureRequest(requestId: string): Promise<{
   const state = deriveState(request, approvals);
   if (!state.ready) throw new Error("quorum_not_met");
 
-  // CAS: reivindica a transição ready → broadcast ATOMICAMENTE antes de submeter.
-  // Só um processo vence o UPDATE com guard status='ready'; os demais recebem 0
-  // linhas e abortam. Evita double-broadcast em requests HTTP concorrentes.
+  // CAS: claims the ready → broadcast transition ATOMICALLY before submitting.
+  // Only one process wins the UPDATE with the status='ready' guard; the
+  // others get 0 rows and abort. Avoids double-broadcast on concurrent HTTP requests.
   const claimed = await db
     .update(signatureRequests)
     .set({
@@ -399,10 +455,11 @@ export async function broadcastSignatureRequest(requestId: string): Promise<{
     .returning();
   if (claimed.length === 0) throw new Error("request_not_ready");
 
-  // Monta a tx UMA vez e anexa cada approval no MESMO objeto, submetendo direto
-  // (sem toJSON()/fromJSON() depois de assinar). O round-trip de serialização
-  // pós-assinatura corrompe a tx para o nó (rejeita com -32016 mesmo validando
-  // localmente) — é o mesmo caminho do broadcastUserSignedTransfer que funciona.
+  // Builds the tx ONCE and attaches each approval on the SAME object,
+  // submitting directly (no toJSON()/fromJSON() after signing). The
+  // serialization round-trip after signing corrupts the tx for the node
+  // (rejects with -32016 even though it validates locally) — same path as
+  // the working broadcastUserSignedTransfer.
   let result: { transactionHash: string; explorerUrl: string };
   try {
     const tx = Transaction.fromJSON(JSON.parse(request.transactionJson));
@@ -421,7 +478,7 @@ export async function broadcastSignatureRequest(requestId: string): Promise<{
       explorerUrl: `https://testnet.cspr.live/deploy/${hash}`,
     };
   } catch (e) {
-    // Falhou no on-chain: devolve a request a "ready" para nova tentativa.
+    // Failed on-chain: reverts the request to "ready" for a retry.
     await db
       .update(signatureRequests)
       .set({ status: "ready", updatedAt: new Date() })
@@ -442,9 +499,9 @@ export async function broadcastSignatureRequest(requestId: string): Promise<{
 }
 
 /**
- * Verifica on-chain se uma request "broadcast" foi confirmada; se sim, promove a
- * "confirmed". Chamado pelo cron de reconciliação. Best-effort: erros de RPC não
- * lançam (deixa para o próximo ciclo).
+ * Checks on-chain whether a "broadcast" request has been confirmed; if so,
+ * promotes it to "confirmed". Called by the reconciliation cron. Best-effort:
+ * RPC errors don't throw (leaves it for the next cycle).
  */
 export async function reconcileBroadcastStatus(
   requestId: string,
@@ -475,12 +532,12 @@ export async function reconcileBroadcastStatus(
       return "confirmed";
     }
   } catch {
-    // RPC indisponível — tenta de novo no próximo ciclo.
+    // RPC unavailable — retries on the next cycle.
   }
   return "broadcast";
 }
 
-/** Cancela uma request (só faz sentido enquanto pending|ready). */
+/** Cancels a request (only makes sense while pending|ready). */
 export async function cancelSignatureRequest(
   requestId: string,
 ): Promise<void> {
@@ -495,7 +552,7 @@ export async function cancelSignatureRequest(
     );
 }
 
-/** Requests criadas por um usuário, mais recentes primeiro. */
+/** Requests created by a user, most recent first. */
 export async function listRequestsByCreator(
   userId: string,
   opts: {
@@ -520,12 +577,11 @@ export async function listRequestsByCreator(
 }
 
 /**
- * Requests "aguardando minha assinatura": coletável (pending|ready), não
- * expirada, em que uma das carteiras do usuário é signatária exigida e ainda não
- * assinou.
+ * Requests "awaiting my signature": collectable (pending|ready), not expired,
+ * where one of the user's wallets is a required signer and hasn't signed yet.
  *
- * UMA query com LEFT JOIN (sem N+1): traz requests abertas + suas approvals de
- * uma vez, agrupa em memória.
+ * ONE query with LEFT JOIN (no N+1): fetches open requests + their approvals
+ * in one shot, groups in memory.
  */
 export async function listPendingForSigner(
   signerPublicKeysHex: string[],
@@ -555,7 +611,7 @@ export async function listPendingForSigner(
     )
     .orderBy(desc(signatureRequests.createdAt));
 
-  // Agrupa approvals por request.
+  // Groups approvals by request.
   const byId = new Map<
     string,
     { request: SignatureRequestRow; approvals: SignatureApprovalRow[] }
@@ -584,8 +640,8 @@ export async function listPendingForSigner(
 }
 
 /**
- * Sweep proativo de expiração: marca como "expired" toda request pending|ready
- * cujo expiresAt já passou. Chamado pelo cron. Retorna o nº de afetadas.
+ * Proactive expiration sweep: marks as "expired" every pending|ready request
+ * whose expiresAt has already passed. Called by the cron. Returns the number affected.
  */
 export async function sweepExpiredRequests(): Promise<number> {
   const res = await db
@@ -605,7 +661,7 @@ export async function sweepExpiredRequests(): Promise<number> {
   return res.length;
 }
 
-/** IDs de requests em "broadcast" (para o cron reconciliar contra a rede). */
+/** IDs of requests in "broadcast" (for the cron to reconcile against the network). */
 export async function listBroadcastRequestIds(): Promise<string[]> {
   const rows = await db
     .select({ id: signatureRequests.id })

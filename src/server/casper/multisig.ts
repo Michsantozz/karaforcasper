@@ -6,7 +6,7 @@ import { withAlgorithmTag } from "./user-sign";
 const MOTES_PER_CSPR = 1_000_000_000n;
 const TRANSFER_PAYMENT_MOTES = 100_000_000;
 
-// Exportado para teste unitário (money math — precisão crítica).
+// Exported for unit testing (money math — precision critical).
 export function toMotes(amountCspr: number): string {
   return BigInt(Math.round(amountCspr * Number(MOTES_PER_CSPR))).toString();
 }
@@ -16,8 +16,8 @@ function norm(hex: string): string {
 }
 
 /**
- * Lê as public keys (hex) que já assinaram a tx, a partir do JSON.
- * Exportado para teste unitário.
+ * Reads the public keys (hex) that have already signed the tx, from the JSON.
+ * Exported for unit testing.
  */
 export function approvalSigners(transactionJson: string): string[] {
   try {
@@ -34,24 +34,24 @@ export function approvalSigners(transactionJson: string): string[] {
 
 export interface MultisigState {
   transactionJson: string;
-  /** Pagador (de onde saem os fundos) — também precisa estar em signers. */
+  /** Payer (where the funds come from) — must also be in signers. */
   from: string;
   to: string;
   amountCspr: string;
-  /** Todas as public keys que devem assinar. */
+  /** All public keys that must sign. */
   signers: string[];
-  /** Quantas assinaturas são necessárias para submeter (quórum). */
+  /** How many signatures are required to submit (quorum). */
   threshold: number;
-  /** Public keys que já assinaram. */
+  /** Public keys that have already signed. */
   signed: string[];
-  /** Public keys que ainda faltam. */
+  /** Public keys still missing. */
   pending: string[];
-  /** Pronto para broadcast? */
+  /** Ready to broadcast? */
   ready: boolean;
   chainName: string;
 }
 
-// Exportado para teste unitário (decisão de quórum: ready = signed >= threshold).
+// Exported for unit testing (quorum decision: ready = signed >= threshold).
 export function buildState(
   transactionJson: string,
   meta: {
@@ -82,15 +82,15 @@ export function buildState(
 }
 
 /**
- * Monta (sem assinar) um pagamento que exige múltiplas assinaturas. A tx em si
- * é um transfer nativo do pagador `from`; as assinaturas dos demais signatários
- * são acumuladas como approvals antes do broadcast. `threshold` define o quórum
- * (padrão: todos).
+ * Builds (without signing) a payment that requires multiple signatures. The
+ * tx itself is a native transfer from the payer `from`; the other signers'
+ * signatures are accumulated as approvals before broadcast. `threshold`
+ * defines the quorum (default: everyone).
  *
- * Nota: para a REDE aceitar N assinaturas de chaves distintas, a conta pagadora
- * precisa ter essas chaves associadas com weights (multisig de conta). Sem esse
- * setup, a tx carrega as N approvals (demonstrável on-chain) mas só a do dono
- * conta para o threshold da rede.
+ * Note: for the NETWORK to accept N signatures from distinct keys, the payer
+ * account needs those keys associated with weights (account multisig).
+ * Without that setup, the tx carries the N approvals (demonstrable on-chain)
+ * but only the owner's counts toward the network's threshold.
  */
 export function prepareMultisigPayment(args: {
   fromPublicKeyHex: string;
@@ -112,13 +112,13 @@ export function prepareMultisigPayment(args: {
     .payment(TRANSFER_PAYMENT_MOTES)
     .build();
 
-  // Garante o pagador entre os signatários.
+  // Ensures the payer is among the signers.
   const signers = Array.from(
     new Set([norm(args.fromPublicKeyHex), ...args.signerPublicKeysHex.map(norm)]),
   );
-  // Clamp: quórum entre 1 e o nº de signatários. Sem o piso de 1, um threshold
-  // 0/negativo deixaria `ready` sempre true (broadcast sem assinatura). Mesmo
-  // clamp de createSignatureRequest em signature-request.ts.
+  // Clamp: quorum between 1 and the number of signers. Without the floor of 1, a
+  // threshold of 0/negative would leave `ready` always true (broadcast without a
+  // signature). Same clamp as createSignatureRequest in signature-request.ts.
   const threshold = Math.min(
     Math.max(args.threshold ?? signers.length, 1),
     signers.length,
@@ -134,8 +134,8 @@ export function prepareMultisigPayment(args: {
 }
 
 /**
- * Anexa UMA assinatura (de sign_with_wallet) à tx multisig e devolve o estado
- * atualizado. Idempotente por signatário: re-assinar não duplica.
+ * Attaches ONE signature (from sign_with_wallet) to the multisig tx and
+ * returns the updated state. Idempotent per signer: re-signing doesn't duplicate.
  */
 export function addMultisigApproval(args: {
   transactionJson: string;
@@ -157,7 +157,7 @@ export function addMultisigApproval(args: {
   const tx = Transaction.fromJSON(JSON.parse(args.transactionJson));
   const signer = PublicKey.fromHex(args.signerPublicKeyHex);
   const sig = withAlgorithmTag(args.signatureHex, args.signerPublicKeyHex);
-  tx.setSignature(sig, signer); // empilha em approvals[]
+  tx.setSignature(sig, signer); // pushes onto approvals[]
 
   return buildState(JSON.stringify(tx.toJSON()), args.meta);
 }
@@ -167,7 +167,7 @@ export interface MultisigBroadcastResult {
   explorerUrl: string;
 }
 
-/** Submete a tx multisig (já com as approvals acumuladas) on-chain. */
+/** Submits the multisig tx (with approvals already accumulated) on-chain. */
 export async function broadcastMultisig(
   transactionJson: string,
 ): Promise<MultisigBroadcastResult> {

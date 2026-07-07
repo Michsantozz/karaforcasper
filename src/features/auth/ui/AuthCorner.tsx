@@ -5,10 +5,11 @@ import { UsersIcon, LogOutIcon, LogInIcon, LoaderIcon } from "lucide-react";
 import { useSession, signIn, signOut } from "@/features/auth/model/auth-client";
 
 /**
- * Canto de autenticação na home. O chat permanece público (qualquer um conversa
- * com o agente), mas as ações on-chain/multisig exigem login — então o estado de
- * auth fica visível e o acesso ao dashboard é gateado: sem sessão, o botão vira
- * "entrar"; com sessão, mostra o e-mail + atalho ao /multisig + sair.
+ * Auth corner on the home page. The chat stays public (anyone can talk to the
+ * agent), but on-chain/multisig actions require sign in — so the auth state
+ * stays visible and dashboard access is gated: without a session, the button
+ * becomes "sign in"; with a session, it shows the email + shortcut to
+ * /multisig + sign out.
  */
 export function AuthCorner() {
   const { data: session, isPending } = useSession();
@@ -33,8 +34,8 @@ export function AuthCorner() {
             type="button"
             onClick={() => signOut()}
             className="flex items-center gap-1.5 rounded-[6px] border bg-background px-3 py-2 font-mono text-[11px] text-muted-foreground shadow-sm hover:text-foreground"
-            aria-label="sair"
-            title={session.user.email ?? "sair"}
+            aria-label="sign out"
+            title={session.user.email ?? "sign out"}
           >
             <LogOutIcon className="size-3.5" />
           </button>
@@ -43,7 +44,7 @@ export function AuthCorner() {
         <button
           type="button"
           onClick={() =>
-            // Volta para a página atual após o login, não força ir ao /multisig.
+            // Returns to the current page after sign-in, doesn't force /multisig.
             signIn.social({
               provider: "google",
               callbackURL:
@@ -53,10 +54,10 @@ export function AuthCorner() {
             })
           }
           className="flex items-center gap-1.5 rounded-[6px] border bg-background px-3 py-2 font-mono text-[11px] text-muted-foreground shadow-sm hover:text-foreground"
-          aria-label="entrar com Google"
+          aria-label="sign in with Google"
         >
           <LogInIcon className="size-3.5" />
-          entrar
+          sign in
         </button>
       )}
     </div>

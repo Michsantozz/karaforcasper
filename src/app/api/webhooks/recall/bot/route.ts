@@ -6,18 +6,19 @@ import { enrichMeeting } from "@/server/recall/enrich";
 import { withSystemScope } from "@/shared/db/rls";
 
 /**
- * Webhook de BOT do Recall (status/artifact change, entregue via Svix) — canal
- * SEPARADO do webhook de calendar (../route.ts). Configurado no dashboard Recall
- * apontando para /api/webhooks/recall/bot.
+ * Recall BOT webhook (status/artifact change, delivered via Svix) — channel
+ * SEPARATE from the calendar webhook (../route.ts). Configured in the Recall
+ * dashboard pointing to /api/webhooks/recall/bot.
  *
- * Objetivo: fechar o loop pós-reunião. Quando a transcrição fica pronta
- * (transcript.done), geramos a ATA automaticamente (summarizeMeeting) e criamos
- * uma notificação in-app para o dono do bot — que aparece no sino global e
- * leva à ata acionável (Notarizar / Multisig). É o equivalente ao "push" do
- * Fireflies: o usuário não precisa voltar e pedir o resumo.
+ * Goal: close the loop after the meeting. When the transcript is ready
+ * (transcript.done), we auto-generate the MINUTES (summarizeMeeting) and create
+ * an in-app notification for the bot owner — which shows up in the global bell
+ * and leads to the actionable minutes (Notarize / Multisig). It's the
+ * equivalent of Fireflies' "push": the user doesn't need to come back and ask
+ * for the summary.
  *
- * Segurança: mesma verificação Svix do webhook de calendar (HMAC-SHA256 +
- * timing-safe + janela anti-replay). Exige o corpo CRU (req.text()).
+ * Security: same Svix verification as the calendar webhook (HMAC-SHA256 +
+ * timing-safe + anti-replay window). Requires the RAW body (req.text()).
  */
 
 type BotBase = {
@@ -30,7 +31,7 @@ type BotWebhook = TranscriptDone | BotDone | { event: string; data: unknown };
 export async function POST(req: Request) {
   const secret = process.env.RECALL_WEBHOOK_SECRET;
   if (!secret) {
-    // Fail-closed: sem secret não há como autenticar a origem.
+    // Fail-closed: without a secret there's no way to authenticate the origin.
     return NextResponse.json({ error: "webhook_not_configured" }, { status: 500 });
   }
 
@@ -52,7 +53,7 @@ export async function POST(req: Request) {
   }
 
   try {
-    // Só reagimos ao fim da transcrição — momento em que a ata pode ser gerada.
+    // Only react to the end of the transcript — the moment the minutes can be generated.
     if (payload.event !== "transcript.done") {
       return NextResponse.json({ ok: true, ignored: payload.event });
     }
@@ -63,8 +64,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, note: "no bot id" });
     }
 
-    // Descobre o dono: metadata do payload primeiro, depois o repo (persistido
-    // na criação do bot). Guardamos junto com a ata para escopo/notificação.
+    // Resolve the owner: payload metadata first, then the repo (persisted
+    // at bot creation). We store it alongside the minutes for scope/notification.
     const payloadUser =
       typeof data.bot?.metadata?.user_id === "string"
         ? (data.bot.metadata.user_id as string)
@@ -72,10 +73,10 @@ export async function POST(req: Request) {
     const row = await findBotByBotId(botId);
     const userId = payloadUser ?? botOwnerUserId(row);
 
-    // ENFILEIRA a ata (idempotente) em vez de gerá-la síncrono aqui. A geração
-    // vive no worker durável (enrichMeeting) — com retry via cron de reconcile
-    // se falhar. Persistimos em meeting_records para não re-buscar do Recall
-    // (que expira) nem re-pagar o LLM a cada leitura.
+    // ENQUEUES the minutes (idempotent) instead of generating them synchronously
+    // here. Generation lives in the durable worker (enrichMeeting) — with retry
+    // via the reconcile cron if it fails. We persist to meeting_records so we
+    // don't re-fetch from Recall (which expires) or re-pay the LLM on every read.
     await withSystemScope(() =>
       enqueueMeetingRecord({
         botId,
@@ -84,9 +85,9 @@ export async function POST(req: Request) {
       }),
     );
 
-    // Dispara o enrichment best-effort no caminho feliz (baixa latência). Se
-    // falhar/estiver processando, NÃO retornamos 5xx: a linha fica pending e o
-    // cron de reconciliação a reprocessa — o webhook não precisa reentregar.
+    // Fires the enrichment best-effort on the happy path (low latency). If it
+    // fails/is still processing, we do NOT return 5xx: the row stays pending and
+    // the reconciliation cron reprocesses it — the webhook doesn't need to redeliver.
     const result = await enrichMeeting(botId).catch((err) => ({
       state: "processing" as const,
       error: err instanceof Error ? err.message : "unknown",
@@ -95,7 +96,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, botId, enrich: result.state });
   } catch (err) {
     const message = err instanceof Error ? err.message : "unknown error";
-    // 5xx faz o Svix reentregar (útil se o enqueue falhar transitoriamente).
+    // 5xx makes Svix redeliver (useful if the enqueue fails transiently).
     return NextResponse.json(
       { error: "bot webhook processing failed", detail: message },
       { status: 500 },

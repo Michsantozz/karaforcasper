@@ -1,10 +1,10 @@
 import "server-only";
 /**
- * Google Calendar API — criação de eventos (write).
+ * Google Calendar API — event creation (write).
  *
- * Usa um access token OAuth (obtido via Recall, que gerencia o refresh). Cria
- * eventos no calendário primário do usuário, opcionalmente com um link do Google
- * Meet (conferenceData.createRequest + conferenceDataVersion=1).
+ * Uses an OAuth access token (obtained via Recall, which manages the refresh).
+ * Creates events on the user's primary calendar, optionally with a Google Meet
+ * link (conferenceData.createRequest + conferenceDataVersion=1).
  *
  * Docs: https://developers.google.com/workspace/calendar/api/v3/reference/events/insert
  */
@@ -14,7 +14,7 @@ const CALENDAR_API = "https://www.googleapis.com/calendar/v3";
 export type CreatedEvent = {
   id: string;
   htmlLink: string;
-  /** Link do Meet, se solicitado (entryPoints[type=video]). */
+  /** Meet link, if requested (entryPoints[type=video]). */
   meetingUrl: string | null;
   start: string;
   end: string;
@@ -24,17 +24,17 @@ export type CreatedEvent = {
 type CreateEventInput = {
   accessToken: string;
   summary: string;
-  /** ISO 8601 com offset, ex: 2026-06-25T10:00:00-03:00. */
+  /** ISO 8601 with offset, e.g.: 2026-06-25T10:00:00-03:00. */
   startIso: string;
   endIso: string;
   timeZone?: string;
   description?: string;
   attendees?: string[];
-  /** Gera um link do Google Meet no evento. Default: true. */
+  /** Generates a Google Meet link on the event. Default: true. */
   withMeet?: boolean;
 };
 
-/** Cria um evento no calendário primário e retorna o link do Meet (se pedido). */
+/** Creates an event on the primary calendar and returns the Meet link (if requested). */
 export async function createGoogleEvent(
   input: CreateEventInput,
 ): Promise<CreatedEvent> {
@@ -50,7 +50,7 @@ export async function createGoogleEvent(
       ? {
           conferenceData: {
             createRequest: {
-              // requestId precisa ser único por request; deriva do summary+start.
+              // requestId must be unique per request; derived from summary+start.
               requestId: `meet-${input.summary}-${input.startIso}`.slice(0, 64),
               conferenceSolutionKey: { type: "hangoutsMeet" },
             },

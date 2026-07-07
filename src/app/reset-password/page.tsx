@@ -8,8 +8,8 @@ import { Button } from "@/shared/ui/button";
 import { authClient } from "@/features/auth/model/auth-client";
 
 /**
- * Página de redefinição de senha. O link do e-mail (sendResetPassword → Resend)
- * cai aqui com ?token=. O usuário define a nova senha; em sucesso, volta à home.
+ * Password reset page. The email link (sendResetPassword → Resend) lands
+ * here with ?token=. The user sets a new password; on success, returns home.
  */
 export default function ResetPasswordPage() {
   return (
@@ -30,16 +30,16 @@ function ResetForm() {
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!token) return toast.error("Link inválido ou expirado.");
+    if (!token) return toast.error("Invalid or expired link.");
     if (password.length < 8)
-      return toast.error("A senha precisa ter ao menos 8 caracteres.");
-    if (password !== confirm) return toast.error("As senhas não conferem.");
+      return toast.error("Password must be at least 8 characters.");
+    if (password !== confirm) return toast.error("Passwords don't match.");
 
     setBusy(true);
     const { error } = await authClient.resetPassword({ newPassword: password, token });
     setBusy(false);
-    if (error) return toast.error(error.message ?? "Falha ao redefinir.");
-    toast.success("Senha redefinida! Faça login.");
+    if (error) return toast.error(error.message ?? "Failed to reset password.");
+    toast.success("Password reset! Please sign in.");
     router.push("/");
   }
 
@@ -49,9 +49,9 @@ function ResetForm() {
         <span className="flex size-12 items-center justify-center rounded-[10px] border bg-background">
           <KeyRoundIcon className="size-6 text-(--thread-accent-primary)" />
         </span>
-        <h1 className="font-semibold text-2xl tracking-tight">Nova senha</h1>
+        <h1 className="font-semibold text-2xl tracking-tight">New password</h1>
         <p className="max-w-sm text-sm text-muted-foreground">
-          Defina uma nova senha para sua conta.
+          Set a new password for your account.
         </p>
       </div>
 
@@ -61,7 +61,7 @@ function ResetForm() {
       >
         <input
           type="password"
-          placeholder="Nova senha (mín. 8 caracteres)"
+          placeholder="New password (min. 8 characters)"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           autoComplete="new-password"
@@ -69,7 +69,7 @@ function ResetForm() {
         />
         <input
           type="password"
-          placeholder="Confirme a nova senha"
+          placeholder="Confirm new password"
           value={confirm}
           onChange={(e) => setConfirm(e.target.value)}
           autoComplete="new-password"
@@ -79,7 +79,7 @@ function ResetForm() {
           {busy ? (
             <LoaderIcon className="size-4 animate-spin [animation-duration:0.6s]" />
           ) : (
-            "Redefinir senha"
+            "Reset password"
           )}
         </Button>
       </form>

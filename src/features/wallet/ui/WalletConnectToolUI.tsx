@@ -17,8 +17,8 @@ function short(hex: string) {
   return hex.length > 12 ? `${hex.slice(0, 6)}…${hex.slice(-4)}` : hex;
 }
 
-// Metadados legíveis da tx, buscados em /api/tx/:id para mostrar ao usuário o
-// que ele está prestes a assinar — independente do que o LLM repassou em args.
+// Human-readable tx metadata, fetched from /api/tx/:id to show the user what
+// they're about to sign — independent of what the LLM passed along in args.
 type TxMeta = {
   kind?: string;
   amountCspr?: string;
@@ -27,25 +27,25 @@ type TxMeta = {
 };
 
 const KIND_LABEL: Record<string, string> = {
-  transfer: "transferência",
-  delegate: "delegação (staking)",
-  undelegate: "resgate (undelegate)",
-  setup_multisig: "configuração multisig",
+  transfer: "transfer",
+  delegate: "delegation (staking)",
+  undelegate: "undelegate",
+  setup_multisig: "multisig setup",
 };
 
-// Metadados da tx pelo txId, para o usuário SEMPRE ver o que vai assinar antes
-// do popup. O txId é imutável → o dado é cacheado forever pelo TanStack Query
-// (useTxMetaQuery), então reabrir o mesmo card não refaz a chamada.
+// Tx metadata by txId, so the user ALWAYS sees what they're about to sign
+// before the popup. txId is immutable → the data is cached forever by
+// TanStack Query (useTxMetaQuery), so reopening the same card doesn't refetch.
 function useTxMeta(txId: string | undefined): TxMeta | null {
   return useTxMetaQuery<TxMeta>(txId).data ?? null;
 }
 
 // ---------------------------------------------------------------------------
-// connect_wallet — frontend tool. O `execute` roda no browser quando o modelo
-// chama: abre o popup da extensão (que é a própria confirmação do usuário) e
-// devolve { connected, activeKey } ao modelo. `render` só mostra o estado.
-// O `execute` é OBRIGATÓRIO para a tool ser enviada ao servidor: o
-// toToolsJSONSchema do assistant-ui descarta frontend tools sem execute.
+// connect_wallet — frontend tool. `execute` runs in the browser when the
+// model calls it: it opens the extension popup (which is the user's own
+// confirmation) and returns { connected, activeKey } to the model. `render`
+// only shows the state. `execute` is REQUIRED for the tool to be sent to the
+// server: assistant-ui's toToolsJSONSchema discards frontend tools without execute.
 // ---------------------------------------------------------------------------
 
 type ConnectResult = {
@@ -59,7 +59,7 @@ function ConnectWalletCard({
   result,
 }: ToolCallMessagePartProps<Record<string, never>, ConnectResult>) {
   if (status.type === "running")
-    return <ToolCard icon={WalletIcon} label="connect wallet" running meta="aguardando popup" />;
+    return <ToolCard icon={WalletIcon} label="connect wallet" running meta="waiting for popup" />;
   if (!result) return null;
   return result.connected ? (
     <ToolCard icon={CheckCircle2Icon} label="connect wallet" tone="success" meta="connected">
@@ -67,7 +67,7 @@ function ConnectWalletCard({
     </ToolCard>
   ) : (
     <ToolCard icon={XCircleIcon} label="connect wallet" tone="risk" meta="failed">
-      <WalletError error={result.error ?? "não conectado"} />
+      <WalletError error={result.error ?? "not connected"} />
     </ToolCard>
   );
 }
@@ -76,30 +76,31 @@ export const ConnectWalletTool = makeAssistantTool<Record<string, never>, Connec
   toolName: "connect_wallet",
   type: "frontend",
   description:
-    "Conecta a Casper Wallet do usuário (abre o popup da extensão no navegador). Use quando precisar do endereço/conta do usuário ou antes de pedir uma assinatura. Retorna { connected, activeKey }.",
+    "Connects the user's Casper Wallet (opens the extension popup in the browser). Use when you need the user's address/account or before requesting a signature. Returns { connected, activeKey }.",
   parameters: { type: "object", properties: {}, additionalProperties: false },
   execute: async () => connectWallet(),
   render: ConnectWalletCard,
 });
 
 // ---------------------------------------------------------------------------
-// sign_with_wallet — frontend tool. `execute` abre o popup de assinatura com o
-// transactionJson (montado por prepare_user_transfer) e devolve a signatureHex.
-// O agente então chama broadcast_signed_tx no servidor.
+// sign_with_wallet — frontend tool. `execute` opens the signing popup with
+// the transactionJson (built by prepare_user_transfer) and returns the
+// signatureHex. The agent then calls broadcast_signed_tx on the server.
 // ---------------------------------------------------------------------------
 
 type SignArgs = {
-  /** ID curto da tx no store (preferido — evita passar JSON gigante pelo LLM). */
+  /** Short tx ID in the store (preferred — avoids passing giant JSON through the LLM). */
   txId?: string;
-  /** JSON da tx direto (fallback para txs pequenas). */
+  /** Tx JSON directly (fallback for small txs). */
   transactionJson?: string;
   signerPublicKeyHex: string;
   amountCspr?: string;
   to?: string;
 };
 
-// Resolve o JSON da tx: do store (por txId) ou direto. txId é preferido porque
-// JSON grande (session/wasm) corrompe ao trafegar como argumento de tool no LLM.
+// Resolves the tx JSON: from the store (by txId) or directly. txId is
+// preferred because large JSON (session/wasm) gets corrupted when passed as
+// a tool argument through the LLM.
 async function resolveTransactionJson(args: SignArgs): Promise<string | null> {
   if (args.txId) {
     try {
@@ -126,8 +127,8 @@ function SignWithWalletCard({
   status,
   result,
 }: ToolCallMessagePartProps<SignArgs, SignResult>) {
-  // Busca os metadados da tx (amount/to/from/kind) para mostrar SEMPRE o que o
-  // usuário vai assinar, mesmo quando o LLM não repassa amount/to em args.
+  // Fetches the tx metadata (amount/to/from/kind) to ALWAYS show what the
+  // user is about to sign, even when the LLM doesn't pass amount/to in args.
   const txMeta = useTxMeta(args.txId);
   if (status.type === "running") {
     const amount = args.amountCspr ?? txMeta?.amountCspr;
@@ -135,11 +136,11 @@ function SignWithWalletCard({
     const from = txMeta?.from;
     const kindLabel = txMeta?.kind ? KIND_LABEL[txMeta.kind] ?? txMeta.kind : null;
     return (
-      <ToolCard icon={PenLineIcon} label="sign tx" running meta="aguardando assinatura">
+      <ToolCard icon={PenLineIcon} label="sign tx" running meta="awaiting signature">
         <p className="font-mono text-[11px] text-amber-600 dark:text-amber-400">
-          Você está prestes a assinar
-          {kindLabel ? ` uma ${kindLabel}` : " esta transação"}. Confira os dados
-          antes de aprovar no popup da carteira.
+          You are about to sign
+          {kindLabel ? ` a ${kindLabel}` : " this transaction"}. Check the
+          details before approving in the wallet popup.
         </p>
         {(amount || to || from) && (
           <div className="mt-1.5 flex flex-col gap-1.5 border-t border-dashed border-border pt-2">
@@ -158,7 +159,7 @@ function SignWithWalletCard({
     </ToolCard>
   ) : (
     <ToolCard icon={XCircleIcon} label="sign tx" tone="risk" meta="failed">
-      <WalletError error={result.error ?? "assinatura cancelada"} />
+      <WalletError error={result.error ?? "signature cancelled"} />
     </ToolCard>
   );
 }
@@ -167,7 +168,7 @@ export const SignWithWalletTool = makeAssistantTool<SignArgs, SignResult>({
   toolName: "sign_with_wallet",
   type: "frontend",
   description:
-    "Pede ao usuário que assine uma transação com a Casper Wallet (abre o popup de assinatura). Recebe transactionJson e signerPublicKeyHex de prepare_user_transfer. Retorna { signed, signatureHex }. Em seguida chame broadcast_signed_tx para submeter on-chain.",
+    "Asks the user to sign a transaction with the Casper Wallet (opens the signing popup). Receives transactionJson and signerPublicKeyHex from prepare_user_transfer. Returns { signed, signatureHex }. Then call broadcast_signed_tx to submit on-chain.",
   parameters: {
     type: "object",
     properties: {
@@ -187,7 +188,7 @@ export const SignWithWalletTool = makeAssistantTool<SignArgs, SignResult>({
         signed: false,
         signatureHex: null,
         signerPublicKeyHex: args.signerPublicKeyHex,
-        error: "transação não encontrada (txId expirado ou ausente)",
+        error: "transaction not found (txId expired or missing)",
       };
     const out = await signWithWallet(json, args.signerPublicKeyHex);
     return { ...out, signerPublicKeyHex: args.signerPublicKeyHex };
@@ -196,7 +197,7 @@ export const SignWithWalletTool = makeAssistantTool<SignArgs, SignResult>({
 });
 
 // ---------------------------------------------------------------------------
-// Card visual — mesmo estilo dos demais Casper ToolUIs.
+// Visual card — same style as the other Casper ToolUIs.
 // ---------------------------------------------------------------------------
 
 type Tone = "default" | "success" | "caution" | "risk";
@@ -261,15 +262,15 @@ function Row({ k, v }: { k: string; v: string }) {
   );
 }
 
-// Exibe o erro da carteira. Quando a extensão não está instalada, mostra um CTA
-// com link de download — caso contrário o usuário externo não sabe o que fazer.
+// Displays the wallet error. When the extension isn't installed, shows a CTA
+// with a download link — otherwise an external user won't know what to do.
 function WalletError({ error }: { error: string }) {
   const notInstalled = /não instalada|not installed/i.test(error);
   if (notInstalled)
     return (
       <div className="flex flex-col gap-1.5">
         <span className="font-mono text-sm text-foreground">
-          Casper Wallet não detectada.
+          Casper Wallet not detected.
         </span>
         <a
           href="https://www.casperwallet.io/download"
@@ -278,7 +279,7 @@ function WalletError({ error }: { error: string }) {
           className="inline-flex items-center gap-1 font-mono text-[11px] text-(--thread-accent-primary) hover:underline"
         >
           <WalletIcon className="size-3" />
-          instalar a extensão e recarregar
+          install the extension and reload
         </a>
       </div>
     );

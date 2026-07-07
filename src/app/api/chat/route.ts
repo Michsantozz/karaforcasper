@@ -7,7 +7,7 @@ import { getSession } from "@/features/auth/model/session";
 
 export const maxDuration = 60;
 
-// Shape do que o AssistantChatTransport injeta no body (assistant-ui):
+// Shape of what AssistantChatTransport injects into the body (assistant-ui):
 // tools: Record<name, { description?, parameters: JSONSchema7 }>.
 type FrontendToolJSONSchema = {
   description?: string;
@@ -15,11 +15,12 @@ type FrontendToolJSONSchema = {
 };
 
 /**
- * Converte as tools enviadas pelo front (frontend tools do assistant-ui) em
- * clientTools do Mastra. São tools SEM `execute` server-side: o agente as expõe
- * ao modelo, o modelo as chama, e a execução acontece no browser (a UI cumpre
- * a tool-call e devolve o resultado). É assim que `connect_wallet` /
- * `sign_with_wallet` abrem o popup da Casper Wallet no cliente.
+ * Converts the tools sent by the frontend (assistant-ui frontend tools) into
+ * Mastra clientTools. These are tools WITHOUT server-side `execute`: the agent
+ * exposes them to the model, the model calls them, and execution happens in
+ * the browser (the UI fulfills the tool-call and returns the result). This is
+ * how `connect_wallet` / `sign_with_wallet` open the Casper Wallet popup on
+ * the client.
  */
 function toClientTools(
   tools: Record<string, FrontendToolJSONSchema> | undefined,
@@ -31,28 +32,28 @@ function toClientTools(
       tool({
         description: t.description,
         inputSchema: jsonSchema(t.parameters),
-        // sem `execute`: o cliente cumpre a chamada.
+        // no `execute`: the client fulfills the call.
       }),
     ]),
   );
 }
 
 export async function POST(req: Request) {
-  // Gate de auth: o chat consome LLM (custo) e dá acesso às tools on-chain.
-  // Sem sessão, não atende — barra abuso/DoS de cota antes de qualquer trabalho.
+  // Auth gate: chat consumes LLM (cost) and grants access to on-chain tools.
+  // Without a session, we don't serve — blocks quota abuse/DoS before any work.
   const session = await getSession();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
   }
 
   const params = await req.json();
-  // O transport injeta `tools` (JSON Schema). Repassamos como clientTools —
-  // o resto de `params` segue inalterado para o handler.
+  // The transport injects `tools` (JSON Schema). We forward them as clientTools —
+  // the rest of `params` passes through unchanged to the handler.
   const { tools, ...rest } = params as {
     tools?: Record<string, FrontendToolJSONSchema>;
   } & Record<string, unknown>;
 
-  // version:'v6' obrigatório — assistant-ui tipa contra AI SDK v6.
+  // version:'v6' required — assistant-ui types against AI SDK v6.
   const stream = await handleChatStream({
     mastra,
     agentId: "assistantAgent",

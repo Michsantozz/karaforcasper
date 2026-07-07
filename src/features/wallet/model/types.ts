@@ -1,23 +1,23 @@
-// Tipos da Casper Wallet extension. A extensão injeta `CasperWalletProvider`
-// e `CasperWalletEventTypes` no `window` — nenhum pacote npm é necessário.
-// Fonte: https://github.com/make-software/casper-wallet docs (SDK injetado).
+// Casper Wallet extension types. The extension injects `CasperWalletProvider`
+// and `CasperWalletEventTypes` into `window` — no npm package is required.
+// Source: https://github.com/make-software/casper-wallet docs (injected SDK).
 
 export interface CasperWalletProvider {
-  /** Abre o popup pedindo conexão. Resolve `true` se o usuário aprovou. */
+  /** Opens the connection popup. Resolves `true` if the user approved. */
   requestConnection(): Promise<boolean>;
-  /** Pede nova autorização (mesmo que já conectado). */
+  /** Requests re-authorization (even if already connected). */
   requestSwitchAccount(): Promise<boolean>;
-  /** Desconecta o site da carteira. */
+  /** Disconnects the site from the wallet. */
   disconnectFromSite(): Promise<boolean>;
-  /** Chave pública (hex) da conta ativa. Lança se a carteira estiver locked. */
+  /** Public key (hex) of the active account. Throws if the wallet is locked. */
   getActivePublicKey(): Promise<string>;
-  /** Site está conectado à carteira? */
+  /** Is the site connected to the wallet? */
   isConnected(): Promise<boolean>;
-  /** Versão da extensão. */
+  /** Extension version. */
   getVersion(): Promise<string>;
   /**
-   * Assina um deploy/transaction (JSON string) com a conta `signingPublicKeyHex`.
-   * Abre o popup de assinatura. Retorna `{ cancelled }` ou a assinatura.
+   * Signs a deploy/transaction (JSON string) with the `signingPublicKeyHex`
+   * account. Opens the signing popup. Returns `{ cancelled }` or the signature.
    */
   sign(
     deployJson: string,
@@ -26,7 +26,7 @@ export interface CasperWalletProvider {
     | { cancelled: true }
     | { cancelled: false; signatureHex: string; signature: Uint8Array }
   >;
-  /** Assina uma mensagem arbitrária. */
+  /** Signs an arbitrary message. */
   signMessage(
     message: string,
     signingPublicKeyHex: string,
@@ -37,7 +37,7 @@ export interface CasperWalletProvider {
 }
 
 export interface CasperWalletProviderOptions {
-  /** Timeout (ms) das requisições à extensão. Default 30min. */
+  /** Timeout (ms) for requests to the extension. Default 30min. */
   timeout?: number;
 }
 
@@ -45,7 +45,7 @@ export type CasperWalletProviderConstructor = (
   options?: CasperWalletProviderOptions,
 ) => CasperWalletProvider;
 
-/** Nomes dos eventos disparados pela extensão no `window`. */
+/** Names of the events the extension fires on `window`. */
 export interface CasperWalletEventTypes {
   connected: string;
   disconnected: string;
@@ -55,7 +55,7 @@ export interface CasperWalletEventTypes {
   unlocked: string;
 }
 
-/** Payload (JSON string em `event.detail`) dos eventos da carteira. */
+/** Payload (JSON string in `event.detail`) of the wallet events. */
 export interface CasperWalletState {
   isLocked: boolean;
   isConnected: boolean;

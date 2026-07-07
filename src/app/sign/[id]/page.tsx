@@ -45,12 +45,13 @@ function norm(hex: string) {
 }
 
 /**
- * Página pública do link /sign/:id — o coração do fluxo de coleta distribuída.
+ * Public page for the /sign/:id link — the heart of the distributed signature
+ * collection flow.
  *
- * Mostra a tx (valor/destino via descrição + signatários + progresso). O
- * signatário conecta a carteira, assina pela própria conta (popup), e a
- * assinatura é enviada ao /approve. Se quórum atingido e o viewer é o criador,
- * mostra o botão de broadcast.
+ * Shows the tx (amount/target via description + signers + progress). The
+ * signer connects their wallet, signs from their own account (popup), and the
+ * signature is sent to /approve. If quorum is reached and the viewer is the
+ * creator, shows the broadcast button.
  */
 export default function SignPage({
   params,
@@ -64,9 +65,9 @@ export default function SignPage({
   const [msg, setMsg] = useState<string | null>(null);
   const [broadcastUrl, setBroadcastUrl] = useState<string | null>(null);
 
-  // Detalhe + polling terminal-aware do hook compartilhado. O fetcher joga
-  // Error("<status> ...") em resposta não-ok, então distinguimos 404 (request
-  // inexistente/expirada) de falha de rede pela mensagem.
+  // Detail + terminal-aware polling from the shared hook. The fetcher throws
+  // Error("<status> ...") on a non-ok response, so we distinguish 404
+  // (nonexistent/expired request) from a network failure by the message.
   const {
     data: detail,
     isLoading: loading,
@@ -83,7 +84,7 @@ export default function SignPage({
   const broadcastMut = useBroadcastRequest(id);
   const busy = approveMut.isPending || broadcastMut.isPending;
 
-  // Conta ativa da carteira é um signatário exigido que ainda não assinou?
+  // Is the wallet's active account a required signer who hasn't signed yet?
   const activeKey = wallet.activeKey ? norm(wallet.activeKey) : null;
   const required = detail?.requiredSigners.map((s) => norm(s.publicKeyHex)) ?? [];
   const isRequiredSigner = activeKey ? required.includes(activeKey) : false;
@@ -95,13 +96,13 @@ export default function SignPage({
     if (!detail || !wallet.activeKey) return;
     setMsg(null);
     try {
-      // Assinatura na carteira (popup) roda no client — não é uma mutation.
+      // Signing in the wallet (popup) runs on the client — it's not a mutation.
       const out = await signWithWallet(detail.transactionJson, wallet.activeKey);
       if (!out.signed || !out.signatureHex) {
-        setMsg(out.error ?? "Assinatura cancelada.");
+        setMsg(out.error ?? "Signature cancelled.");
         return;
       }
-      // Registro no servidor via mutation (invalida detalhe + listas ao ok).
+      // Server-side record via mutation (invalidates detail + lists on success).
       const { ok, status, data } = await approveMut.mutateAsync({
         signerPublicKeyHex: wallet.activeKey,
         signatureHex: out.signatureHex,
@@ -114,10 +115,10 @@ export default function SignPage({
         const extra = err.issues?.length
           ? ` (${err.issues.map((i) => `${i.path}: ${i.message}`).join("; ")})`
           : "";
-        setMsg(`Falha ao registrar: ${err.error ?? status}${extra}`);
+        setMsg(`Failed to record: ${err.error ?? status}${extra}`);
         return;
       }
-      setMsg("Assinatura registrada ✓");
+      setMsg("Signature registered ✓");
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e));
     }
@@ -130,15 +131,15 @@ export default function SignPage({
       const d = data as { error?: string; explorerUrl?: string };
       if (!ok) {
         const map: Record<string, string> = {
-          forbidden: "Só o criador pode submeter.",
-          request_not_ready: "Quórum ainda não atingido.",
-          unauthenticated: "Faça login para submeter.",
+          forbidden: "Only the creator can submit.",
+          request_not_ready: "Quorum not yet reached.",
+          unauthenticated: "Log in to submit.",
         };
-        setMsg(map[d.error ?? ""] ?? `Falha no broadcast: ${d.error ?? status}`);
+        setMsg(map[d.error ?? ""] ?? `Broadcast failed: ${d.error ?? status}`);
         return;
       }
       setBroadcastUrl(d.explorerUrl ?? null);
-      setMsg("Transação submetida ✓");
+      setMsg("Transaction submitted ✓");
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e));
     }
@@ -149,7 +150,7 @@ export default function SignPage({
       <main className="mx-auto w-full max-w-2xl px-4 py-10">
         <div className="flex items-center gap-2 font-mono text-muted-foreground text-sm">
           <LoaderIcon className="size-4 animate-spin" />
-          carregando solicitação…
+          loading request…
         </div>
       </main>
     );
@@ -163,8 +164,8 @@ export default function SignPage({
           <CircleAlertIcon className="size-4 text-(--thread-accent-secondary)" />
           <span className="text-(--thread-accent-secondary) text-sm">
             {isNetwork
-              ? "Falha de rede ao carregar. Verifique a conexão."
-              : "Solicitação não encontrada ou expirada."}
+              ? "Network error while loading. Check your connection."
+              : "Request not found or expired."}
           </span>
           {isNetwork && (
             <Button
@@ -173,7 +174,7 @@ export default function SignPage({
               className="ml-auto rounded-[5px] font-mono text-xs"
               onClick={() => void refetch()}
             >
-              tentar de novo
+              try again
             </Button>
           )}
         </div>
@@ -185,8 +186,8 @@ export default function SignPage({
     detail.status,
   );
 
-  // Heurística anti-engano: se a descrição cita um número de CSPR que não bate
-  // com o valor real decodado, avisa o signatário. Best-effort (não bloqueia).
+  // Anti-deception heuristic: if the description mentions a CSPR number that
+  // doesn't match the real decoded amount, warn the signer. Best-effort (non-blocking).
   const divergenceWarning = (() => {
     const real = detail.decoded.amountCspr;
     const desc = detail.description;
@@ -200,7 +201,7 @@ export default function SignPage({
     });
     return mentionsReal
       ? null
-      : `A descrição não bate com o valor real (${real} CSPR). Confie no valor acima, não na descrição.`;
+      : `The description doesn't match the real amount (${real} CSPR). Trust the amount above, not the description.`;
   })();
 
   return (
@@ -211,7 +212,7 @@ export default function SignPage({
         </span>
         <div>
           <h1 className="font-semibold text-2xl tracking-tight">
-            Assinatura multisig
+            Multisig signature
           </h1>
           <p className="font-mono text-[11px] text-muted-foreground">
             sign / {detail.id}
@@ -219,7 +220,7 @@ export default function SignPage({
         </div>
       </header>
 
-      {/* Frame: detalhes da request */}
+      {/* Frame: request details */}
       <div className="rounded-[8px] bg-(--thread-frame-outer) p-1">
         <div className="flex items-center justify-between px-2 py-1.5">
           <span className="font-mono text-muted-foreground text-xs">
@@ -240,11 +241,11 @@ export default function SignPage({
         </div>
 
         <div className="flex flex-col gap-2 rounded-[5px] border bg-background p-4">
-          {/* Valor/destino REAIS decodados da tx no servidor — a fonte de
-              verdade do que está sendo assinado, independente da description. */}
+          {/* REAL amount/target decoded from the tx on the server — the source
+              of truth for what's being signed, independent of the description. */}
           <div className="flex flex-col gap-2 rounded-[5px] border border-(--thread-accent-primary)/30 bg-(--thread-accent-primary)/5 p-3">
             <span className="font-mono text-[10px] text-muted-foreground uppercase tracking-wider">
-              você está assinando
+              you are signing
             </span>
             <div className="flex items-center gap-2">
               <CoinsIcon className="size-4 text-(--thread-accent-primary)" />
@@ -258,7 +259,7 @@ export default function SignPage({
             <div className="flex items-start gap-2">
               <TargetIcon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
               <span className="break-all font-mono text-[11px] text-muted-foreground">
-                {detail.decoded.target ?? "destino não decodado"}
+                {detail.decoded.target ?? "target not decoded"}
               </span>
             </div>
           </div>
@@ -266,7 +267,7 @@ export default function SignPage({
           {detail.description && (
             <div className="flex flex-col gap-1">
               <span className="font-mono text-[10px] text-muted-foreground uppercase tracking-wider">
-                descrição do criador
+                creator description
               </span>
               <p className="text-sm">{detail.description}</p>
               {divergenceWarning && (
@@ -279,7 +280,7 @@ export default function SignPage({
           )}
           <div className="mt-1 border-t border-dashed border-border pt-2" />
           <span className="font-mono text-[10px] text-muted-foreground uppercase tracking-wider">
-            signatários ({detail.threshold} exigidas)
+            signers ({detail.threshold} required)
           </span>
           {detail.requiredSigners.map((s) => {
             const done = detail.signed.includes(norm(s.publicKeyHex));
@@ -322,7 +323,7 @@ export default function SignPage({
         </div>
       </div>
 
-      {/* Carteira + ações */}
+      {/* Wallet + actions */}
       <div className="mt-4 flex items-center gap-2 rounded-[5px] border bg-background px-3 py-2">
         <KeyRoundIcon className="size-3.5 text-muted-foreground" />
         <span className="font-mono text-[10px] text-muted-foreground uppercase tracking-wider">
@@ -343,7 +344,7 @@ export default function SignPage({
             disabled={!wallet.installed}
           >
             <Link2Icon className="size-3.5" />
-            conectar carteira
+            connect wallet
           </Button>
         ) : (
           <Button
@@ -361,18 +362,34 @@ export default function SignPage({
               <PenLineIcon className="size-3.5" />
             )}
             {alreadySigned
-              ? "já assinou"
+              ? "already signed"
               : isRequiredSigner
-                ? "assinar"
-                : "conta não é signatária"}
+                ? "sign"
+                : "account is not a signer"}
           </Button>
         )}
 
-        {!terminal && !isRequiredSigner && !alreadySigned && (
-          <p className="mt-2 font-mono text-[11px] text-muted-foreground">
-            A conta conectada não está na lista de signatários desta solicitação.
-            Troque de conta na extensão da Casper Wallet e recarregue.
-          </p>
+        {wallet.connected && !terminal && !isRequiredSigner && !alreadySigned && (
+          <div className="mt-2 flex w-full flex-col gap-1.5 rounded-[5px] border border-(--thread-accent-secondary)/40 bg-(--thread-accent-secondary-soft) px-3 py-2">
+            <p className="font-mono text-[11px] text-(--thread-accent-secondary)">
+              The connected account ({short(activeKey ?? "")}) is not a signer for
+              this request. Switch to one of these in the Casper Wallet
+              extension and reload:
+            </p>
+            <ul className="flex flex-col gap-0.5">
+              {detail.requiredSigners
+                .filter((s) => !detail.signed.includes(norm(s.publicKeyHex)))
+                .map((s) => (
+                  <li
+                    key={s.publicKeyHex}
+                    className="font-mono text-[10px] text-muted-foreground"
+                  >
+                    {s.label ? `${s.label} · ` : ""}
+                    {short(s.publicKeyHex)}
+                  </li>
+                ))}
+            </ul>
+          </div>
         )}
 
         {detail.ready && !terminal && (
@@ -392,18 +409,18 @@ export default function SignPage({
             </AlertDialogTrigger>
             <AlertDialogContent>
               <AlertDialogHeader>
-                <AlertDialogTitle>Submeter à rede?</AlertDialogTitle>
+                <AlertDialogTitle>Submit to the network?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  Esta ação é irreversível. A transação será transmitida à
-                  Casper {detail.chainName} e moverá{" "}
+                  This action is irreversible. The transaction will be
+                  broadcast to Casper {detail.chainName} and will move{" "}
                   <strong className="text-foreground">
                     {detail.decoded.amountCspr ?? "?"} CSPR
                   </strong>{" "}
-                  para{" "}
+                  to{" "}
                   <span className="break-all font-mono text-[11px]">
-                    {detail.decoded.target ?? "destino não decodado"}
+                    {detail.decoded.target ?? "target not decoded"}
                   </span>
-                  . Não há como desfazer.
+                  . There is no way to undo it.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
@@ -416,7 +433,7 @@ export default function SignPage({
                     />
                   }
                 >
-                  cancelar
+                  cancel
                 </AlertDialogCancel>
                 <AlertDialogAction
                   render={
@@ -429,7 +446,7 @@ export default function SignPage({
                   onClick={onBroadcast}
                 >
                   <SendIcon className="size-3.5" />
-                  confirmar broadcast
+                  confirm broadcast
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>
@@ -439,16 +456,16 @@ export default function SignPage({
 
       {!wallet.installed && (
         <p className="mt-3 font-mono text-[11px] text-(--thread-accent-secondary)">
-          Casper Wallet não detectada —{" "}
+          Casper Wallet not detected —{" "}
           <a
             href="https://www.casperwallet.io/download"
             target="_blank"
             rel="noopener noreferrer"
             className="underline hover:no-underline"
           >
-            instale a extensão
+            install the extension
           </a>{" "}
-          e recarregue a página.
+          and reload the page.
         </p>
       )}
 
@@ -476,7 +493,7 @@ export default function SignPage({
 
       {session?.user && (
         <p className="mt-4 font-mono text-[10px] text-muted-foreground">
-          logado como {session.user.email}
+          logged in as {session.user.email}
         </p>
       )}
     </main>

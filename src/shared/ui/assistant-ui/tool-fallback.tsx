@@ -30,12 +30,12 @@ const ANIMATION_DURATION = 200;
 const pressable = "active:scale-[0.98]";
 
 /**
- * Classifica a origem de uma tool pelo nome, para rotular corretamente o header
- * da tool-call (em vez de marcar tudo como "mcp").
+ * Classifies a tool's origin by name, to correctly label the tool-call
+ * header (instead of marking everything as "mcp").
  *
- * - mcp:    tools servidas por servidores MCP (recall_*, csprCloud_*, csprTrade_*).
- * - casper: tools nativas do Casper SDK (carteira/transfer/saldo/staking…).
- * - tool:   tools locais do app (bots Recall, calendar, criação de evento…).
+ * - mcp:    tools served by MCP servers (recall_*, csprCloud_*, csprTrade_*).
+ * - casper: native Casper SDK tools (wallet/transfer/balance/staking…).
+ * - tool:   local app tools (Recall bots, calendar, event creation…).
  */
 type ToolKind = "mcp" | "casper" | "tool";
 
@@ -53,7 +53,7 @@ function classifyTool(toolName: string): ToolKind {
   return "tool";
 }
 
-/** Cor do dot por origem da tool. */
+/** Dot color by tool origin. */
 const KIND_DOT: Record<ToolKind, string> = {
   mcp: "bg-(--thread-accent-secondary)",
   casper: "bg-(--thread-accent-primary)",

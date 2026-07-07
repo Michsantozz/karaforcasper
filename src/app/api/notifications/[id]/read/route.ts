@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/features/auth/model/session";
 import { markNotificationRead } from "@/server/casper/notifications";
 
-/** Marca uma notificação como lida (restrito ao dono). */
+/** Marks a notification as read (restricted to its owner). */
 export async function POST(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },

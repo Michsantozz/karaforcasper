@@ -29,7 +29,7 @@ type NavItem = {
   href: string;
   label: string;
   icon: LucideIcon;
-  /** Combina rotas filhas (ex.: /multisig/[id]) para o estado ativo. */
+  /** Matches child routes (e.g. /multisig/[id]) for the active state. */
   match: (path: string) => boolean;
 };
 
@@ -42,37 +42,39 @@ const NAV: NavItem[] = [
   },
   {
     href: "/meetings",
-    label: "Reuniões",
+    label: "Meetings",
     icon: VideoIcon,
     match: (p) => p.startsWith("/meetings"),
   },
   {
     href: "/multisig",
-    label: "Assinaturas",
+    label: "Signatures",
     icon: PenLineIcon,
     match: (p) => p.startsWith("/multisig") || p.startsWith("/sign"),
   },
 ];
 
 /**
- * Shell de navegação global das telas autenticadas. Antes cada página era uma
- * ilha sem como descobrir as outras; agora há um rail fixo à esquerda (desktop)
- * e um menu flutuante (mobile) que liga Chat ⇆ Reuniões ⇆ Multisig, além de
- * theme toggle e ação de sair. É auto-contido (position: fixed) e não envolve o
- * conteúdo — as páginas só adicionam `md:pl-14` para não ficar sob o rail.
+ * Global navigation shell for the authenticated screens. Before, each page
+ * was an island with no way to discover the others; now there's a fixed rail
+ * on the left (desktop) and a floating menu (mobile) linking Chat ⇆ Meetings
+ * ⇆ Multisig, plus a theme toggle and sign-out action. It's self-contained
+ * (position: fixed) and doesn't wrap the content — pages just add
+ * `md:pl-14` so they don't sit under the rail.
  */
 export function AppShell() {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  // Fecha o menu mobile ao navegar. Sincronizar com `pathname` num effect é o
-  // caminho correto — não dá pra derivar em render sem perder o toggle manual.
+  // Closes the mobile menu on navigation. Syncing with `pathname` in an
+  // effect is the correct approach here — it can't be derived during render
+  // without losing the manual toggle.
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => setMobileOpen(false), [pathname]);
 
   return (
     <>
-      {/* Rail desktop */}
+      {/* Desktop rail */}
       <aside className="fixed inset-y-0 left-0 z-40 hidden w-14 flex-col items-center border-r bg-background py-3 md:flex">
         <Link
           href="/"
@@ -94,12 +96,12 @@ export function AppShell() {
         </div>
       </aside>
 
-      {/* Menu mobile */}
+      {/* Mobile menu */}
       <div className="md:hidden">
         <button
           type="button"
           onClick={() => setMobileOpen((v) => !v)}
-          aria-label={mobileOpen ? "Fechar menu" : "Abrir menu"}
+          aria-label={mobileOpen ? "Close menu" : "Open menu"}
           className="fixed left-3 top-3 z-50 flex size-9 items-center justify-center rounded-[8px] border bg-background text-muted-foreground shadow-sm"
         >
           {mobileOpen ? (
@@ -145,7 +147,7 @@ export function AppShell() {
         )}
       </div>
 
-      {/* Onboarding de primeiro uso (auto-contido; só dispara uma vez) */}
+      {/* First-use onboarding (self-contained; fires only once) */}
       <OnboardingDialog />
     </>
   );
@@ -180,19 +182,20 @@ function RailLink({ item, active }: { item: NavItem; active: boolean }) {
 function ThemeToggle({ withLabel = false }: { withLabel?: boolean }) {
   const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
-  // Flag de montagem para evitar mismatch de hydration do tema (padrão canônico
-  // do next-themes) — o set só pode acontecer client-side, no effect.
+  // Mount flag to avoid a theme hydration mismatch (next-themes canonical
+  // pattern) — the set can only happen client-side, in the effect.
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => setMounted(true), []);
 
   const isDark = resolvedTheme === "dark";
   const toggle = () => setTheme(isDark ? "light" : "dark");
 
-  // Evita mismatch de hydration: antes de montar, o server não conhece o tema
-  // resolvido — ícone E aria-label precisam do mesmo placeholder neutro, senão
-  // o aria-label diverge no hydrate (isDark é indefinido no SSR).
+  // Avoids a hydration mismatch: before mounting, the server doesn't know the
+  // resolved theme — both icon AND aria-label need the same neutral
+  // placeholder, otherwise the aria-label diverges on hydrate (isDark is
+  // undefined during SSR).
   const Icon = !mounted ? SunIcon : isDark ? SunIcon : MoonIcon;
-  const label = !mounted ? "Alternar tema" : isDark ? "Tema claro" : "Tema escuro";
+  const label = !mounted ? "Toggle theme" : isDark ? "Light theme" : "Dark theme";
 
   if (withLabel) {
     return (
@@ -248,7 +251,7 @@ function UserButton({ withLabel = false }: { withLabel?: boolean }) {
       <button
         type="button"
         onClick={onLogin}
-        aria-label="Entrar"
+        aria-label="Sign in"
         className="flex size-9 items-center justify-center rounded-[8px] text-muted-foreground hover:bg-muted hover:text-foreground"
       >
         <LogInIcon className="size-[18px]" />
@@ -264,8 +267,8 @@ function UserButton({ withLabel = false }: { withLabel?: boolean }) {
     <button
       type="button"
       onClick={() => signOut()}
-      aria-label="Sair"
-      title={session.user.email ?? "Sair"}
+      aria-label="Sign out"
+      title={session.user.email ?? "Sign out"}
       className="group relative flex size-9 items-center justify-center rounded-full"
     >
       <span className="flex size-7 items-center justify-center rounded-full border bg-background font-mono text-xs text-foreground group-hover:opacity-0">
@@ -281,7 +284,7 @@ function UserButton({ withLabel = false }: { withLabel?: boolean }) {
     <Tooltip>
       <TooltipTrigger render={button} />
       <TooltipContent side="right">
-        {session.user.email ?? "Sair"} · sair
+        {session.user.email ?? "Sign out"} · sign out
       </TooltipContent>
     </Tooltip>
   );

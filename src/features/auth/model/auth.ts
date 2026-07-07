@@ -10,28 +10,29 @@ import {
 } from "@/server/email";
 
 /**
- * Configuração do better-auth (identidade/sessão do app).
+ * better-auth configuration (app identity/session).
  *
- * Login social com Google. `accessType: offline` + `prompt` com `consent`
- * garantem que a conta vinculada tenha refresh_token — usado depois para
- * conectar a agenda do usuário ao Recall (fluxo de calendar é separado, mas
- * reaproveita o mesmo OAuth client do Google).
+ * Social sign-in with Google. `accessType: offline` + `prompt` with `consent`
+ * ensure the linked account has a refresh_token — used later to connect the
+ * user's calendar to Recall (the calendar flow is separate but reuses the
+ * same Google OAuth client).
  *
- * Tabelas (user/session/account/verification/rateLimit) geradas via `better-auth`
- * CLI e versionadas no schema do Drizzle. Após mudar rateLimit.storage="database"
- * rode a geração de schema/migration do better-auth p/ criar a tabela rateLimit.
+ * Tables (user/session/account/verification/rateLimit) generated via the
+ * `better-auth` CLI and versioned in the Drizzle schema. After changing
+ * rateLimit.storage="database" run the better-auth schema/migration
+ * generation to create the rateLimit table.
  */
 
-// Verificação de email só é EXIGIDA quando há provedor de email configurado
-// (REQUIRE_EMAIL_VERIFICATION=true). Sem SMTP/provider, exigir travaria o login
-// — então o default é off, mas o wiring já está pronto: basta a flag + integrar
-// um provider real no lugar do console.log.
+// Email verification is only REQUIRED when an email provider is configured
+// (REQUIRE_EMAIL_VERIFICATION=true). Without SMTP/provider, requiring it would
+// lock sign-in — so the default is off, but the wiring is ready: just flip
+// the flag and plug in a real provider instead of the console.log.
 const requireEmailVerification =
   process.env.REQUIRE_EMAIL_VERIFICATION === "true";
 
-// Origens confiáveis (CSRF/origin check do better-auth). Inclui o domínio de
-// produção (env) + localhost nas portas de dev, para o mesmo build funcionar
-// tanto no túnel quanto acessado direto em localhost.
+// Trusted origins (better-auth CSRF/origin check). Includes the production
+// domain (env) + localhost on dev ports, so the same build works both
+// through the tunnel and accessed directly on localhost.
 const trustedOrigins = [
   process.env.BETTER_AUTH_URL,
   process.env.NEXT_PUBLIC_APP_URL,
@@ -45,7 +46,7 @@ export const auth = betterAuth({
   emailAndPassword: {
     enabled: true,
     requireEmailVerification,
-    // Reset de senha via Resend (fluxo forget → e-mail → /reset-password).
+    // Password reset via Resend (forget → email → /reset-password flow).
     sendResetPassword: async ({ user, url }) => {
       await emailResetPassword({ to: user.email, url });
     },
@@ -56,8 +57,8 @@ export const auth = betterAuth({
       await emailVerifyAccount({ to: user.email, url });
     },
   },
-  // Rate limit nativo — cobre login/signup (o que o Twenty NÃO faz). Regras mais
-  // duras nos endpoints de credencial pra frear brute-force e enumeração.
+  // Native rate limiting — covers login/signup (which Twenty does NOT do).
+  // Stricter rules on credential endpoints to slow brute-force and enumeration.
   rateLimit: {
     enabled: true,
     window: 60,
@@ -78,13 +79,13 @@ export const auth = betterAuth({
     },
   },
   plugins: [
-    // Login por magic link (e-mail sem senha). Envia via Resend.
+    // Magic link sign-in (passwordless email). Sent via Resend.
     magicLink({
       sendMagicLink: async ({ email, url }) => {
         await emailMagicLink({ to: email, url });
       },
     }),
-    // nextCookies deve ser o ÚLTIMO plugin (intercepta Set-Cookie das respostas).
+    // nextCookies must be the LAST plugin (it intercepts Set-Cookie on responses).
     nextCookies(),
   ],
 });

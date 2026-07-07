@@ -14,13 +14,14 @@ import {
 } from "@/shared/lib/http";
 
 /**
- * Anexa UMA assinatura a uma solicitação. Aberto (o signatário pode assinar via
- * link sem conta); se houver sessão, registra signedByUserId. A lib valida que o
- * signatário é exigido, que não expirou, que a assinatura é criptograficamente
- * válida, e idempotência. Quando o quórum é atingido, notifica o criador.
+ * Attaches ONE signature to a request. Open endpoint (the signer can sign via
+ * link without an account); if there's a session, records signedByUserId. The lib
+ * validates that the signer is required, that it hasn't expired, that the signature
+ * is cryptographically valid, and idempotency. When the quorum is reached, notifies
+ * the creator.
  */
 
-// Erros estáveis da lib → status HTTP.
+// Stable lib errors → HTTP status.
 const ERROR_STATUS: Record<string, number> = {
   request_not_found: 404,
   request_not_collectable: 409,
@@ -46,7 +47,7 @@ export async function POST(
   const { data: body, response } = await parseBody(req, approveSchema);
   if (response) return response;
 
-  // Sessão é opcional (assinatura via link). Se logado, vincula o user.
+  // Session is optional (signing via link). If logged in, links the user.
   const session = await getSession();
 
   try {
@@ -57,14 +58,14 @@ export async function POST(
       signedByUserId: session?.user?.id ?? null,
     });
 
-    // Atingiu o quórum agora → avisa o criador que está pronta para broadcast.
+    // Quorum reached now → notifies the creator that it's ready for broadcast.
     if (state.ready && state.request.status === "ready") {
       const request = await getSignatureRequest(id);
       if (request) {
         await createNotification({
           userId: request.createdByUserId,
           type: "request_ready",
-          message: "Quórum atingido — a transação está pronta para broadcast.",
+          message: "Quorum reached — the transaction is ready for broadcast.",
           requestId: request.id,
         });
       }

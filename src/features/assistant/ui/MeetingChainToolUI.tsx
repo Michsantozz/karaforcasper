@@ -19,7 +19,7 @@ function short(hex: string) {
   return hex.length > 14 ? `${hex.slice(0, 8)}…${hex.slice(-6)}` : hex;
 }
 
-// notarize_meeting — ata ancorada on-chain.
+// notarize_meeting — minutes anchored on-chain.
 export const NotarizeMeetingToolUI = makeAssistantToolUI<
   { record: unknown },
   {
@@ -47,7 +47,7 @@ export const NotarizeMeetingToolUI = makeAssistantToolUI<
   },
 });
 
-// verify_meeting — confere ata contra registro on-chain.
+// verify_meeting — checks minutes against the on-chain record.
 export const VerifyMeetingToolUI = makeAssistantToolUI<
   { transactionHash: string; record?: unknown },
   {
@@ -80,15 +80,15 @@ export const VerifyMeetingToolUI = makeAssistantToolUI<
       >
         {result.anchoredId !== null && <Row k="on-chain id" v={String(result.anchoredId)} />}
         {result.expectedId !== null && <Row k="expected id" v={String(result.expectedId)} />}
-        {result.recomputedHash && <Row k="ata hash" v={short(result.recomputedHash)} />}
+        {result.recomputedHash && <Row k="minutes hash" v={short(result.recomputedHash)} />}
         <ExplorerLink url={result.explorerUrl} />
       </Card>
     );
   },
 });
 
-// setup_multisig_account — configura a conta como multisig nativo. Mostra os
-// steps a assinar (na ordem) + a config resultante + aviso de trava.
+// setup_multisig_account — configures the account as native multisig. Shows
+// the steps to sign (in order) + the resulting config + a lockout warning.
 type SetupResult = {
   primaryPublicKeyHex: string;
   steps: { label: string; txId: string }[];
@@ -110,36 +110,37 @@ export const SetupMultisigToolUI = makeAssistantToolUI<unknown, SetupResult>({
     return (
       <Card
         icon={KeyRoundIcon}
-        label="setup multisig (nativo)"
+        label="setup multisig (native)"
         tone="caution"
-        meta={`${result.steps.length} passos`}
+        meta={`${result.steps.length} steps`}
       >
         <div className="flex items-start gap-1.5 rounded-[4px] bg-amber-500/10 p-2">
           <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0 text-amber-500" />
           <span className="font-mono text-[10px] text-amber-600 dark:text-amber-400">
-            Operação IRREVERSÍVEL: muda a conta on-chain. Se o threshold exceder o
-            peso controlável, a conta TRAVA permanentemente. Confira os pesos e o
-            quórum abaixo antes de assinar cada passo. Use conta de teste.
+            IRREVERSIBLE operation: changes the account on-chain. If the
+            threshold exceeds the controllable weight, the account LOCKS
+            permanently. Check the weights and the quorum below before
+            signing each step. Use a test account.
           </span>
         </div>
         <div className="mt-1 border-t border-dashed border-border pt-2" />
-        <Row k="conta primária" v={short(result.primaryPublicKeyHex)} />
+        <Row k="primary account" v={short(result.primaryPublicKeyHex)} />
         <div className="mt-1 border-t border-dashed border-border pt-2" />
         <span className="font-mono text-[10px] text-muted-foreground uppercase tracking-wider">
-          quórum resultante
+          resulting quorum
         </span>
         <Row k="deployment" v={String(result.config.deploymentThreshold)} />
         <Row k="key mgmt" v={String(result.config.keyManagementThreshold)} />
         <Row
-          k={`${short(result.primaryPublicKeyHex)} (primária)`}
-          v={`peso ${result.config.primaryWeight}`}
+          k={`${short(result.primaryPublicKeyHex)} (primary)`}
+          v={`weight ${result.config.primaryWeight}`}
         />
         {result.config.associatedKeys.map((a) => (
-          <Row key={a.publicKeyHex} k={short(a.publicKeyHex)} v={`peso ${a.weight}`} />
+          <Row key={a.publicKeyHex} k={short(a.publicKeyHex)} v={`weight ${a.weight}`} />
         ))}
         <div className="mt-1 border-t border-dashed border-border pt-2" />
         <span className="font-mono text-[10px] text-muted-foreground uppercase tracking-wider">
-          passos a assinar (em ordem)
+          steps to sign (in order)
         </span>
         {result.steps.map((s, i) => (
           <div key={s.label} className="flex items-start gap-2">
@@ -154,7 +155,7 @@ export const SetupMultisigToolUI = makeAssistantToolUI<unknown, SetupResult>({
   },
 });
 
-// Estado multisig compartilhado por prepare/add/broadcast.
+// Multisig state shared by prepare/add/broadcast.
 type MultisigState = {
   transactionJson: string;
   from: string;
@@ -193,14 +194,14 @@ function MultisigCard({ state }: { state: MultisigState }) {
                 done ? "text-(--thread-accent-primary)" : "text-muted-foreground",
               )}
             >
-              {done ? "assinado ✓" : "pendente"}
+              {done ? "signed ✓" : "pending"}
             </span>
           </div>
         );
       })}
       {state.ready && (
         <p className="pt-1 font-mono text-[11px] text-(--thread-accent-primary)">
-          quórum atingido — pronto para broadcast
+          quorum reached — ready to broadcast
         </p>
       )}
     </Card>
@@ -252,7 +253,7 @@ export const BroadcastMultisigToolUI = makeAssistantToolUI<
   },
 });
 
-// --- Card visual compartilhado (mesmo estilo dos demais Casper ToolUIs) ---
+// --- Shared visual card (same style as the other Casper ToolUIs) ---
 
 type Tone = "default" | "success" | "caution" | "risk";
 
@@ -326,7 +327,7 @@ function ExplorerLink({ url }: { url: string }) {
         className="inline-flex items-center gap-1 pt-2 font-mono text-[11px] text-(--thread-accent-primary) hover:underline"
       >
         <ExternalLinkIcon className="size-3" />
-        ver no explorer
+        view on explorer
       </a>
     </>
   );

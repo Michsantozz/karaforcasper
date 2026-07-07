@@ -12,7 +12,7 @@ import {
 } from "@/server/casper/multisig";
 import { prepareMultisigSetup } from "@/server/casper/multisig-setup";
 
-// Schema da ata reutilizado pelas tools de notarização.
+// Minutes schema reused by the notarization tools.
 const meetingRecordSchema = z.object({
   botId: z.string(),
   summary: z.string().nullable(),
@@ -24,38 +24,38 @@ const meetingRecordSchema = z.object({
   topics: z.array(z.string()).optional(),
 });
 
-// --- Mock para testes E2E (sem reunião real do Recall) ------------------
+// --- Mock for E2E tests (no real Recall meeting) ------------------
 
-// Atas de exemplo, identificadas por um "demo id" amigável. Permitem testar o
-// fluxo completo (ata → notarize → verify) sem precisar de um bot/transcrição
-// reais do Recall.ai. NÃO usar em produção.
+// Sample minutes, identified by a friendly "demo id". Let you test the full
+// flow (minutes → notarize → verify) without needing a real Recall.ai
+// bot/transcript. Do NOT use in production.
 const DEMO_MEETINGS: Record<string, z.infer<typeof meetingRecordSchema>> = {
   "demo-q3": {
     botId: "demo-q3",
     summary:
-      "Reunião de planejamento do Q3. O time alinhou prioridades de produto, aprovou o orçamento de marketing e definiu responsáveis pelas próximas entregas.",
+      "Q3 planning meeting. The team aligned on product priorities, approved the marketing budget, and assigned owners for the upcoming deliverables.",
     decisions: [
-      "Aprovar o orçamento de marketing de R$ 50 mil para o Q3",
-      "Lançar a nova feature de notarização em julho",
+      "Approve the $50k marketing budget for Q3",
+      "Launch the new notarization feature in July",
     ],
     actionItems: [
-      { task: "Contratar um designer de produto", owner: "Ana" },
-      { task: "Fechar contrato com o fornecedor de infraestrutura", owner: "Bruno" },
-      { task: "Preparar a demo para o buildathon", owner: "Carla" },
+      { task: "Hire a product designer", owner: "Ana" },
+      { task: "Close the contract with the infrastructure vendor", owner: "Bruno" },
+      { task: "Prepare the demo for the buildathon", owner: "Carla" },
     ],
     participants: ["Ana", "Bruno", "Carla"],
-    topics: ["orçamento", "roadmap Q3", "contratações", "buildathon"],
+    topics: ["budget", "Q3 roadmap", "hiring", "buildathon"],
   },
   "demo-pagamento": {
     botId: "demo-pagamento",
     summary:
-      "Reunião do comitê financeiro. Decidido um pagamento que exige aprovação de múltiplos signatários antes de ser executado.",
-    decisions: ["Pagar 5 CSPR ao fornecedor, com aprovação de 2 dos 2 signatários"],
+      "Finance committee meeting. Decided on a payment that requires approval from multiple signers before it can be executed.",
+    decisions: ["Pay 5 CSPR to the vendor, with approval from 2 of 2 signers"],
     actionItems: [
-      { task: "Executar pagamento multisig de 5 CSPR ao fornecedor", owner: "Ana" },
+      { task: "Execute the 5 CSPR multisig payment to the vendor", owner: "Ana" },
     ],
     participants: ["Ana", "Bruno"],
-    topics: ["pagamento", "multisig", "fornecedor"],
+    topics: ["payment", "multisig", "vendor"],
   },
 };
 
@@ -64,29 +64,29 @@ const DEFAULT_DEMO = DEMO_MEETINGS["demo-q3"]!;
 export const getMockMeetingTool = createTool({
   id: "get_mock_meeting",
   description:
-    "Retorna uma ata de reunião de EXEMPLO (mock) para testes, sem precisar de um bot real do Recall.ai. demoId disponíveis: 'demo-q3' (planejamento) e 'demo-pagamento' (comitê financeiro com action item de pagamento). Use o resultado como entrada para notarize_meeting ou para montar um multisig.",
+    "Returns SAMPLE (mock) meeting minutes for testing, without needing a real Recall.ai bot. Available demoIds: 'demo-q3' (planning) and 'demo-pagamento' (finance committee with a payment action item). Use the result as input for notarize_meeting or to build a multisig.",
   inputSchema: z.object({
     demoId: z
       .enum(["demo-q3", "demo-pagamento"])
       .default("demo-q3")
-      .describe("Qual ata de exemplo retornar"),
+      .describe("Which sample minutes to return"),
   }),
   outputSchema: meetingRecordSchema,
   execute: async (input) =>
     (input.demoId ? DEMO_MEETINGS[input.demoId] : undefined) ?? DEFAULT_DEMO,
 });
 
-// --- Notarização (Proof-of-Meeting) -------------------------------------
+// --- Notarization (Proof-of-Meeting) -------------------------------------
 
-// Ancora o hash da ata on-chain. Assina com a carteira DO AGENTE (server-side),
-// gera transação real imediatamente — sem popup.
+// Anchors the minutes hash on-chain. Signs with the AGENT's wallet
+// (server-side), generates a real transaction immediately — no popup.
 export const notarizeMeetingTool = createTool({
   id: "notarize_meeting",
   description:
-    "Ancora (notariza) o hash da ata de uma reunião on-chain no Casper, gerando uma prova imutável (proof-of-meeting). Use depois de summarize_meeting/get_participants: passe o resumo, decisões, action items e participantes. Assina com a carteira do agente — não precisa do usuário. Retorna o hash da ata e o transactionHash.",
+    "Anchors (notarizes) a meeting's minutes hash on-chain on Casper, generating an immutable proof (proof-of-meeting). Use after summarize_meeting/get_participants: pass the summary, decisions, action items and participants. Signs with the agent's wallet — no user needed. Returns the minutes hash and the transactionHash.",
   inputSchema: z.object({
     record: meetingRecordSchema.describe(
-      "A ata: resultado de summarize_meeting + participantes de get_participants",
+      "The minutes: result of summarize_meeting + participants from get_participants",
     ),
   }),
   outputSchema: z.object({
@@ -99,17 +99,17 @@ export const notarizeMeetingTool = createTool({
   execute: async (input) => notarizeMeeting(input.record as MeetingRecord),
 });
 
-// Verifica uma notarização: lê on-chain e (se a ata for fornecida) confere se
-// o hash bate.
+// Verifies a notarization: reads on-chain and (if the minutes are provided)
+// checks whether the hash matches.
 export const verifyMeetingTool = createTool({
   id: "verify_meeting",
   description:
-    "Verifica uma notarização de reunião: lê a transação on-chain pelo transactionHash, extrai o hash ancorado e, se a ata for fornecida, recalcula e compara — provando que a ata corresponde ao registro on-chain.",
+    "Verifies a meeting notarization: reads the on-chain transaction by transactionHash, extracts the anchored hash and, if the minutes are provided, recomputes and compares it — proving that the minutes match the on-chain record.",
   inputSchema: z.object({
-    transactionHash: z.string().describe("Hash da tx de notarização"),
+    transactionHash: z.string().describe("Hash of the notarization tx"),
     record: meetingRecordSchema
       .optional()
-      .describe("Ata a conferir contra o hash on-chain (opcional)"),
+      .describe("Minutes to check against the on-chain hash (optional)"),
   }),
   outputSchema: z.object({
     found: z.boolean(),
@@ -127,7 +127,7 @@ export const verifyMeetingTool = createTool({
     }),
 });
 
-// --- Multisig de pagamento (action item financeiro) ---------------------
+// --- Payment multisig (financial action item) ---------------------
 
 const multisigStateSchema = z.object({
   transactionJson: z.string(),
@@ -142,16 +142,17 @@ const multisigStateSchema = z.object({
   chainName: z.string(),
 });
 
-// Configura a conta como MULTISIG NATIVA (rede impõe o quórum). Gera os deploys
-// de session wasm (add_account + update_thresholds) que a conta primária assina.
+// Configures the account as a NATIVE MULTISIG (network enforces the quorum).
+// Generates the session wasm deploys (add_account + update_thresholds) that
+// the primary account signs.
 export const setupMultisigAccountTool = createTool({
   id: "setup_multisig_account",
   description:
-    "Configura uma conta como MULTISIG NATIVA do Casper: adiciona signatários (associated keys com peso) e define o quórum (thresholds). A partir daí a REDE exige o quórum — diferente do multisig demonstrável. Retorna uma sequência de passos (steps): cada step.transactionJson deve ser assinado pela conta PRIMÁRIA via sign_with_wallet e submetido com broadcast_signed_tx, NA ORDEM. Atenção: o key_management_threshold não pode exceder a soma de pesos controlável pela conta primária, ou a conta trava.",
+    "Configures an account as a Casper NATIVE MULTISIG: adds signers (associated keys with weight) and sets the quorum (thresholds). From then on the NETWORK enforces the quorum — unlike the demonstrable multisig. Returns a sequence of steps: each step.transactionJson must be signed by the PRIMARY account via sign_with_wallet and submitted with broadcast_signed_tx, IN ORDER. Warning: key_management_threshold cannot exceed the sum of weights controllable by the primary account, or the account gets locked out.",
   inputSchema: z.object({
     primaryPublicKeyHex: z
       .string()
-      .describe("Conta primária (dona) — a que será configurada e assina os setups"),
+      .describe("Primary (owner) account — the one that will be configured and signs the setup steps"),
     associates: z
       .array(
         z.object({
@@ -159,24 +160,24 @@ export const setupMultisigAccountTool = createTool({
           weight: z.number().int().positive(),
         }),
       )
-      .describe("Signatários a adicionar como associated keys, com peso"),
+      .describe("Signers to add as associated keys, with weight"),
     deploymentThreshold: z
       .number()
       .int()
       .positive()
-      .describe("Soma de pesos exigida para enviar transações"),
+      .describe("Sum of weights required to send transactions"),
     keyManagementThreshold: z
       .number()
       .int()
       .positive()
-      .describe("Soma de pesos exigida para gerenciar as chaves da conta"),
+      .describe("Sum of weights required to manage the account's keys"),
     primaryWeight: z
       .number()
       .int()
       .positive()
       .optional()
       .describe(
-        "Peso da chave primária (deve ser >= keyManagementThreshold para não travar a conta). Padrão: keyManagementThreshold.",
+        "Weight of the primary key (must be >= keyManagementThreshold so the account doesn't get locked out). Default: keyManagementThreshold.",
       ),
   }),
   outputSchema: z.object({
@@ -202,25 +203,25 @@ export const setupMultisigAccountTool = createTool({
     }),
 });
 
-// Monta um pagamento que exige múltiplas assinaturas (ex.: action item
-// "pagar X" decidido em reunião). Não assina nem envia.
+// Builds a payment that requires multiple signatures (e.g., action item
+// "pay X" decided in a meeting). Doesn't sign or submit it.
 export const prepareMultisigPaymentTool = createTool({
   id: "prepare_multisig_payment",
   description:
-    "Monta um pagamento de CSPR que exige a assinatura de VÁRIOS signatários (multisig) antes de ser submetido — ex.: um action item financeiro decidido em reunião. Informe a carteira pagadora, o destino, o valor e as public keys de todos os signatários. Retorna o estado multisig (quem precisa assinar). Depois, para cada signatário: sign_with_wallet → add_signature; quando ready=true, broadcast_multisig.",
+    "Builds a CSPR payment that requires the signature of SEVERAL signers (multisig) before it's submitted — e.g., a financial action item decided in a meeting. Provide the payer wallet, the destination, the amount and the public keys of all signers. Returns the multisig state (who still needs to sign). Then, for each signer: sign_with_wallet → add_signature; once ready=true, broadcast_multisig.",
   inputSchema: z.object({
-    fromPublicKeyHex: z.string().describe("Carteira pagadora (de onde sai o CSPR)"),
-    toPublicKeyHex: z.string().describe("Destinatário do pagamento"),
-    amountCspr: z.number().positive().describe("Valor em CSPR"),
+    fromPublicKeyHex: z.string().describe("Payer wallet (where the CSPR comes from)"),
+    toPublicKeyHex: z.string().describe("Payment recipient"),
+    amountCspr: z.number().positive().describe("Amount in CSPR"),
     signerPublicKeysHex: z
       .array(z.string())
-      .describe("Public keys de TODOS os signatários exigidos"),
+      .describe("Public keys of ALL required signers"),
     threshold: z
       .number()
       .int()
       .positive()
       .optional()
-      .describe("Quórum (nº de assinaturas). Padrão: todos os signatários"),
+      .describe("Quorum (number of signatures). Default: all signers"),
   }),
   outputSchema: multisigStateSchema,
   execute: async (input) =>
@@ -233,15 +234,15 @@ export const prepareMultisigPaymentTool = createTool({
     }),
 });
 
-// Anexa uma assinatura (de sign_with_wallet) à tx multisig.
+// Attaches a signature (from sign_with_wallet) to the multisig tx.
 export const addSignatureTool = createTool({
   id: "add_signature",
   description:
-    "Anexa UMA assinatura à transação multisig (de prepare_multisig_payment) após um signatário assinar com sign_with_wallet. Passe o estado multisig atual e a signatureHex + signerPublicKeyHex. Retorna o estado atualizado; quando ready=true, chame broadcast_multisig.",
+    "Attaches ONE signature to the multisig transaction (from prepare_multisig_payment) after a signer signs with sign_with_wallet. Pass the current multisig state and the signatureHex + signerPublicKeyHex. Returns the updated state; once ready=true, call broadcast_multisig.",
   inputSchema: z.object({
-    state: multisigStateSchema.describe("Estado multisig atual"),
-    signatureHex: z.string().describe("Assinatura de sign_with_wallet"),
-    signerPublicKeyHex: z.string().describe("Quem assinou (public key hex)"),
+    state: multisigStateSchema.describe("Current multisig state"),
+    signatureHex: z.string().describe("Signature from sign_with_wallet"),
+    signerPublicKeyHex: z.string().describe("Who signed (public key hex)"),
   }),
   outputSchema: multisigStateSchema,
   execute: async (input) =>
@@ -259,21 +260,21 @@ export const addSignatureTool = createTool({
     }),
 });
 
-// Submete a tx multisig quando o quórum foi atingido.
+// Submits the multisig tx once the quorum has been reached.
 export const broadcastMultisigTool = createTool({
   id: "broadcast_multisig",
   description:
-    "Submete on-chain a transação multisig quando o quórum de assinaturas foi atingido (state.ready === true). Passe state.transactionJson. Gera transação real no Testnet.",
+    "Submits the multisig transaction on-chain once the signature quorum has been reached (state.ready === true). Pass state.transactionJson. Generates a real transaction on Testnet.",
   inputSchema: z.object({
-    transactionJson: z.string().describe("transactionJson do estado multisig"),
+    transactionJson: z.string().describe("transactionJson from the multisig state"),
     amountCspr: z
       .string()
       .optional()
-      .describe("valor (state.amountCspr) — só para exibir no card de confirmação"),
+      .describe("amount (state.amountCspr) — only for displaying in the confirmation card"),
     to: z
       .string()
       .optional()
-      .describe("destinatário (state.to) — só para exibir no card de confirmação"),
+      .describe("recipient (state.to) — only for displaying in the confirmation card"),
   }),
   outputSchema: z.object({
     transactionHash: z.string(),

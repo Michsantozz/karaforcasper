@@ -2,11 +2,11 @@ import "server-only";
 import { recallFetch } from "./client";
 
 /**
- * Operações de Calendar V2 do Recall.ai (multi-usuário).
+ * Recall.ai Calendar V2 operations (multi-user).
  *
- * Fronteira capability: estas funções falam com a REST API do Recall via
- * `recallFetch`. A persistência do mapa user↔calendar vive no repository
- * (calendar-repository.ts); o OAuth do provider vive nas rotas.
+ * Capability boundary: these functions talk to the Recall REST API via
+ * `recallFetch`. Persistence of the user↔calendar map lives in the repository
+ * (calendar-repository.ts); the provider OAuth lives in the routes.
  */
 
 export type CalendarPlatform = "google_calendar" | "microsoft_outlook";
@@ -28,14 +28,14 @@ type CreateCalendarInput = {
   oauthClientId: string;
   oauthClientSecret: string;
   oauthRefreshToken: string;
-  /** E-mail da conta autorizada (ajuda o Recall a popular platform_email). */
+  /** Email of the authorized account (helps Recall populate platform_email). */
   oauthEmail?: string;
-  /** URL onde o Recall envia webhooks de update do calendar/eventos. */
+  /** URL where Recall sends calendar/event update webhooks. */
   webhookUrl?: string;
   metadata?: Record<string, unknown>;
 };
 
-/** Cria um calendar no Recall a partir do refresh_token OAuth do usuário. */
+/** Creates a calendar in Recall from the user's OAuth refresh_token. */
 export async function createCalendar(
   input: CreateCalendarInput,
 ): Promise<RecallCalendar> {
@@ -54,7 +54,7 @@ export async function createCalendar(
   });
 }
 
-/** Atualiza o refresh_token de um calendar existente (reconexão). */
+/** Updates the refresh_token of an existing calendar (reconnection). */
 export async function reconnectCalendar(
   calendarId: string,
   input: Pick<
@@ -74,7 +74,7 @@ export async function reconnectCalendar(
   });
 }
 
-/** Lista calendars do workspace, opcionalmente filtrando por e-mail/plataforma. */
+/** Lists workspace calendars, optionally filtering by email/platform. */
 export async function listCalendars(query?: {
   platformEmail?: string;
   platform?: CalendarPlatform;
@@ -90,7 +90,7 @@ export async function listCalendars(query?: {
   return res.results ?? [];
 }
 
-/** Lê um calendar pelo id. */
+/** Reads a calendar by id. */
 export async function retrieveCalendar(
   calendarId: string,
 ): Promise<RecallCalendar> {
@@ -101,11 +101,12 @@ export async function retrieveCalendar(
 }
 
 /**
- * Obtém um access token OAuth do Google para o calendar conectado.
+ * Obtains a Google OAuth access token for the connected calendar.
  *
- * O Recall gerencia o refresh do token a partir do refresh_token que demos na
- * criação — então não precisamos guardar/renovar credenciais do Google: pedimos
- * um access token fresco aqui e usamos direto na Google Calendar API.
+ * Recall manages the token refresh from the refresh_token we gave it at
+ * creation time — so we don't need to store/renew Google credentials: we
+ * request a fresh access token here and use it directly against the Google
+ * Calendar API.
  */
 export async function getCalendarAccessToken(
   calendarId: string,
@@ -125,32 +126,32 @@ export type CalendarEvent = {
   start_time: string;
   end_time: string;
   is_deleted: boolean;
-  /** Link da meeting extraído do evento (null se não houver). */
+  /** Meeting link extracted from the event (null if none). */
   meeting_url: string | null;
   meeting_platform: string | null;
-  /** Bots já agendados pra este evento (vazio se nenhum). */
+  /** Bots already scheduled for this event (empty if none). */
   bots: Array<{ bot_id: string; start_time?: string }>;
   raw: Record<string, unknown>;
 };
 
 type ListEventsQuery = {
   calendarId: string;
-  /** Só eventos vivos (recomendado pra exibir ao usuário). */
+  /** Only live events (recommended for displaying to the user). */
   isDeleted?: boolean;
-  /** ISO 8601 — eventos alterados a partir deste ts (sync incremental). */
+  /** ISO 8601 — events changed since this ts (incremental sync). */
   updatedAtGte?: string;
-  /** ISO 8601 — janela de início. */
+  /** ISO 8601 — start-time window. */
   startTimeGte?: string;
   startTimeLte?: string;
   cursor?: string;
 };
 
 /**
- * Lista eventos de um calendar (uma página).
+ * Lists events of a calendar (one page).
  *
- * Endpoint usa hífen: /api/v2/calendar-events/. Para paginar, repasse `next`
- * (a URL completa) sem alterar os query params — ou use o `cursor` extraído.
- * Rate limit: 60 req/min por workspace.
+ * Endpoint uses a hyphen: /api/v2/calendar-events/. To paginate, pass through
+ * `next` (the full URL) without changing the query params — or use the
+ * extracted `cursor`. Rate limit: 60 req/min per workspace.
  */
 export async function listCalendarEvents(
   query: ListEventsQuery,

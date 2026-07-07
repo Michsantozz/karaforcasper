@@ -2,15 +2,15 @@ import { z } from "zod";
 import { createWorkflow, createStep } from "@/inngest/client";
 
 /**
- * Auto-scheduling de bots por agenda (sem humano no loop).
+ * Auto-scheduling of bots per calendar (no human in the loop).
  *
- * O caminho reativo agenda via webhook calendar.sync_events. Este cron é a REDE
- * DE SEGURANÇA: varre todos os calendars com gravação automática ligada (opt-in)
- * e agenda bots nos próximos eventos com meeting_url — cobrindo webhooks perdidos
- * e eventos criados fora de uma janela de sync. Idempotente (dedup por evento no
- * Recall), então rodar de novo não duplica bots.
+ * The reactive path schedules via the calendar.sync_events webhook. This cron is the SAFETY
+ * NET: it scans all calendars with auto-record enabled (opt-in) and schedules
+ * bots for upcoming events with a meeting_url — covering missed webhooks and
+ * events created outside a sync window. Idempotent (dedup per event in
+ * Recall), so running it again doesn't duplicate bots.
  *
- * Roda a cada 10 min.
+ * Runs every 10 min.
  */
 const scan = createStep({
   id: "auto-schedule",

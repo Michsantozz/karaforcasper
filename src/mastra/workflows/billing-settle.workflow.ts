@@ -2,15 +2,15 @@ import { z } from "zod";
 import { createWorkflow, createStep } from "@/inngest/client";
 
 /**
- * Settlement periódico do billing web3 (sem humano no loop).
+ * Periodic web3 billing settlement (no human in the loop).
  *
- * O uso é medido off-chain a cada reunião (rápido, sem gas por minuto). Este
- * cron agrega o uso ainda não ancorado por usuário e NOTARIZA o batch on-chain
- * (1 tx por usuário/ciclo, id = hash do batch) — prova imutável e auditável de
- * quanto foi cobrado, com gas controlado.
+ * Usage is measured off-chain per meeting (fast, no gas per minute). This
+ * cron aggregates usage not yet anchored per user and NOTARIZES the batch on-chain
+ * (1 tx per user/cycle, id = batch hash) — an immutable, auditable proof of
+ * how much was charged, with controlled gas.
  *
- * Roda a cada hora. Se uma tx de settle falha, o uso continua não-settled e o
- * próximo tick retenta — durável por construção.
+ * Runs every hour. If a settle tx fails, the usage remains un-settled and the
+ * next tick retries — durable by construction.
  */
 const settle = createStep({
   id: "billing-settle",

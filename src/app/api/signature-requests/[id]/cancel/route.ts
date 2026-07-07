@@ -7,8 +7,8 @@ import {
 import { assertSameOrigin } from "@/shared/lib/http";
 
 /**
- * Cancela uma solicitação. Só o CRIADOR pode, e só enquanto pending|ready
- * (a lib aplica o guard de status). Idempotente.
+ * Cancels a request. Only the CREATOR can do this, and only while pending|ready
+ * (the lib enforces the status guard). Idempotent.
  */
 export async function POST(
   _req: Request,

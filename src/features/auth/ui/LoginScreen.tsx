@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { SparklesIcon, LoaderIcon, MailIcon, KeyRoundIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/shared/ui/button";
@@ -8,17 +8,37 @@ import { cn } from "@/shared/lib/utils";
 import { signIn, authClient } from "@/features/auth/model/auth-client";
 
 /**
- * Tela de entrada da home. O chat (LLM + tools on-chain) exige login; sem sessão
- * o usuário vê isto. Três formas de login (Tier 1):
- *  - Google (OAuth social)
- *  - Magic link (e-mail sem senha, via Resend)
- *  - E-mail + senha (com signup e "esqueci a senha")
+ * Home sign-in screen. The chat (LLM + on-chain tools) requires sign in;
+ * without a session the user sees this. Three sign-in methods (Tier 1):
+ *  - Google (social OAuth)
+ *  - Magic link (passwordless email, via Resend)
+ *  - Email + password (with signup and "forgot password")
  */
 
 type Mode = "magic" | "password";
 
+// Error messages returned by better-auth on magic link verification
+// (redirect → errorCallbackURL with ?error=). Without this an expired token
+// lands on the home page with no feedback at all.
+const AUTH_ERROR_MSG: Record<string, string> = {
+  INVALID_TOKEN: "Invalid or already used link. Request a new one below.",
+  EXPIRED_TOKEN: "Link expired. Request a new one below.",
+  failed_to_create_user: "Could not create the account. Please try again.",
+  failed_to_create_session: "Failed to start the session. Please try again.",
+};
+
 export function LoginScreen() {
   const [mode, setMode] = useState<Mode>("magic");
+
+  // A failed magic link verification comes back here with ?error=. Shows the
+  // toast and clears the query so it doesn't repeat on navigate/reload.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const error = params.get("error");
+    if (!error) return;
+    toast.error(AUTH_ERROR_MSG[error] ?? "Failed to sign in. Please try again.");
+    window.history.replaceState({}, "", window.location.pathname);
+  }, []);
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col items-center justify-center gap-6 px-4">
@@ -28,8 +48,8 @@ export function LoginScreen() {
         </span>
         <h1 className="font-semibold text-2xl tracking-tight">Casper Agent</h1>
         <p className="max-w-sm text-sm text-muted-foreground">
-          Agente autônomo na Casper Network: pagamentos, multisig, notarização de
-          atas e mais. Entre para conversar com o agente.
+          Autonomous agent on the Casper Network: payments, multisig, minutes
+          notarization and more. Sign in to talk to the agent.
         </p>
       </div>
 
@@ -40,18 +60,18 @@ export function LoginScreen() {
           className="w-full"
           onClick={() => signIn.social({ provider: "google", callbackURL: "/" })}
         >
-          Entrar com Google
+          Sign in with Google
         </Button>
 
         <div className="flex items-center gap-3">
           <span className="h-px flex-1 bg-border" />
           <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-            ou
+            or
           </span>
           <span className="h-px flex-1 bg-border" />
         </div>
 
-        {/* Alternador magic link / senha */}
+        {/* Magic link / password switcher */}
         <div className="flex rounded-[8px] border p-0.5">
           <TabButton
             active={mode === "magic"}
@@ -63,7 +83,7 @@ export function LoginScreen() {
             active={mode === "password"}
             onClick={() => setMode("password")}
             icon={KeyRoundIcon}
-            label="Senha"
+            label="Password"
           />
         </div>
 
@@ -115,21 +135,25 @@ function MagicLinkForm() {
     const { error } = await authClient.signIn.magicLink({
       email,
       callbackURL: "/",
+      // An invalid/expired token on verification redirects back to home with
+      // ?error=; LoginScreen reads it and shows the toast. Without this the
+      // error is swallowed.
+      errorCallbackURL: "/",
     });
     setBusy(false);
     if (error) {
-      toast.error(error.message ?? "Falha ao enviar o link.");
+      toast.error(error.message ?? "Failed to send the link.");
       return;
     }
     setSent(true);
-    toast.success("Link enviado! Confira seu e-mail.");
+    toast.success("Link sent! Check your email.");
   }
 
   if (sent) {
     return (
       <p className="rounded-[8px] border bg-(--thread-accent-primary-soft)/30 px-3 py-4 text-center text-sm text-foreground">
-        Enviamos um link de acesso para <strong>{email}</strong>. Abra o e-mail e
-        clique para entrar.
+        We sent an access link to <strong>{email}</strong>. Open the email and
+        click it to sign in.
       </p>
     );
   }
@@ -138,19 +162,19 @@ function MagicLinkForm() {
     <form onSubmit={submit} className="flex flex-col gap-2.5">
       <Field
         type="email"
-        placeholder="voce@email.com"
+        placeholder="you@email.com"
         value={email}
         onChange={setEmail}
         autoComplete="email"
       />
       <Button type="submit" className="w-full" disabled={busy || !email}>
-        {busy ? <Spinner /> : "Enviar link de acesso"}
+        {busy ? <Spinner /> : "Send access link"}
       </Button>
     </form>
   );
 }
 
-/* ── E-mail + senha ──────────────────────────────────────────────────── */
+/* ── Email + password ──────────────────────────────────────────────────── */
 
 function PasswordForm() {
   const [isSignup, setIsSignup] = useState(false);
@@ -172,8 +196,8 @@ function PasswordForm() {
         callbackURL: "/",
       });
       setBusy(false);
-      if (error) return toast.error(error.message ?? "Falha no cadastro.");
-      toast.success("Conta criada! Entrando…");
+      if (error) return toast.error(error.message ?? "Sign-up failed.");
+      toast.success("Account created! Signing in…");
       window.location.href = "/";
       return;
     }
@@ -184,18 +208,18 @@ function PasswordForm() {
       callbackURL: "/",
     });
     setBusy(false);
-    if (error) return toast.error(error.message ?? "E-mail ou senha inválidos.");
+    if (error) return toast.error(error.message ?? "Invalid email or password.");
     window.location.href = "/";
   }
 
   async function forgot() {
-    if (!email) return toast.error("Informe seu e-mail primeiro.");
+    if (!email) return toast.error("Enter your email first.");
     const { error } = await authClient.requestPasswordReset({
       email,
       redirectTo: "/reset-password",
     });
-    if (error) return toast.error(error.message ?? "Falha ao enviar.");
-    toast.success("Se o e-mail existir, enviamos um link de redefinição.");
+    if (error) return toast.error(error.message ?? "Failed to send.");
+    toast.success("If the email exists, we sent a reset link.");
   }
 
   return (
@@ -203,7 +227,7 @@ function PasswordForm() {
       {isSignup && (
         <Field
           type="text"
-          placeholder="Seu nome"
+          placeholder="Your name"
           value={name}
           onChange={setName}
           autoComplete="name"
@@ -211,20 +235,20 @@ function PasswordForm() {
       )}
       <Field
         type="email"
-        placeholder="voce@email.com"
+        placeholder="you@email.com"
         value={email}
         onChange={setEmail}
         autoComplete="email"
       />
       <Field
         type="password"
-        placeholder="Senha"
+        placeholder="Password"
         value={password}
         onChange={setPassword}
         autoComplete={isSignup ? "new-password" : "current-password"}
       />
       <Button type="submit" className="w-full" disabled={busy || !email || !password}>
-        {busy ? <Spinner /> : isSignup ? "Criar conta" : "Entrar"}
+        {busy ? <Spinner /> : isSignup ? "Sign up" : "Sign in"}
       </Button>
 
       <div className="flex items-center justify-between pt-0.5">
@@ -233,7 +257,7 @@ function PasswordForm() {
           onClick={() => setIsSignup((v) => !v)}
           className="font-mono text-[11px] text-muted-foreground hover:text-foreground"
         >
-          {isSignup ? "Já tenho conta" : "Criar conta"}
+          {isSignup ? "Already have an account" : "Sign up"}
         </button>
         {!isSignup && (
           <button
@@ -241,7 +265,7 @@ function PasswordForm() {
             onClick={forgot}
             className="font-mono text-[11px] text-muted-foreground hover:text-foreground"
           >
-            Esqueci a senha
+            Forgot password
           </button>
         )}
       </div>
@@ -249,7 +273,7 @@ function PasswordForm() {
   );
 }
 
-/* ── primitivos ──────────────────────────────────────────────────────── */
+/* ── primitives ──────────────────────────────────────────────────────── */
 
 function Field({
   type,

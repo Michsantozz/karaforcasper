@@ -13,11 +13,11 @@ import {
 } from "@/server/casper/user-sign";
 import { putTx, getTx } from "@/server/casper/tx-store";
 
-// Tool: saldo do agente. Read-only.
+// Tool: agent's balance. Read-only.
 export const getAgentWalletTool = createTool({
   id: "get_agent_wallet",
   description:
-    "Retorna a public key (endereço) e o saldo em CSPR da carteira do agente no Casper Testnet.",
+    "Returns the public key (address) and the CSPR balance of the agent's wallet on Casper Testnet.",
   inputSchema: z.object({}),
   outputSchema: z.object({
     publicKey: z.string(),
@@ -30,12 +30,12 @@ export const getAgentWalletTool = createTool({
   },
 });
 
-// Tool: consulta saldo de qualquer endereço. Read-only.
+// Tool: checks the balance of any address. Read-only.
 export const getBalanceTool = createTool({
   id: "get_balance",
-  description: "Consulta o saldo em CSPR de uma public key no Casper Testnet.",
+  description: "Checks the CSPR balance of a public key on Casper Testnet.",
   inputSchema: z.object({
-    publicKeyHex: z.string().describe("Public key alvo em hex"),
+    publicKeyHex: z.string().describe("Target public key in hex"),
   }),
   outputSchema: z.object({ balanceCspr: z.string() }),
   execute: async (input) => {
@@ -44,18 +44,18 @@ export const getBalanceTool = createTool({
   },
 });
 
-// Tool: transfere CSPR — ESCREVE on-chain (gera transação no Testnet).
-// Move fundos da carteira do AGENTE → requireApproval (human-in-the-loop) como
-// 4ª camada de defesa. As 3 primeiras (teto/allowlist/fail-closed) vivem em
-// assertTransferAllowed e valem mesmo se a aprovação for burlada no handler.
+// Tool: transfers CSPR — WRITES on-chain (generates a transaction on Testnet).
+// Moves funds from the AGENT's wallet → requireApproval (human-in-the-loop) as
+// the 4th layer of defense. The first 3 (cap/allowlist/fail-closed) live in
+// assertTransferAllowed and still apply even if approval is bypassed in the handler.
 export const transferCsprTool = createTool({
   id: "transfer_cspr",
   description:
-    "Transfere CSPR da carteira do agente para um endereço alvo no Casper Testnet. Gera uma transação real on-chain. Use com cuidado — move fundos.",
+    "Transfers CSPR from the agent's wallet to a target address on Casper Testnet. Generates a real on-chain transaction. Use with care — moves funds.",
   requireApproval: true,
   inputSchema: z.object({
-    toPublicKeyHex: z.string().describe("Public key do destinatário em hex"),
-    amountCspr: z.number().positive().describe("Quantidade em CSPR"),
+    toPublicKeyHex: z.string().describe("Recipient's public key in hex"),
+    amountCspr: z.number().positive().describe("Amount in CSPR"),
   }),
   outputSchema: z.object({
     transactionHash: z.string(),
@@ -76,19 +76,19 @@ export const transferCsprTool = createTool({
   },
 });
 
-// Tool: monta um transfer a partir da carteira do USUÁRIO (não a do agente),
-// SEM assinar. Devolve o JSON da tx p/ ser assinado pela Casper Wallet no
-// browser (via a frontend tool sign_with_wallet). Não toca a rede.
+// Tool: builds a transfer from the USER's wallet (not the agent's), WITHOUT
+// signing. Returns the tx JSON to be signed by the Casper Wallet in the
+// browser (via the frontend tool sign_with_wallet). Doesn't touch the network.
 export const prepareUserTransferTool = createTool({
   id: "prepare_user_transfer",
   description:
-    "Monta (sem assinar) um transfer de CSPR a partir da carteira CONECTADA DO USUÁRIO. Use quando o usuário pedir para enviar fundos da própria carteira (não a do agente). Requer que a carteira já esteja conectada (use connect_wallet antes para obter o endereço). Retorna um txId para sign_with_wallet (txId) e broadcast_signed_tx (txId).",
+    "Builds (without signing) a CSPR transfer from the USER's CONNECTED wallet. Use when the user asks to send funds from their own wallet (not the agent's). Requires the wallet to already be connected (use connect_wallet first to get the address). Returns a txId for sign_with_wallet (txId) and broadcast_signed_tx (txId).",
   inputSchema: z.object({
     fromPublicKeyHex: z
       .string()
-      .describe("Public key (hex) da conta ativa conectada do usuário"),
-    toPublicKeyHex: z.string().describe("Public key do destinatário em hex"),
-    amountCspr: z.number().positive().describe("Quantidade em CSPR"),
+      .describe("Public key (hex) of the user's active connected account"),
+    toPublicKeyHex: z.string().describe("Recipient's public key in hex"),
+    amountCspr: z.number().positive().describe("Amount in CSPR"),
   }),
   outputSchema: z.object({
     txId: z.string(),
@@ -116,20 +116,20 @@ export const prepareUserTransferTool = createTool({
   },
 });
 
-// Tool: monta (sem assinar) uma DELEGAÇÃO de CSPR da carteira do usuário a um
-// validador (staking). Devolve o JSON p/ sign_with_wallet → broadcast_signed_tx.
+// Tool: builds (without signing) a CSPR DELEGATION from the user's wallet to a
+// validator (staking). Returns the JSON for sign_with_wallet → broadcast_signed_tx.
 export const prepareUserDelegateTool = createTool({
   id: "prepare_user_delegate",
   description:
-    "Monta (sem assinar) uma delegação (staking) de CSPR da carteira CONECTADA DO USUÁRIO para um validador. Staking gera recompensas. Requer carteira conectada (use connect_wallet antes). Retorna o JSON para ser assinado pela extensão. Depois use sign_with_wallet e broadcast_signed_tx.",
+    "Builds (without signing) a CSPR delegation (staking) from the USER's CONNECTED wallet to a validator. Staking generates rewards. Requires a connected wallet (use connect_wallet first). Returns the JSON to be signed by the extension. Then use sign_with_wallet and broadcast_signed_tx.",
   inputSchema: z.object({
     fromPublicKeyHex: z
       .string()
-      .describe("Public key (hex) da conta ativa conectada do usuário"),
+      .describe("Public key (hex) of the user's active connected account"),
     validatorPublicKeyHex: z
       .string()
-      .describe("Public key (hex) do validador alvo"),
-    amountCspr: z.number().positive().describe("Quantidade a delegar em CSPR"),
+      .describe("Public key (hex) of the target validator"),
+    amountCspr: z.number().positive().describe("Amount to delegate in CSPR"),
   }),
   outputSchema: z.object({
     txId: z.string(),
@@ -156,20 +156,20 @@ export const prepareUserDelegateTool = createTool({
   },
 });
 
-// Tool: monta (sem assinar) o RESGATE (undelegate) de CSPR stakeado da carteira
-// do usuário. Devolve o JSON p/ sign_with_wallet → broadcast_signed_tx.
+// Tool: builds (without signing) the UNDELEGATE of CSPR previously staked from
+// the user's wallet. Returns the JSON for sign_with_wallet → broadcast_signed_tx.
 export const prepareUserUndelegateTool = createTool({
   id: "prepare_user_undelegate",
   description:
-    "Monta (sem assinar) o resgate (undelegate) de CSPR previamente stakeado pela carteira CONECTADA DO USUÁRIO em um validador. Requer carteira conectada. Retorna o JSON para ser assinado pela extensão. Depois use sign_with_wallet e broadcast_signed_tx.",
+    "Builds (without signing) the undelegate (unstake) of CSPR previously staked by the USER's CONNECTED wallet with a validator. Requires a connected wallet. Returns the JSON to be signed by the extension. Then use sign_with_wallet and broadcast_signed_tx.",
   inputSchema: z.object({
     fromPublicKeyHex: z
       .string()
-      .describe("Public key (hex) da conta ativa conectada do usuário"),
+      .describe("Public key (hex) of the user's active connected account"),
     validatorPublicKeyHex: z
       .string()
-      .describe("Public key (hex) do validador de onde resgatar"),
-    amountCspr: z.number().positive().describe("Quantidade a resgatar em CSPR"),
+      .describe("Public key (hex) of the validator to undelegate from"),
+    amountCspr: z.number().positive().describe("Amount to undelegate in CSPR"),
   }),
   outputSchema: z.object({
     txId: z.string(),
@@ -196,25 +196,25 @@ export const prepareUserUndelegateTool = createTool({
   },
 });
 
-// Tool: recebe a tx assinada pela carteira do usuário (JSON + signatureHex) e
-// submete on-chain. ESCREVE na rede. Chamada pelo agente após sign_with_wallet.
+// Tool: receives the tx signed by the user's wallet (JSON + signatureHex) and
+// submits it on-chain. WRITES to the network. Called by the agent after sign_with_wallet.
 export const broadcastSignedTxTool = createTool({
   id: "broadcast_signed_tx",
   description:
-    "Submete on-chain uma transação assinada pela carteira do usuário. Passe txId (de prepare_user_*/setup) OU transactionJson, a signatureHex (de sign_with_wallet) e o signerPublicKeyHex. Gera transação real no Testnet.",
+    "Submits a transaction signed by the user's wallet on-chain. Pass txId (from prepare_user_*/setup) OR transactionJson, the signatureHex (from sign_with_wallet) and the signerPublicKeyHex. Generates a real transaction on Testnet.",
   inputSchema: z.object({
     txId: z
       .string()
       .optional()
-      .describe("ID curto da tx no store (preferido). Use o mesmo txId que assinou."),
+      .describe("Short tx ID from the store (preferred). Use the same txId that was signed."),
     transactionJson: z
       .string()
       .optional()
-      .describe("JSON da tx (fallback se não houver txId)"),
-    signatureHex: z.string().describe("Assinatura hex de sign_with_wallet"),
+      .describe("Tx JSON (fallback if there's no txId)"),
+    signatureHex: z.string().describe("Signature hex from sign_with_wallet"),
     signerPublicKeyHex: z
       .string()
-      .describe("Public key (hex) que assinou — a conta do usuário"),
+      .describe("Public key (hex) that signed — the user's account"),
   }),
   outputSchema: z.object({
     transactionHash: z.string(),
@@ -224,7 +224,7 @@ export const broadcastSignedTxTool = createTool({
     const json = input.txId ? getTx(input.txId) : input.transactionJson;
     if (!json)
       throw new Error(
-        "Transação não encontrada: forneça txId válido (não expirado) ou transactionJson.",
+        "Transaction not found: provide a valid (non-expired) txId or transactionJson.",
       );
     return broadcastUserSignedTransfer({
       transactionJson: json,

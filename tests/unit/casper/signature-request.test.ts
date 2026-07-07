@@ -8,6 +8,7 @@ import {
   assertValidTransactionJson,
   decodeTransfer,
   deriveState,
+  partitionSignerNotifications,
 } from "@/server/casper/signature-request";
 import type {
   SignatureRequestRow,
@@ -152,5 +153,94 @@ describe("decodeTransfer", () => {
       amountCspr: null,
       target: null,
     });
+  });
+});
+
+describe("partitionSignerNotifications — quem recebe convite (sem duplicar)", () => {
+  const PK_A = "01" + "a".repeat(64); // vinculada (vira userId)
+  const PK_B = "01" + "b".repeat(64); // externa (só e-mail)
+  const PK_C = "01" + "c".repeat(64); // externa, e-mail duplicado de B
+
+  it("signatário com carteira vinculada → accountUserIds, não externalEmails", () => {
+    const plan = partitionSignerNotifications({
+      requiredSigners: [{ publicKeyHex: PK_A, email: "conta@x.com" }],
+      walletToUser: new Map([[PK_A, "user-A"]]),
+      createdByUserId: "creator",
+    });
+    // Tem conta: recebe por userId. NÃO entra em externalEmails mesmo tendo
+    // e-mail — senão receberia o convite duas vezes.
+    expect(plan.accountUserIds).toEqual(["user-A"]);
+    expect(plan.externalEmails).toEqual([]);
+  });
+
+  it("signatário sem conta mas com e-mail → externalEmails", () => {
+    const plan = partitionSignerNotifications({
+      requiredSigners: [{ publicKeyHex: PK_B, email: "externo@x.com" }],
+      walletToUser: new Map(),
+      createdByUserId: "creator",
+    });
+    expect(plan.accountUserIds).toEqual([]);
+    expect(plan.externalEmails).toEqual(["externo@x.com"]);
+  });
+
+  it("signatário sem conta e sem e-mail → não recebe nada", () => {
+    const plan = partitionSignerNotifications({
+      requiredSigners: [{ publicKeyHex: PK_B }],
+      walletToUser: new Map(),
+      createdByUserId: "creator",
+    });
+    expect(plan.accountUserIds).toEqual([]);
+    expect(plan.externalEmails).toEqual([]);
+  });
+
+  it("criador não se auto-notifica mesmo com carteira vinculada", () => {
+    const plan = partitionSignerNotifications({
+      requiredSigners: [{ publicKeyHex: PK_A }],
+      walletToUser: new Map([[PK_A, "creator"]]),
+      createdByUserId: "creator",
+    });
+    expect(plan.accountUserIds).toEqual([]);
+  });
+
+  it("e-mail duplicado (case/espacos) entra só uma vez", () => {
+    const plan = partitionSignerNotifications({
+      requiredSigners: [
+        { publicKeyHex: PK_B, email: "Dup@X.com" },
+        { publicKeyHex: PK_C, email: " dup@x.com " },
+      ],
+      walletToUser: new Map(),
+      createdByUserId: "creator",
+    });
+    // Mesmo e-mail normalizado → 1 convite. Preserva a 1ª forma trimada.
+    expect(plan.externalEmails).toEqual(["Dup@X.com"]);
+  });
+
+  it("userId repetido no mapa (2 carteiras, mesmo dono) → 1 notificação", () => {
+    const plan = partitionSignerNotifications({
+      requiredSigners: [{ publicKeyHex: PK_A }, { publicKeyHex: PK_B }],
+      walletToUser: new Map([
+        [PK_A, "user-A"],
+        [PK_B, "user-A"],
+      ]),
+      createdByUserId: "creator",
+    });
+    expect(plan.accountUserIds).toEqual(["user-A"]);
+  });
+
+  it("mistura: conta + externo + criador, sem sobreposição", () => {
+    const plan = partitionSignerNotifications({
+      requiredSigners: [
+        { publicKeyHex: PK_A, email: "conta@x.com" }, // conta
+        { publicKeyHex: PK_B, email: "externo@x.com" }, // externo
+        { publicKeyHex: PK_C }, // criador, ignorado
+      ],
+      walletToUser: new Map([
+        [PK_A, "user-A"],
+        [PK_C, "creator"],
+      ]),
+      createdByUserId: "creator",
+    });
+    expect(plan.accountUserIds).toEqual(["user-A"]);
+    expect(plan.externalEmails).toEqual(["externo@x.com"]);
   });
 });

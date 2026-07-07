@@ -1,19 +1,19 @@
 import { sql } from "drizzle-orm";
 import { db } from "@/shared/db";
 
-// Health check pro orquestrador (Docker/K8s). Sempre dinâmico — nunca cacheado.
+// Health check for the orchestrator (Docker/K8s). Always dynamic — never cached.
 export const dynamic = "force-dynamic";
 
 /**
- * Liveness + readiness num único endpoint.
+ * Liveness + readiness in a single endpoint.
  *
- * - Liveness: se este handler responde, o processo Node está vivo.
- * - Readiness: `?ready=1` (ou `?deep=1`) também pinga o Postgres com `SELECT 1`.
- *   Sem a dependência up, retorna 503 → orquestrador não roteia tráfego pro pod.
+ * - Liveness: if this handler responds, the Node process is alive.
+ * - Readiness: `?ready=1` (or `?deep=1`) also pings Postgres with `SELECT 1`.
+ *   Without the dependency up, returns 503 → orchestrator won't route traffic to the pod.
  *
- * Sonda liveness com `GET /api/health` (rápido, sem I/O externo) e readiness
- * com `GET /api/health?ready=1`. Separar evita que um DB lento derrube o pod
- * por falha de liveness (restart loop) quando ele só está temporariamente not-ready.
+ * Probe liveness with `GET /api/health` (fast, no external I/O) and readiness
+ * with `GET /api/health?ready=1`. Separating them avoids a slow DB taking down
+ * the pod via a liveness failure (restart loop) when it's only temporarily not-ready.
  */
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -28,7 +28,7 @@ export async function GET(request: Request) {
     await db.execute(sql`select 1`);
     return Response.json({ status: "ok", db: "up" });
   } catch {
-    // Não vaza detalhe do erro (mensagem/host) na resposta pública.
+    // Don't leak error detail (message/host) in the public response.
     return Response.json({ status: "error", db: "down" }, { status: 503 });
   }
 }

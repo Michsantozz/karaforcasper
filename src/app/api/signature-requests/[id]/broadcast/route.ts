@@ -8,8 +8,9 @@ import { createNotification } from "@/server/casper/notifications";
 import { assertSameOrigin } from "@/shared/lib/http";
 
 /**
- * Submete on-chain a tx com as approvals acumuladas. Só o CRIADOR da request
- * pode broadcast, e só quando "ready". Grava o hash e notifica o criador.
+ * Submits the tx on-chain with the accumulated approvals. Only the CREATOR of
+ * the request can broadcast, and only when "ready". Records the hash and
+ * notifies the creator.
  */
 
 const ERROR_STATUS: Record<string, number> = {
@@ -45,7 +46,7 @@ export async function POST(
     await createNotification({
       userId: session.user.id,
       type: "request_broadcast",
-      message: `Transação submetida: ${result.transactionHash}`,
+      message: `Transaction submitted: ${result.transactionHash}`,
       requestId: id,
     });
     return NextResponse.json({

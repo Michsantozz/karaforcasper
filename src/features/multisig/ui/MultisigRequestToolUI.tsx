@@ -15,15 +15,15 @@ function short(hex: string) {
   return hex.length > 14 ? `${hex.slice(0, 8)}…${hex.slice(-6)}` : hex;
 }
 
-// Traduz o status cru da API para um label legível em PT.
+// Translates the raw API status into a readable label.
 const STATUS_LABEL: Record<string, string> = {
-  pending: "pendente",
-  ready: "pronta p/ broadcast",
-  broadcast: "enviada",
-  confirmed: "confirmada",
-  completed: "concluída",
-  cancelled: "cancelada",
-  expired: "expirada",
+  pending: "pending",
+  ready: "ready for broadcast",
+  broadcast: "broadcast",
+  confirmed: "confirmed",
+  completed: "completed",
+  cancelled: "cancelled",
+  expired: "expired",
 };
 
 function statusLabel(s: string): string {
@@ -32,7 +32,7 @@ function statusLabel(s: string): string {
 
 type Signer = { publicKeyHex: string; label?: string };
 
-// prepare_multisig_payment_request — cria a solicitação persistida + link.
+// prepare_multisig_payment_request — creates the persisted request + link.
 export const PrepareMultisigRequestToolUI = makeAssistantToolUI<
   unknown,
   {
@@ -51,7 +51,7 @@ export const PrepareMultisigRequestToolUI = makeAssistantToolUI<
   render: ({ result, status }) => {
     if (status.type === "running")
       return (
-        <Card icon={UsersIcon} label="multisig request" running meta="criando" />
+        <Card icon={UsersIcon} label="multisig request" running meta="creating" />
       );
     if (!result) return null;
     return (
@@ -59,16 +59,16 @@ export const PrepareMultisigRequestToolUI = makeAssistantToolUI<
         icon={UsersIcon}
         label="multisig request"
         tone="success"
-        meta={`${result.threshold} assinaturas`}
+        meta={`${result.threshold} signatures`}
       >
         {result.description && <p className="text-sm">{result.description}</p>}
         {result.amountCspr && <Row k="amount" v={`${result.amountCspr} CSPR`} />}
         {result.to && <Row k="to" v={short(result.to)} />}
         <Row k="status" v={statusLabel(result.status)} />
-        <Row k="notificados" v={String(result.notified)} />
+        <Row k="notified" v={String(result.notified)} />
         <div className="mt-1 border-t border-dashed border-border pt-2" />
         <span className="font-mono text-[10px] text-muted-foreground uppercase tracking-wider">
-          signatários ({result.threshold} exigidas)
+          signers ({result.threshold} required)
         </span>
         {result.requiredSigners.map((s) => (
           <div
@@ -81,17 +81,17 @@ export const PrepareMultisigRequestToolUI = makeAssistantToolUI<
             </span>
           </div>
         ))}
-        <SignLink link={result.link} label="link de assinatura" />
+        <SignLink link={result.link} label="signing link" />
         <p className="font-mono text-[10px] text-muted-foreground">
-          Compartilhe este link com os signatários para que assinem pela própria
-          carteira.
+          Share this link with the signers so they can sign from their own
+          wallet.
         </p>
       </Card>
     );
   },
 });
 
-// get_signature_request — estado/progresso de uma solicitação.
+// get_signature_request — status/progress of a request.
 export const GetSignatureRequestToolUI = makeAssistantToolUI<
   { id: string },
   {
@@ -110,7 +110,7 @@ export const GetSignatureRequestToolUI = makeAssistantToolUI<
   render: ({ result, status }) => {
     if (status.type === "running")
       return (
-        <Card icon={LinkIcon} label="signature request" running meta="consultando" />
+        <Card icon={LinkIcon} label="signature request" running meta="querying" />
       );
     if (!result) return null;
     return (
@@ -131,7 +131,7 @@ export const GetSignatureRequestToolUI = makeAssistantToolUI<
               {short(s)}
             </span>
             <span className="font-mono text-[10px] text-(--thread-accent-primary)">
-              assinado ✓
+              signed ✓
             </span>
           </div>
         ))}
@@ -141,22 +141,22 @@ export const GetSignatureRequestToolUI = makeAssistantToolUI<
               {short(s)}
             </span>
             <span className="font-mono text-[10px] text-muted-foreground">
-              pendente
+              pending
             </span>
           </div>
         ))}
         {result.ready && (
           <p className="pt-1 font-mono text-[11px] text-(--thread-accent-primary)">
-            quórum atingido — pronto para broadcast
+            quorum reached — ready for broadcast
           </p>
         )}
-        <SignLink link={result.link} label="abrir" />
+        <SignLink link={result.link} label="open" />
       </Card>
     );
   },
 });
 
-// list_my_pending_signatures — "o que preciso assinar?".
+// list_my_pending_signatures — "what do I need to sign?".
 export const ListMyPendingSignaturesToolUI = makeAssistantToolUI<
   unknown,
   {
@@ -174,7 +174,7 @@ export const ListMyPendingSignaturesToolUI = makeAssistantToolUI<
   render: ({ result, status }) => {
     if (status.type === "running")
       return (
-        <Card icon={InboxIcon} label="pending signatures" running meta="buscando" />
+        <Card icon={InboxIcon} label="pending signatures" running meta="fetching" />
       );
     if (!result) return null;
     return (
@@ -182,11 +182,11 @@ export const ListMyPendingSignaturesToolUI = makeAssistantToolUI<
         icon={InboxIcon}
         label="pending signatures"
         tone={result.pending.length ? "caution" : "default"}
-        meta={`${result.pending.length} aguardando`}
+        meta={`${result.pending.length} awaiting`}
       >
         {result.pending.length === 0 ? (
           <span className="font-mono text-[11px] text-muted-foreground">
-            nada aguardando sua assinatura
+            nothing awaiting your signature
           </span>
         ) : (
           result.pending.map((p) => (
@@ -212,7 +212,7 @@ export const ListMyPendingSignaturesToolUI = makeAssistantToolUI<
   },
 });
 
-// --- Card visual compartilhado (mesmo estilo dos demais Casper ToolUIs) ---
+// --- Shared visual card (same style as the other Casper ToolUIs) ---
 
 type Tone = "default" | "success" | "caution" | "risk";
 

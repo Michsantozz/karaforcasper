@@ -4,13 +4,13 @@ import { scopedDb } from "@/shared/db/rls";
 import { userCalendars, type UserCalendarRow } from "@/shared/db/schema";
 
 /**
- * Repository do mapa user → calendar do Recall (fronteira capability).
+ * Repository for the Recall user → calendar map (capability boundary).
  *
- * As rotas de OAuth consultam aqui antes de criar (dedup por e-mail+plataforma)
- * e persistem o calendar.id depois. O webhook handler atualiza o status.
+ * The OAuth routes query here before creating (dedup by email+platform) and
+ * persist the calendar.id afterward. The webhook handler updates the status.
  */
 
-/** Calendar já mapeado para (platform, platformEmail), ou null. */
+/** Calendar already mapped to (platform, platformEmail), or null. */
 export async function findCalendarByEmail(
   platform: string,
   platformEmail: string,
@@ -28,7 +28,7 @@ export async function findCalendarByEmail(
   return rows[0] ?? null;
 }
 
-/** Calendar pelo id do Recall, ou null. */
+/** Calendar by Recall id, or null. */
 export async function findCalendarById(
   recallCalendarId: string,
 ): Promise<UserCalendarRow | null> {
@@ -40,7 +40,7 @@ export async function findCalendarById(
   return rows[0] ?? null;
 }
 
-/** Todos os calendars de um usuário. */
+/** All calendars of a user. */
 export async function listCalendarsByUser(
   userId: string,
 ): Promise<UserCalendarRow[]> {
@@ -51,8 +51,8 @@ export async function listCalendarsByUser(
 }
 
 /**
- * Upsert do mapeamento. Idempotente por recallCalendarId (PK): em conflito,
- * atualiza vínculo do user, status e e-mail.
+ * Upserts the mapping. Idempotent by recallCalendarId (PK): on conflict,
+ * updates the user link, status, and email.
  */
 export async function saveCalendarMapping(input: {
   recallCalendarId: string;
@@ -83,7 +83,7 @@ export async function saveCalendarMapping(input: {
     });
 }
 
-/** Atualiza só o status (usado pelo webhook handler). */
+/** Updates only the status (used by the webhook handler). */
 export async function updateCalendarStatus(
   recallCalendarId: string,
   status: string,
@@ -94,7 +94,7 @@ export async function updateCalendarStatus(
     .where(eq(userCalendars.recallCalendarId, recallCalendarId));
 }
 
-/** Remove o mapeamento de um calendar (após desconectar no Recall). */
+/** Removes the mapping of a calendar (after disconnecting in Recall). */
 export async function deleteCalendarMapping(
   recallCalendarId: string,
 ): Promise<void> {
@@ -104,9 +104,9 @@ export async function deleteCalendarMapping(
 }
 
 /**
- * Liga/desliga a gravação AUTOMÁTICA (opt-in) de um calendar. Quando ligado, o
- * scheduler agenda bots para os próximos eventos com meeting_url — sem consenso
- * explícito por evento. Guardado em metadata.auto_record (sem migration extra).
+ * Toggles AUTOMATIC recording (opt-in) of a calendar. When enabled, the
+ * scheduler schedules bots for the upcoming events with meeting_url — without
+ * explicit per-event consent. Stored in metadata.auto_record (no extra migration).
  */
 export async function setCalendarAutoRecord(
   recallCalendarId: string,
@@ -124,8 +124,8 @@ export async function setCalendarAutoRecord(
 }
 
 /**
- * Calendars com gravação automática ligada, de TODOS os usuários. Para o cron
- * de auto-scheduling (roda sob system scope). Filtra por metadata.auto_record.
+ * Calendars with auto-record enabled, across ALL users. For the
+ * auto-scheduling cron (runs under system scope). Filters by metadata.auto_record.
  */
 export async function listAutoRecordCalendars(): Promise<UserCalendarRow[]> {
   return scopedDb()

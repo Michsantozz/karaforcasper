@@ -44,10 +44,10 @@ function norm(hex: string) {
 }
 
 /**
- * Vista do CRIADOR de uma solicitação (/multisig/:id) — gestão, distinta da
- * página pública de assinatura (/sign/:id). Mostra valor/destino reais, progresso
- * por signatário, link compartilhável, cancelar (enquanto pending|ready) e
- * broadcast (quando quórum atingido). Login-gated; polling para acompanhar.
+ * CREATOR's view of a request (/multisig/:id) — management, distinct from
+ * the public signature page (/sign/:id). Shows the real amount/target,
+ * per-signer progress, shareable link, cancel (while pending|ready), and
+ * broadcast (once quorum is reached). Login-gated; polls to track progress.
  */
 export default function CreatorRequestPage({
   params,

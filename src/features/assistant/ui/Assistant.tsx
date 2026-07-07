@@ -38,15 +38,15 @@ import { ConnectCalendarTool } from "@/features/meetings/ui/CalendarConnectToolU
 export function Assistant() {
   const runtime = useChatRuntime({
     transport: new AssistantChatTransport({ api: "/api/chat" }),
-    // Após uma frontend tool (connect_wallet/sign_with_wallet) devolver seu
-    // resultado, reenvia automaticamente ao agente para que ele continue o
-    // fluxo (ex.: prepare → sign → broadcast) sem precisar de nova mensagem.
+    // After a frontend tool (connect_wallet/sign_with_wallet) returns its
+    // result, automatically resend to the agent so it continues the flow
+    // (e.g. prepare → sign → broadcast) without needing a new message.
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
   });
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      {/* ToolUIs registradas no provider — renderizam as tool-calls do agente */}
+      {/* ToolUIs registered on the provider — render the agent's tool-calls */}
       <WalletToolUI />
       <BalanceToolUI />
       <TransferToolUI />
@@ -63,13 +63,14 @@ export function Assistant() {
       <PrepareMultisigRequestToolUI />
       <GetSignatureRequestToolUI />
       <ListMyPendingSignaturesToolUI />
-      {/* Reuniões + agenda conectada (Recall/Calendar) — reusa os cards do
-          MeetingAssistant. O assistantAgent tem essas tools; sem registro,
-          list_calendar_events / summarize_meeting / etc. caem no JSON cru. */}
+      {/* Meetings + connected calendar (Recall/Calendar) — reuses the cards
+          from MeetingAssistant. assistantAgent has these tools; without
+          registration, list_calendar_events / summarize_meeting / etc. fall
+          back to raw JSON. */}
       <MeetingToolUIs />
-      {/* Calendário clicável no chat — usuário escolhe o dia, agente continua. */}
+      {/* Clickable calendar in the chat — user picks the day, agent continues. */}
       <PickDateTool />
-      {/* Conectar Google Calendar pelo chat (botão → OAuth popup → polling). */}
+      {/* Connect Google Calendar via chat (button → OAuth popup → polling). */}
       <ConnectCalendarTool />
       <div className="h-dvh">
         <Thread />

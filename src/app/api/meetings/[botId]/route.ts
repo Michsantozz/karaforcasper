@@ -4,9 +4,9 @@ import { getMeetingDetail } from "@/server/recall/meeting-detail";
 import { withUserScope } from "@/shared/db/rls";
 
 /**
- * Detalhe de uma reunião (ata + transcrição com timestamps + vídeo) para a UI
- * de player/karaoke. Escopado ao usuário: o meeting_records é tenant (RLS), então
- * a leitura roda sob withUserScope — só retorna a ata se for do usuário.
+ * Meeting detail (minutes + transcript with timestamps + video) for the
+ * player/karaoke UI. Scoped to the user: meeting_records is tenant (RLS), so
+ * the read runs under withUserScope — only returns the minutes if they belong to the user.
  */
 export async function GET(
   _req: Request,
@@ -22,7 +22,7 @@ export async function GET(
     getMeetingDetail(botId),
   );
 
-  // Sem ata persistida do usuário: 404 (não vaza reunião de outro).
+  // No persisted minutes for the user: 404 (doesn't leak another user's meeting).
   if (!detail.record) {
     return NextResponse.json({ error: "not_found" }, { status: 404 });
   }

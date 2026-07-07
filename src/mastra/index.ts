@@ -10,8 +10,8 @@ import { autoScheduleWorkflow } from "./workflows/auto-schedule.workflow";
 import { getMastraStore } from "./storage";
 
 export const mastra = new Mastra({
-  // assistantAgent é o agente unificado (reunião + on-chain + notarize +
-  // multisig). casper/meeting permanecem para compatibilidade/testes.
+  // assistantAgent is the unified agent (meeting + on-chain + notarize +
+  // multisig). casper/meeting remain for compatibility/tests.
   agents: { assistantAgent, casperAgent, meetingAgent },
   workflows: {
     autonomousWorkflow,
@@ -20,7 +20,7 @@ export const mastra = new Mastra({
     billingSettleWorkflow,
     autoScheduleWorkflow,
   },
-  // Persiste traces, telemetria e estado de workflows no PG do app (schema
-  // `mastra`). Sem isso o loop autônomo/cron rodaria stateless.
+  // Persists traces, telemetry and workflow state in the app's PG (schema
+  // `mastra`). Without this the autonomous loop/cron would run stateless.
   storage: getMastraStore(),
 });

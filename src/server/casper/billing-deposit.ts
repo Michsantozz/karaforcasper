@@ -5,18 +5,19 @@ import { approvalSigners } from "./multisig";
 import { resolveUserByWallet } from "./user-wallets";
 
 /**
- * Verificação de depósito on-chain → crédito no ledger.
+ * On-chain deposit verification → ledger credit.
  *
- * O usuário deposita CSPR transferindo para a CONTA DO APP (public key do
- * agente) pela própria carteira. Este módulo lê a transação pelo hash, confirma
- * que os fundos chegaram ao app e credita o ledger — idempotente por txHash, de
- * modo que reenviar o mesmo hash não credita duas vezes.
+ * The user deposits CSPR by transferring to the APP ACCOUNT (agent's public
+ * key) from their own wallet. This module reads the transaction by hash,
+ * confirms the funds reached the app, and credits the ledger — idempotent by
+ * txHash, so resubmitting the same hash doesn't credit twice.
  *
- * Confiamos apenas no que está on-chain: valor, destino E REMETENTE vêm da
- * transação lida do nó, nunca de parâmetros do cliente (que só informa qual tx
- * conferir). O remetente (quem assinou a tx) tem que ser uma carteira VERIFICADA
- * do próprio usuário — senão qualquer autenticado creditaria em si um depósito
- * alheio só informando o txHash público (deposit hijack).
+ * We trust only what's on-chain: amount, target, AND SENDER come from the
+ * transaction read from the node, never from client parameters (which only
+ * tell us which tx to check). The sender (whoever signed the tx) must be a
+ * VERIFIED wallet of the user themself — otherwise any authenticated user
+ * could credit someone else's deposit to themselves just by supplying the
+ * public txHash (deposit hijack).
  */
 
 export interface VerifyDepositResult {
@@ -26,16 +27,16 @@ export interface VerifyDepositResult {
   amountCspr?: string;
 }
 
-/** Extrai o valor (motes) do arg "amount" (U512) de um transfer serializado. */
+/** Extracts the value (motes) from the "amount" arg (U512) of a serialized transfer. */
 function extractAmountMotes(blob: string): bigint | null {
-  // "amount",{"bytes":"<len><u512 LE>","cl_type":"U512"} — o U512 é little-endian
-  // com 1 byte de comprimento no início. Decodificamos genericamente.
+  // "amount",{"bytes":"<len><u512 LE>","cl_type":"U512"} — U512 is
+  // little-endian with 1 length byte at the start. Decoded generically.
   const m = /"amount"\s*,\s*\{\s*"bytes"\s*:\s*"([0-9a-f]+)"/i.exec(blob);
   if (!m) return null;
   return decodeU512LE(m[1]);
 }
 
-/** Decodifica um U512 CLValue (1 byte de len + bytes little-endian). */
+/** Decodes a U512 CLValue (1 length byte + little-endian bytes). */
 function decodeU512LE(bytesHex: string): bigint | null {
   if (bytesHex.length < 2) return null;
   const len = parseInt(bytesHex.slice(0, 2), 16);
@@ -48,9 +49,9 @@ function decodeU512LE(bytesHex: string): bigint | null {
 }
 
 /**
- * Verifica e credita um depósito pelo hash da transação. Confere que a tx
- * referencia a conta do app como destino (public key do agente aparece no
- * corpo), extrai o valor transferido e credita o usuário.
+ * Verifies and credits a deposit by the transaction hash. Checks that the tx
+ * references the app account as the target (agent's public key appears in
+ * the body), extracts the transferred amount, and credits the user.
  */
 export async function verifyAndCreditDeposit(args: {
   txHash: string;
@@ -67,15 +68,16 @@ export async function verifyAndCreditDeposit(args: {
   }
   const blob = rawBlob.toLowerCase();
 
-  // O destino tem que ser a conta do app — senão o depósito não chegou a nós.
+  // The target must be the app account — otherwise the deposit didn't reach us.
   if (!blob.includes(appPubKey)) {
     return { credited: false, reason: "transfer target is not the app account" };
   }
 
-  // O remetente (quem ASSINOU a tx on-chain) tem que ser uma carteira verificada
-  // DESTE usuário. Sem isso, qualquer autenticado creditaria em si um depósito
-  // alheio informando o txHash público. A assinatura é a fonte de verdade de
-  // quem pagou — não confiamos em nenhum campo do corpo da requisição.
+  // The sender (whoever SIGNED the on-chain tx) must be a verified wallet OF
+  // THIS user. Without this, any authenticated user could credit someone
+  // else's deposit to themselves by supplying the public txHash. The
+  // signature is the source of truth for who paid — we don't trust any field
+  // from the request body.
   const signers = approvalSigners(rawBlob);
   if (signers.length === 0) {
     return { credited: false, reason: "could not read transaction sender" };
@@ -93,7 +95,7 @@ export async function verifyAndCreditDeposit(args: {
     return { credited: false, reason: "could not read transfer amount" };
   }
 
-  // Grava a carteira de origem (primeiro signer) para trilha de auditoria.
+  // Records the source wallet (first signer) for the audit trail.
   const credited = await creditDeposit({
     txHash: args.txHash,
     userId: args.userId,

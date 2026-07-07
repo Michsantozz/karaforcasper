@@ -13,7 +13,7 @@ import {
   signatureHexSchema,
 } from "@/shared/lib/http";
 
-/** Lista as carteiras VERIFICADAS vinculadas ao usuário autenticado. */
+/** Lists the VERIFIED wallets linked to the authenticated user. */
 export async function GET() {
   const session = await getSession();
   if (!session?.user?.id) {
@@ -39,7 +39,7 @@ const linkSchema = z.object({
   label: z.string().max(100).optional(),
 });
 
-// Erros estáveis da lib → status HTTP.
+// Stable lib errors → HTTP status.
 const LINK_ERROR_STATUS: Record<string, number> = {
   invalid_public_key: 400,
   invalid_nonce: 400,
@@ -49,9 +49,9 @@ const LINK_ERROR_STATUS: Record<string, number> = {
 };
 
 /**
- * Vincula uma carteira à conta COM PROVA DE POSSE. Exige nonce (de
- * /api/user-wallets/nonce) + a assinatura desse nonce pela carteira. A lib
- * verifica criptograficamente antes de gravar. Idempotente por (userId, pubkey).
+ * Links a wallet to the account WITH PROOF OF POSSESSION. Requires a nonce (from
+ * /api/user-wallets/nonce) + the wallet's signature over that nonce. The lib
+ * verifies it cryptographically before recording it. Idempotent per (userId, pubkey).
  */
 export async function POST(req: Request) {
   const csrf = await assertSameOrigin();
@@ -85,7 +85,7 @@ export async function POST(req: Request) {
 
 const unlinkSchema = z.object({ publicKeyHex: publicKeyHexSchema });
 
-/** Desvincula uma carteira. Body: { publicKeyHex }. */
+/** Unlinks a wallet. Body: { publicKeyHex }. */
 export async function DELETE(req: Request) {
   const csrf = await assertSameOrigin();
   if (csrf) return csrf;

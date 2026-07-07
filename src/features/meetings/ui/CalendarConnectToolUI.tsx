@@ -15,20 +15,21 @@ import {
 import { cn } from "@/shared/lib/utils";
 
 /**
- * connect_calendar — frontend tool que CONECTA a agenda Google pelo chat.
+ * connect_calendar — frontend tool that CONNECTS the Google calendar via chat.
  *
- * Análogo ao connect_wallet, mas via OAuth redirect (não popup instantâneo):
- *  1. `execute` roda no browser: consulta /api/calendar/status. Se já conectado,
- *     resolve na hora ({ connected:true }).
- *  2. Se não, o `render` mostra um botão "Conectar Google Calendar". Ao clicar,
- *     abre /api/calendar/google/start numa POPUP (consent do Google). O callback
- *     grava o vínculo no DB e navega a popup para /meetings?connected=1.
- *  3. Fazemos POLLING em /api/calendar/status até connected:true, fechamos a
- *     popup e resolvemos a Promise do execute → o agente CONTINUA o loop
- *     (sendAutomaticallyWhen) e chama create_calendar_event.
+ * Analogous to connect_wallet, but via OAuth redirect (not an instant popup):
+ *  1. `execute` runs in the browser: it queries /api/calendar/status. If
+ *     already connected, it resolves right away ({ connected:true }).
+ *  2. If not, `render` shows a "Connect Google Calendar" button. On click, it
+ *     opens /api/calendar/google/start in a POPUP (Google consent). The
+ *     callback saves the link in the DB and navigates the popup to
+ *     /meetings?connected=1.
+ *  3. We POLL /api/calendar/status until connected:true, close the popup, and
+ *     resolve the execute Promise → the agent CONTINUES the loop
+ *     (sendAutomaticallyWhen) and calls create_calendar_event.
  *
- * Não depende de postMessage entre janelas: o polling do status é a fonte da
- * verdade (o callback persiste no nosso Postgres).
+ * Doesn't rely on postMessage between windows: status polling is the source
+ * of truth (the callback persists to our Postgres).
  */
 
 type ConnectCalendarResult = {
@@ -37,12 +38,12 @@ type ConnectCalendarResult = {
   error?: string;
 };
 
-/** Consulta o status da agenda conectada do usuário autenticado. */
+/** Queries the authenticated user's connected calendar status. */
 async function fetchStatus(): Promise<ConnectCalendarResult> {
   try {
     const res = await fetch("/api/calendar/status", { cache: "no-store" });
     if (res.status === 401) {
-      return { connected: false, error: "não autenticado — faça login primeiro" };
+      return { connected: false, error: "not authenticated — sign in first" };
     }
     if (!res.ok) return { connected: false, error: `status ${res.status}` };
     const data = (await res.json()) as {
@@ -56,12 +57,12 @@ async function fetchStatus(): Promise<ConnectCalendarResult> {
   } catch (e) {
     return {
       connected: false,
-      error: e instanceof Error ? e.message : "falha ao consultar status",
+      error: e instanceof Error ? e.message : "failed to query status",
     };
   }
 }
 
-/** Registro de resolvers por toolCallId (a Promise do execute completa no clique). */
+/** Registry of resolvers per toolCallId (the execute Promise completes on click). */
 const pending = new Map<string, (r: ConnectCalendarResult) => void>();
 
 function ConnectCalendarCard({
@@ -72,20 +73,20 @@ function ConnectCalendarCard({
   const [phase, setPhase] = useState<"idle" | "connecting">("idle");
   const [localErr, setLocalErr] = useState<string | null>(null);
 
-  // Já resolvido (execute achou conexão, ou o fluxo terminou).
+  // Already resolved (execute found a connection, or the flow finished).
   if (result) {
     return result.connected ? (
-      <ToolCard icon={CalendarCheck2Icon} label="conectar agenda" tone="success" meta="conectada">
-        <Row k="google" v={result.email ?? "conta conectada"} />
+      <ToolCard icon={CalendarCheck2Icon} label="connect calendar" tone="success" meta="connected">
+        <Row k="google" v={result.email ?? "account connected"} />
       </ToolCard>
     ) : (
-      <ToolCard icon={XCircleIcon} label="conectar agenda" tone="risk" meta="não conectada">
-        <Row k="erro" v={result.error ?? "conexão cancelada"} />
+      <ToolCard icon={XCircleIcon} label="connect calendar" tone="risk" meta="not connected">
+        <Row k="error" v={result.error ?? "connection canceled"} />
       </ToolCard>
     );
   }
 
-  // execute ainda pendente → mostra o botão de conectar.
+  // execute still pending → show the connect button.
   function resolve(r: ConnectCalendarResult) {
     const fn = pending.get(toolCallId);
     if (fn) {
@@ -98,7 +99,7 @@ function ConnectCalendarCard({
     setLocalErr(null);
     setPhase("connecting");
 
-    // Abre o consent do Google numa popup.
+    // Opens Google's consent screen in a popup.
     const popup = window.open(
       "/api/calendar/google/start",
       "casper-connect-calendar",
@@ -106,11 +107,11 @@ function ConnectCalendarCard({
     );
     if (!popup) {
       setPhase("idle");
-      setLocalErr("popup bloqueada — permita popups e tente de novo");
+      setLocalErr("popup blocked — allow popups and try again");
       return;
     }
 
-    // Poll do status até conectar (ou a popup fechar / timeout ~2min).
+    // Poll the status until connected (or the popup closes / ~2min timeout).
     const started = performance.now();
     const TIMEOUT_MS = 120_000;
     const timer = window.setInterval(async () => {
@@ -133,11 +134,11 @@ function ConnectCalendarCard({
         } catch {}
         setPhase("idle");
         const msg = timedOut
-          ? "tempo esgotado ao conectar a agenda"
-          : "janela fechada sem concluir a conexão";
+          ? "timed out connecting the calendar"
+          : "window closed without completing the connection";
         setLocalErr(msg);
-        // Não resolve como erro terminal — o usuário pode tentar de novo pelo
-        // mesmo card. Só resolvemos em sucesso, ou deixamos o agente esperando.
+        // Doesn't resolve as a terminal error — the user can retry from the
+        // same card. We only resolve on success, or leave the agent waiting.
       }
     }, 1500);
   }
@@ -146,13 +147,13 @@ function ConnectCalendarCard({
   return (
     <ToolCard
       icon={CalendarPlusIcon}
-      label="conectar agenda"
+      label="connect calendar"
       running={running && phase === "connecting"}
-      meta={phase === "connecting" ? "aguardando consent" : "ação necessária"}
+      meta={phase === "connecting" ? "awaiting consent" : "action needed"}
     >
       <p className="font-mono text-[11px] text-muted-foreground">
-        Conecte seu Google Calendar para o CasperAgent criar reuniões e agendar
-        bots direto na sua agenda.
+        Connect your Google Calendar so CasperAgent can create meetings and
+        schedule bots directly on your calendar.
       </p>
       <button
         type="button"
@@ -168,12 +169,12 @@ function ConnectCalendarCard({
         {phase === "connecting" ? (
           <>
             <LoaderIcon className="size-3.5 animate-spin [animation-duration:0.6s]" />
-            conectando…
+            connecting…
           </>
         ) : (
           <>
             <CalendarPlusIcon className="size-3.5" />
-            Conectar Google Calendar
+            Connect Google Calendar
           </>
         )}
       </button>
@@ -193,10 +194,11 @@ export const ConnectCalendarTool = makeAssistantTool<
   toolName: "connect_calendar",
   type: "frontend",
   description:
-    "Conecta a agenda Google do usuário PELO CHAT (mostra um botão que abre o consent do Google numa popup). Use SEMPRE que uma ação de agenda falhar por falta de agenda conectada (ex.: create_calendar_event / list_calendar_events retornando 'nenhuma agenda conectada'), ANTES de mandar o usuário para configurações. Retorna { connected, email }. Se connected:true, prossiga com a ação de agenda que o usuário pediu.",
+    "Connects the user's Google calendar VIA CHAT (shows a button that opens Google consent in a popup). ALWAYS use this when a calendar action fails due to no calendar connected (e.g. create_calendar_event / list_calendar_events returning 'no calendar connected'), BEFORE sending the user to settings. Returns { connected, email }. If connected:true, proceed with the calendar action the user requested.",
   parameters: { type: "object", properties: {}, additionalProperties: false },
-  // execute: se já houver agenda conectada, resolve na hora; senão retorna uma
-  // Promise pendente (o resolver é chamado quando o polling detecta a conexão).
+  // execute: if a calendar is already connected, it resolves right away;
+  // otherwise it returns a pending Promise (the resolver is called when
+  // polling detects the connection).
   execute: async (_args, { toolCallId }) => {
     const st = await fetchStatus();
     if (st.connected) return st;
@@ -207,7 +209,7 @@ export const ConnectCalendarTool = makeAssistantTool<
   render: ConnectCalendarCard,
 });
 
-/* ── card visual (espelha os demais ToolUIs) ─────────────────────────────── */
+/* ── visual card (mirrors the other ToolUIs) ─────────────────────────────── */
 
 type Tone = "default" | "success" | "risk";
 

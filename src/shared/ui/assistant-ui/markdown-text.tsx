@@ -35,7 +35,7 @@ const CodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
     copyToClipboard(code);
   };
 
-  const tooltip = isError ? "Falha ao copiar" : isCopied ? "Copiado" : "Copiar";
+  const tooltip = isError ? "Failed to copy" : isCopied ? "Copied" : "Copy";
 
   return (
     <div className="aui-code-header-root border-border bg-muted/40 mt-3 flex items-center justify-between rounded-t-[5px] border border-b-0 px-3 py-1.5 font-mono text-xs">
@@ -76,8 +76,8 @@ const useCopyToClipboard = ({
         setTimeout(() => setIsCopied(false), copiedDuration);
       },
       () => {
-        // Clipboard pode falhar (iframe, permissão negada). Sinaliza o erro em
-        // vez de silenciar — o usuário precisa saber que a cópia não funcionou.
+        // Clipboard can fail (iframe, permission denied). Signal the error
+        // instead of silencing it — the user needs to know the copy failed.
         setIsError(true);
         setTimeout(() => setIsError(false), copiedDuration);
       },

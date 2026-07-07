@@ -15,20 +15,20 @@ import { emailSignatureRequested } from "@/server/email";
 import { getSession } from "@/features/auth/model/session";
 
 /**
- * Tools do fluxo multisig SaaS (coleta distribuída de assinaturas).
+ * Tools for the SaaS multisig flow (distributed signature collection).
  *
- * Diferente do multisig em memória (meeting-chain.tool.ts), estas persistem a
- * solicitação no banco e devolvem um LINK compartilhável /sign/:id. Cada
- * signatário assina remoto pela própria carteira; o quórum é recalculado no
- * servidor. As tools resolvem o usuário da sessão server-side — nunca confiam
- * num userId vindo do chat.
+ * Unlike the in-memory multisig (meeting-chain.tool.ts), these persist the
+ * request to the database and return a shareable /sign/:id LINK. Each signer
+ * signs remotely from their own wallet; the quorum is recomputed server-side.
+ * The tools resolve the session user server-side — they never trust a userId
+ * coming from the chat.
  */
 
 async function sessionUserId(): Promise<string> {
   const session = await getSession();
   if (!session?.user?.id) {
     throw new Error(
-      "Usuário não autenticado. Peça para fazer login antes de criar a solicitação.",
+      "User not authenticated. Ask them to log in before creating the request.",
     );
   }
   return session.user.id;
@@ -39,33 +39,33 @@ const signerSchema = z.object({
   label: z.string().optional(),
 });
 
-// Cria uma solicitação multisig persistida + link compartilhável. Substitui o
-// "JSON em memória" pelo fluxo SaaS: persiste, notifica signatários com conta e
-// devolve /sign/:id para distribuir.
+// Creates a persisted multisig request + shareable link. Replaces the
+// "in-memory JSON" with the SaaS flow: persists, notifies signers who have an
+// account, and returns /sign/:id to distribute.
 export const prepareMultisigPaymentRequestTool = createTool({
   id: "prepare_multisig_payment_request",
   description:
-    "Cria uma SOLICITAÇÃO de pagamento multisig PERSISTIDA e devolve um LINK compartilhável (/sign/:id) para cada signatário assinar remoto pela própria carteira. Use para pagamentos que exigem várias assinaturas coletadas ao longo do tempo (não na mesma sessão). Informe pagadora, destino, valor e os signatários. Notifica in-app os signatários que têm conta. Retorna o link + o estado inicial.",
+    "Creates a PERSISTED multisig payment REQUEST and returns a shareable LINK (/sign/:id) for each signer to sign remotely from their own wallet. Use for payments that require several signatures collected over time (not in the same session). Provide the payer, destination, amount and the signers. Notifies in-app the signers who have an account. Returns the link + the initial state.",
   inputSchema: z.object({
-    fromPublicKeyHex: z.string().describe("Carteira pagadora (de onde sai o CSPR)"),
-    toPublicKeyHex: z.string().describe("Destinatário do pagamento"),
+    fromPublicKeyHex: z.string().describe("Payer wallet (where the CSPR comes from)"),
+    toPublicKeyHex: z.string().describe("Payment recipient"),
     amountCspr: z
       .number()
-      .min(2.5, "A rede exige no mínimo 2.5 CSPR por transferência")
-      .describe("Valor em CSPR (mínimo 2.5 — exigência da rede)"),
+      .min(2.5, "The network requires a minimum of 2.5 CSPR per transfer")
+      .describe("Amount in CSPR (minimum 2.5 — network requirement)"),
     signers: z
       .array(signerSchema)
-      .describe("Signatários exigidos: publicKeyHex + label opcional"),
+      .describe("Required signers: publicKeyHex + optional label"),
     threshold: z
       .number()
       .int()
       .positive()
       .optional()
-      .describe("Quórum (nº de assinaturas). Padrão: todos os signatários"),
+      .describe("Quorum (number of signatures). Default: all signers"),
     description: z
       .string()
       .optional()
-      .describe("Descrição em linguagem natural do pagamento"),
+      .describe("Natural-language description of the payment"),
   }),
   outputSchema: z.object({
     id: z.string(),
@@ -81,7 +81,7 @@ export const prepareMultisigPaymentRequestTool = createTool({
   execute: async (input) => {
     const userId = await sessionUserId();
 
-    // Monta a tx base (transfer nativo + signatários), reusando o mesmo builder.
+    // Builds the base tx (native transfer + signers), reusing the same builder.
     const signerKeys = input.signers.map((s) => s.publicKeyHex);
     const state = prepareMultisigPayment({
       fromPublicKeyHex: input.fromPublicKeyHex,
@@ -91,8 +91,8 @@ export const prepareMultisigPaymentRequestTool = createTool({
       threshold: input.threshold,
     });
 
-    // Persiste como signature_request. Os signatários exigidos saem do state
-    // (inclui a pagadora), preservando labels informados quando coincidem.
+    // Persists as a signature_request. The required signers come from the
+    // state (includes the payer), preserving provided labels when they match.
     const labelByKey = new Map(
       input.signers.map((s) => [s.publicKeyHex.toLowerCase(), s.label]),
     );
@@ -106,14 +106,14 @@ export const prepareMultisigPaymentRequestTool = createTool({
       kind: "payment",
       description:
         input.description ??
-        `Pagamento de ${input.amountCspr} CSPR para ${input.toPublicKeyHex.slice(0, 10)}…`,
+        `Payment of ${input.amountCspr} CSPR to ${input.toPublicKeyHex.slice(0, 10)}…`,
       transactionJson: state.transactionJson,
       requiredSigners,
       threshold: state.threshold,
       chainName: state.chainName,
     });
 
-    // Notifica signatários com conta (exceto o criador).
+    // Notifies signers who have an account (except the creator).
     const walletToUser = await resolveUsersByWallets(
       requiredSigners.map((s) => s.publicKeyHex),
     );
@@ -124,13 +124,13 @@ export const prepareMultisigPaymentRequestTool = createTool({
       userIds: targets,
       type: "signature_requested",
       message: request.description
-        ? `Assinatura solicitada: ${request.description}`
-        : "Há uma transação aguardando sua assinatura.",
+        ? `Signature requested: ${request.description}`
+        : "There is a transaction waiting for your signature.",
       requestId: request.id,
     });
 
-    // Push externo (e-mail) além do sino in-app — alcança o signatário deslogado.
-    // Best-effort: emailSignatureRequested nunca lança.
+    // External push (email) in addition to the in-app bell — reaches the
+    // signer even if they're logged out. Best-effort: emailSignatureRequested never throws.
     await Promise.all(
       targets.map((uid) =>
         emailSignatureRequested({

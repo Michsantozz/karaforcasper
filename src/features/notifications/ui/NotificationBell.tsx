@@ -12,15 +12,15 @@ import {
 } from "@/features/notifications/model/queries";
 
 /**
- * Sino global de notificações — overlay auto-contido (position: fixed), no canto
- * inferior esquerdo, alinhado ao rail do AppShell. Renderizado por app/layout.
+ * Global notifications bell — self-contained overlay (position: fixed), in the
+ * bottom-left corner, aligned with the AppShell rail. Rendered by app/layout.
  *
- * Por que fora do AppShell: o AppShell vive no slice `auth`, que pela fronteira
- * ESLint não pode importar `notifications`. O sino é auto-contido e o app é quem
- * o injeta — mesmo padrão do OnboardingDialog.
+ * Why it's outside AppShell: AppShell lives in the `auth` slice, which by the
+ * ESLint boundary can't import `notifications`. The bell is self-contained and
+ * the app is what injects it — same pattern as OnboardingDialog.
  *
- * Ao clicar numa notificação com requestId, faz deep-link para /sign/:id e marca
- * como lida. Sem requestId (ex.: "ata pronta"), leva para /meetings.
+ * Clicking a notification with a requestId deep-links to /sign/:id and marks
+ * it as read. Without a requestId (e.g. "minutes ready"), it goes to /meetings.
  */
 export function NotificationBell() {
   const { data: session } = useSession();
@@ -59,7 +59,7 @@ export function NotificationBell() {
   function openNotification(n: Notification) {
     if (!n.readAt) markRead.mutate(n.id);
     setOpen(false);
-    // Deep-link: request multisig → tela de assinatura; senão → reuniões.
+    // Deep-link: multisig request → signing screen; otherwise → meetings.
     router.push(n.requestId ? `/sign/${n.requestId}` : "/meetings");
   }
 
@@ -69,11 +69,11 @@ export function NotificationBell() {
         <div className="absolute bottom-11 left-0 flex w-80 max-w-[calc(100vw-1.5rem)] flex-col rounded-[10px] border bg-popover shadow-lg">
           <div className="flex items-center justify-between border-b px-3 py-2">
             <span className="font-mono text-xs text-muted-foreground">
-              notificações
+              notifications
             </span>
             {unread > 0 && (
               <span className="font-mono text-[10px] text-(--thread-accent-primary)">
-                {unread} não lida{unread > 1 ? "s" : ""}
+                {unread} unread
               </span>
             )}
           </div>
@@ -83,7 +83,7 @@ export function NotificationBell() {
               <div className="flex flex-col items-center gap-1.5 px-3 py-8 text-center">
                 <CheckCheckIcon className="size-5 text-muted-foreground/60" />
                 <span className="font-mono text-[11px] text-muted-foreground">
-                  nada por aqui
+                  nothing here
                 </span>
               </div>
             ) : (
@@ -111,7 +111,7 @@ export function NotificationBell() {
                       </span>
                       <span className="pl-0 font-mono text-[10px] text-muted-foreground">
                         {fmtWhen(n.createdAt)}
-                        {n.requestId ? " · abrir para assinar" : ""}
+                        {n.requestId ? " · open to sign" : ""}
                       </span>
                     </button>
                   </li>
@@ -125,7 +125,7 @@ export function NotificationBell() {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        aria-label={`Notificações${unread ? ` (${unread} não lidas)` : ""}`}
+        aria-label={`Notifications${unread ? ` (${unread} unread)` : ""}`}
         className={cn(
           "relative flex size-9 items-center justify-center rounded-[8px] border bg-background shadow-sm transition-colors",
           "text-muted-foreground hover:text-foreground",
@@ -143,16 +143,16 @@ export function NotificationBell() {
   );
 }
 
-/** Data relativa curta em pt-BR (ex.: "há 2 min", "há 3 h", "ontem"). */
+/** Short relative time in English (e.g. "2 min ago", "3 h ago", "yesterday"). */
 function fmtWhen(iso: string): string {
   const then = new Date(iso).getTime();
   const diffSec = Math.max(0, (Date.now() - then) / 1000);
-  if (diffSec < 60) return "agora";
+  if (diffSec < 60) return "just now";
   const min = Math.floor(diffSec / 60);
-  if (min < 60) return `há ${min} min`;
+  if (min < 60) return `${min} min ago`;
   const h = Math.floor(min / 60);
-  if (h < 24) return `há ${h} h`;
+  if (h < 24) return `${h} h ago`;
   const d = Math.floor(h / 24);
-  if (d === 1) return "ontem";
-  return `há ${d} dias`;
+  if (d === 1) return "yesterday";
+  return `${d} days ago`;
 }

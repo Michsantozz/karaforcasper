@@ -1,43 +1,45 @@
 import "server-only";
 
 /**
- * Política de gasto da carteira DO AGENTE — enforcement em CÓDIGO, não no prompt.
+ * AGENT wallet spending policy — enforcement in CODE, not in the prompt.
  *
- * Motivo: `transfer_cspr` assina e transmite fundos on-chain a partir da carteira
- * do agente. Antes, o único freio era uma instrução textual no system prompt
- * ("confirme com o usuário") — convenção, não garantia: prompt-injection via chat
- * ou uma alucinação do loop autônomo bastavam pra drenar a carteira. Aqui a
- * política é verificada em código, fail-closed, independente do que o LLM decide.
+ * Reason: `transfer_cspr` signs and broadcasts on-chain funds from the
+ * agent's wallet. Previously, the only safeguard was a textual instruction in
+ * the system prompt ("confirm with the user") — a convention, not a
+ * guarantee: prompt injection via chat or a hallucination in the autonomous
+ * loop was enough to drain the wallet. Here the policy is checked in code,
+ * fail-closed, independent of what the LLM decides.
  *
- * Camadas:
- *  1. Piso da rede (MIN_TRANSFER_CSPR): o Casper recusa transfer nativo abaixo
- *     de 2.5 CSPR com -32016. Barramos ANTES de assinar/pagar gas — senão todo
- *     transfer pequeno (ex.: heartbeat autônomo default 1 CSPR) queima gas e falha.
- *  2. Teto por transação (MAX_TRANSFER_CSPR).
- *  3. Allowlist de destinos (TRANSFER_ALLOWLIST) — se definida, só endereços nela.
- *  4. Fail-closed: valores inválidos (NaN/≤0/fora da faixa) são recusados, e um
- *     teto MAL CONFIGURADO (env não-numérico) é tratado como erro, não como
- *     "sem teto" — senão o limite de gasto sumiria silenciosamente.
+ * Layers:
+ *  1. Network floor (MIN_TRANSFER_CSPR): Casper rejects a native transfer
+ *     below 2.5 CSPR with -32016. We block it BEFORE signing/paying gas —
+ *     otherwise every small transfer (e.g., the default 1 CSPR autonomous
+ *     heartbeat) burns gas and fails.
+ *  2. Per-transaction cap (MAX_TRANSFER_CSPR).
+ *  3. Destination allowlist (TRANSFER_ALLOWLIST) — if set, only addresses in it.
+ *  4. Fail-closed: invalid values (NaN/≤0/out of range) are rejected, and a
+ *     MISCONFIGURED cap (non-numeric env) is treated as an error, not as "no
+ *     cap" — otherwise the spending limit would silently disappear.
  *
- * O human-in-the-loop (requireApproval do Mastra) é a última camada, na tool.
- * Estas guardas continuam valendo mesmo se a aprovação for burlada no handler.
+ * The human-in-the-loop (Mastra's requireApproval) is the last layer, in the
+ * tool. These guards still hold even if the approval is bypassed in the handler.
  */
 
 /**
- * Piso da rede para transfer nativo, em CSPR. O nó recusa abaixo disso (-32016
- * "insufficient transfer amount"). Constante do protocolo, não configurável.
+ * Network floor for a native transfer, in CSPR. The node rejects anything
+ * below this (-32016 "insufficient transfer amount"). Protocol constant, not configurable.
  */
 export const MIN_TRANSFER_CSPR = 2.5;
 
-/** Teto por transferência do agente, em CSPR. Default conservador: 5 CSPR. */
+/** Per-transfer cap for the agent, in CSPR. Conservative default: 5 CSPR. */
 export const MAX_TRANSFER_CSPR = Number(
   process.env.AGENT_MAX_TRANSFER_CSPR ?? "5",
 );
 
 /**
- * Allowlist de destinos (public keys hex, separadas por vírgula). Se vazia, não
- * há restrição de destino — recomendado definir em produção. Normalizada p/
- * lowercase para comparação estável.
+ * Destination allowlist (public keys hex, comma-separated). If empty, there's
+ * no destination restriction — recommended to set in production. Normalized
+ * to lowercase for stable comparison.
  */
 const TRANSFER_ALLOWLIST: ReadonlySet<string> = new Set(
   (process.env.AGENT_TRANSFER_ALLOWLIST ?? "")
@@ -62,8 +64,8 @@ export class TransferPolicyError extends Error {
 }
 
 /**
- * Valida uma transferência do agente contra a política. Lança TransferPolicyError
- * (fail-closed) se qualquer regra falhar. Retorna void se aprovada.
+ * Validates an agent transfer against the policy. Throws TransferPolicyError
+ * (fail-closed) if any rule fails. Returns void if approved.
  */
 export function assertTransferAllowed(args: {
   toPublicKeyHex: string;
@@ -71,34 +73,34 @@ export function assertTransferAllowed(args: {
 }): void {
   const { toPublicKeyHex, amountCspr } = args;
 
-  // Teto mal configurado (env não-numérico → NaN) é ERRO, não "sem teto". Sem
-  // esta checagem, `amountCspr > NaN` seria sempre false e o limite de gasto
-  // desapareceria silenciosamente. Fail-closed: recusa até o operador corrigir.
+  // A misconfigured cap (non-numeric env → NaN) is an ERROR, not "no cap".
+  // Without this check, `amountCspr > NaN` would always be false and the
+  // spending limit would silently disappear. Fail-closed: reject until the operator fixes it.
   if (!Number.isFinite(MAX_TRANSFER_CSPR) || MAX_TRANSFER_CSPR <= 0) {
     throw new TransferPolicyError(
       "policy_misconfigured",
-      `AGENT_MAX_TRANSFER_CSPR inválido: ${process.env.AGENT_MAX_TRANSFER_CSPR}`,
+      `invalid AGENT_MAX_TRANSFER_CSPR: ${process.env.AGENT_MAX_TRANSFER_CSPR}`,
     );
   }
 
   if (!Number.isFinite(amountCspr) || amountCspr <= 0) {
     throw new TransferPolicyError(
       "amount_invalid",
-      `valor de transferência inválido: ${amountCspr}`,
+      `invalid transfer amount: ${amountCspr}`,
     );
   }
 
   if (amountCspr < MIN_TRANSFER_CSPR) {
     throw new TransferPolicyError(
       "amount_below_minimum",
-      `transferência de ${amountCspr} CSPR abaixo do mínimo da rede (${MIN_TRANSFER_CSPR} CSPR)`,
+      `transfer of ${amountCspr} CSPR is below the network minimum (${MIN_TRANSFER_CSPR} CSPR)`,
     );
   }
 
   if (amountCspr > MAX_TRANSFER_CSPR) {
     throw new TransferPolicyError(
       "amount_exceeds_limit",
-      `transferência de ${amountCspr} CSPR excede o teto de ${MAX_TRANSFER_CSPR} CSPR`,
+      `transfer of ${amountCspr} CSPR exceeds the cap of ${MAX_TRANSFER_CSPR} CSPR`,
     );
   }
 
@@ -108,7 +110,7 @@ export function assertTransferAllowed(args: {
   ) {
     throw new TransferPolicyError(
       "destination_not_allowed",
-      `destino ${toPublicKeyHex} não está na allowlist do agente`,
+      `destination ${toPublicKeyHex} is not on the agent's allowlist`,
     );
   }
 }

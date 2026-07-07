@@ -4,9 +4,9 @@ import { listWalletsByUser } from "@/server/casper/user-wallets";
 import { listPendingForSigner } from "@/server/casper/signature-request";
 
 /**
- * Requests "aguardando minha assinatura": match das carteiras vinculadas do
- * usuário contra as solicitações abertas em que ele é signatário exigido e ainda
- * não assinou. Alimenta a aba do dashboard /multisig.
+ * Requests "awaiting my signature": matches the user's linked wallets against
+ * open requests where they are a required signer and haven't signed yet.
+ * Feeds the /multisig dashboard tab.
  */
 export async function GET() {
   const session = await getSession();

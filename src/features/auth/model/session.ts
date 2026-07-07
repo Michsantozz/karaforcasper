@@ -2,16 +2,17 @@ import { headers } from "next/headers";
 import { auth } from "@/features/auth/model/auth";
 
 /**
- * Resolve a sessão atual server-side (rotas/RSC/tools).
+ * Resolves the current session server-side (routes/RSC/tools).
  *
- * Substitui o `user_id` hardcoded: o dono da agenda e dos bots é o usuário
- * autenticado. Tools e rotas derivam o user_id daqui, nunca de query param.
+ * Replaces the hardcoded `user_id`: the calendar and bots belong to the
+ * authenticated user. Tools and routes derive the user_id from here, never
+ * from a query param.
  */
 export async function getSession() {
   return auth.api.getSession({ headers: await headers() });
 }
 
-/** user_id da sessão, ou lança se não autenticado. Use em rotas protegidas. */
+/** Session user_id, or throws if unauthenticated. Use in protected routes. */
 export async function requireUserId(): Promise<string> {
   const session = await getSession();
   if (!session?.user?.id) {

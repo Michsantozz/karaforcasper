@@ -11,7 +11,7 @@ import {
 import { CHAIN_NAME } from "./client";
 import { putTx } from "./tx-store";
 
-// Gas para os deploys de session (key management). ~3 CSPR é folgado.
+// Gas for the session deploys (key management). ~3 CSPR is plenty.
 const SETUP_PAYMENT_MOTES = 3_000_000_000;
 
 const WASM_DIR = path.join(process.cwd(), "src/server/casper/wasm");
@@ -21,25 +21,25 @@ async function loadWasm(name: string): Promise<Uint8Array> {
   return new Uint8Array(buf);
 }
 
-/** account-hash-… a partir da public key hex (formato exigido pelo arg `new_key`). */
+/** account-hash-… from the public key hex (format required by the `new_key` arg). */
 function accountHashKey(publicKeyHex: string): Key {
   const ah = PublicKey.fromHex(publicKeyHex).accountHash();
   return Key.newKey(ah.toPrefixedString());
 }
 
 export interface PreparedSetupStep {
-  /** O que este passo faz, em linguagem natural. */
+  /** What this step does, in plain language. */
   label: string;
-  /** ID curto da tx no store — o cliente busca o JSON íntegro por ele. */
+  /** Short tx ID in the store — the client fetches the full JSON by it. */
   txId: string;
 }
 
 export interface PreparedMultisigSetup {
-  /** Conta primária (dona) que assina e é configurada. */
+  /** Primary (owner) account that signs and is being configured. */
   primaryPublicKeyHex: string;
-  /** Passos a executar EM ORDEM (cada um: assinar + broadcast). */
+  /** Steps to execute IN ORDER (each one: sign + broadcast). */
   steps: PreparedSetupStep[];
-  /** Resumo da configuração resultante. */
+  /** Summary of the resulting configuration. */
   config: {
     primaryWeight: number;
     associatedKeys: { publicKeyHex: string; weight: number }[];
@@ -50,30 +50,31 @@ export interface PreparedMultisigSetup {
 }
 
 /**
- * Monta (sem assinar) a sequência de deploys de SESSION WASM que transforma a
- * conta primária numa conta MULTISIG NATIVA do Casper:
+ * Builds (without signing) the sequence of SESSION WASM deploys that turns
+ * the primary account into a Casper NATIVE MULTISIG account:
  *
- *  1) add_account.wasm — adiciona cada signatário como associated key (peso).
- *  2) update_thresholds.wasm — define o deployment/key_management threshold.
+ *  1) add_account.wasm — adds each signer as an associated key (weight).
+ *  2) update_thresholds.wasm — sets the deployment/key_management threshold.
  *
- * Cada passo é uma tx que a CONTA PRIMÁRIA assina (via carteira) e submete na
- * ordem. Depois disso, a rede passa a EXIGIR o quórum nativamente — diferente
- * do multisig "demonstrável", aqui o enforcement é da blockchain.
+ * Each step is a tx that the PRIMARY ACCOUNT signs (via wallet) and submits in
+ * order. After this, the network starts ENFORCING the quorum natively —
+ * unlike the "demonstrable" multisig, here enforcement is done by the blockchain.
  *
- * IMPORTANTE: o peso da própria chave primária precisa ser >= key_management
- * threshold para ela conseguir gerenciar a conta; senão a conta fica travada.
- * Por isso o threshold de key_management é configurável e deve ser planejado.
+ * IMPORTANT: the primary key's own weight needs to be >= the key_management
+ * threshold for it to be able to manage the account; otherwise the account
+ * gets locked out. That's why the key_management threshold is configurable
+ * and must be planned.
  */
 export async function prepareMultisigSetup(args: {
   primaryPublicKeyHex: string;
-  /** Signatários a adicionar (além da chave primária). */
+  /** Signers to add (besides the primary key). */
   associates: { publicKeyHex: string; weight: number }[];
   deploymentThreshold: number;
   keyManagementThreshold: number;
   /**
-   * Peso a atribuir à chave primária ANTES de definir os thresholds. Deve ser
-   * >= keyManagementThreshold para a conta primária conseguir se gerenciar
-   * sozinha (evita travar a conta). Se omitido, usa keyManagementThreshold.
+   * Weight to assign to the primary key BEFORE setting the thresholds. Must be
+   * >= keyManagementThreshold for the primary account to be able to manage
+   * itself alone (avoids locking the account). If omitted, uses keyManagementThreshold.
    */
   primaryWeight?: number;
 }): Promise<PreparedMultisigSetup> {
@@ -85,8 +86,8 @@ export async function prepareMultisigSetup(args: {
 
   const steps: PreparedSetupStep[] = [];
 
-  // 0) Sobe o peso da chave primária (segurança: ela precisa conseguir gerenciar
-  //    a conta sozinha, senão trava). Tem que vir ANTES dos thresholds.
+  // 0) Raises the primary key's weight (safety: it needs to be able to manage
+  //    the account alone, otherwise it locks out). Must come BEFORE the thresholds.
   {
     const tx = new SessionBuilder()
       .from(primary)
@@ -102,7 +103,7 @@ export async function prepareMultisigSetup(args: {
       .build();
 
     steps.push({
-      label: `Elevar peso da chave primária para ${primaryWeight} (evita travar a conta)`,
+      label: `Raise primary key weight to ${primaryWeight} (avoids locking the account)`,
       txId: putTx(JSON.stringify(tx.toJSON()), {
         kind: "setup_multisig",
         from: args.primaryPublicKeyHex,
@@ -110,7 +111,7 @@ export async function prepareMultisigSetup(args: {
     });
   }
 
-  // 1) Um deploy add_account por associado.
+  // 1) One add_account deploy per associate.
   for (const a of args.associates) {
     const tx = new SessionBuilder()
       .from(primary)
@@ -126,7 +127,7 @@ export async function prepareMultisigSetup(args: {
       .build();
 
     steps.push({
-      label: `Adicionar ${a.publicKeyHex.slice(0, 10)}… como signatário (peso ${a.weight})`,
+      label: `Add ${a.publicKeyHex.slice(0, 10)}… as signer (weight ${a.weight})`,
       txId: putTx(JSON.stringify(tx.toJSON()), {
         kind: "setup_multisig",
         from: args.primaryPublicKeyHex,
@@ -135,7 +136,7 @@ export async function prepareMultisigSetup(args: {
     });
   }
 
-  // 2) Define os thresholds (precisa vir DEPOIS de adicionar as chaves).
+  // 2) Sets the thresholds (must come AFTER adding the keys).
   const thrTx = new SessionBuilder()
     .from(primary)
     .wasm(thrWasm)
@@ -150,7 +151,7 @@ export async function prepareMultisigSetup(args: {
     .build();
 
   steps.push({
-    label: `Definir quórum: deployment=${args.deploymentThreshold}, key_management=${args.keyManagementThreshold}`,
+    label: `Set quorum: deployment=${args.deploymentThreshold}, key_management=${args.keyManagementThreshold}`,
     txId: putTx(JSON.stringify(thrTx.toJSON()), {
       kind: "setup_multisig",
       from: args.primaryPublicKeyHex,

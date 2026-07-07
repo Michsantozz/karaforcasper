@@ -16,7 +16,7 @@ const jetbrainsMono = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: "Casper Agent",
-  description: "Agente autônomo na Casper Network — Buildathon 2026",
+  description: "Autonomous agent on the Casper Network — Buildathon 2026",
 };
 
 export default function RootLayout({
@@ -26,7 +26,7 @@ export default function RootLayout({
 }) {
   return (
     <html
-      lang="pt-BR"
+      lang="en"
       suppressHydrationWarning
       className={cn("font-sans", geist.variable, jetbrainsMono.variable)}
     >
@@ -39,7 +39,7 @@ export default function RootLayout({
         >
           <QueryProvider>
             <TooltipProvider>{children}</TooltipProvider>
-            {/* Sino global de notificações — auto-contido, só aparece logado. */}
+            {/* Global notification bell — self-contained, only shown when signed in. */}
             <NotificationBell />
             <Toaster />
           </QueryProvider>

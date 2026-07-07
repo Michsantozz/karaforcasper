@@ -5,13 +5,14 @@ import { db } from "@/shared/db";
 import { user } from "@/shared/db/auth-schema";
 
 /**
- * Envio de e-mail transacional (Resend). Canal de PUSH externo — alcança o
- * usuário mesmo deslogado (ata pronta, convocação para assinar), complementando
- * o sino in-app.
+ * Transactional email sending (Resend). External PUSH channel — reaches the
+ * user even when logged out (minutes ready, signature request), complementing
+ * the in-app bell.
  *
- * Degradação graciosa: sem RESEND_API_KEY, sendEmail vira no-op (loga em dev) e
- * NUNCA lança — não pode derrubar o webhook de bot nem a criação de request.
- * Ligar o canal = definir RESEND_API_KEY e EMAIL_FROM no env.
+ * Graceful degradation: without RESEND_API_KEY, sendEmail becomes a no-op
+ * (logs in dev) and NEVER throws — it must not bring down the bot webhook or
+ * request creation. Enabling the channel = setting RESEND_API_KEY and
+ * EMAIL_FROM in the env.
  */
 
 const globalForResend = globalThis as unknown as { __resend?: Resend | null };
@@ -23,12 +24,12 @@ function getClient(): Resend | null {
   return globalForResend.__resend;
 }
 
-/** Remetente configurado (domínio verificado no Resend), ou o sandbox padrão. */
+/** Configured sender (domain verified in Resend), or the default sandbox. */
 function fromAddress(): string {
   return process.env.EMAIL_FROM ?? "CasperAgent <onboarding@resend.dev>";
 }
 
-/** URL base pública do app, para montar links absolutos nos e-mails. */
+/** Public base URL of the app, to build absolute links in emails. */
 function appUrl(): string {
   return (
     process.env.NEXT_PUBLIC_APP_URL ??
@@ -45,7 +46,7 @@ export async function sendEmail(input: {
   const client = getClient();
   if (!client) {
     if (process.env.NODE_ENV !== "production") {
-      console.log(`[email:noop] para ${input.to} — "${input.subject}"`);
+      console.log(`[email:noop] to ${input.to} — "${input.subject}"`);
     }
     return;
   }
@@ -57,16 +58,16 @@ export async function sendEmail(input: {
       html: input.html,
     });
   } catch (err) {
-    // Nunca propaga: e-mail é best-effort, não bloqueia o fluxo que o disparou.
+    // Never propagates: email is best-effort, doesn't block the flow that triggered it.
     console.error(
-      `[email] falha ao enviar para ${input.to}: ${
+      `[email] failed to send to ${input.to}: ${
         err instanceof Error ? err.message : String(err)
       }`,
     );
   }
 }
 
-/** Busca o e-mail de um usuário pelo id (better-auth), ou null. */
+/** Fetches a user's email by id (better-auth), or null. */
 export async function userEmailById(userId: string): Promise<string | null> {
   const rows = await db
     .select({ email: user.email })
@@ -76,7 +77,7 @@ export async function userEmailById(userId: string): Promise<string | null> {
   return rows[0]?.email ?? null;
 }
 
-/** Layout HTML mínimo, consistente entre os e-mails do produto. */
+/** Minimal HTML layout, consistent across the product's emails. */
 function shell(title: string, body: string, cta?: { label: string; href: string }): string {
   const button = cta
     ? `<a href="${cta.href}" style="display:inline-block;margin-top:16px;padding:10px 18px;background:#111;color:#fff;border-radius:6px;text-decoration:none;font-family:monospace;font-size:14px">${cta.label}</a>`
@@ -85,11 +86,11 @@ function shell(title: string, body: string, cta?: { label: string; href: string 
     <h2 style="font-size:18px;margin:0 0 8px">${title}</h2>
     <div style="font-size:14px;line-height:1.6;color:#333">${body}</div>
     ${button}
-    <p style="margin-top:24px;font-family:monospace;font-size:11px;color:#999">CasperAgent · reuniões → decisões verificáveis on-chain</p>
+    <p style="margin-top:24px;font-family:monospace;font-size:11px;color:#999">CasperAgent · meetings → verifiable on-chain decisions</p>
   </div>`;
 }
 
-/** E-mail "ata pronta" — disparado pelo webhook de bot ao fim da reunião. */
+/** "Minutes ready" email — triggered by the bot webhook at the end of the meeting. */
 export async function emailMeetingSummaryReady(input: {
   userId: string;
   detail: string;
@@ -98,64 +99,83 @@ export async function emailMeetingSummaryReady(input: {
   if (!to) return;
   await sendEmail({
     to,
-    subject: "Ata da reunião pronta",
+    subject: "Meeting minutes ready",
     html: shell(
-      "Sua ata está pronta",
-      `A reunião foi processada${input.detail}. Revise o resumo, as decisões e as tarefas — e transforme decisões em ações on-chain (notarizar a ata ou preparar um pagamento multisig).`,
-      { label: "Abrir ata", href: `${appUrl()}/meetings` },
+      "Your minutes are ready",
+      `The meeting${input.detail} has been processed. Review the summary, decisions, and action items — and turn decisions into on-chain actions (notarize the minutes or prepare a multisig payment).`,
+      { label: "Open minutes", href: `${appUrl()}/meetings` },
     ),
   });
 }
 
-/** E-mail de verificação de conta (better-auth emailVerification). */
+/** Account verification email (better-auth emailVerification). */
 export async function emailVerifyAccount(input: {
   to: string;
   url: string;
 }): Promise<void> {
   await sendEmail({
     to: input.to,
-    subject: "Confirme seu e-mail — CasperAgent",
+    subject: "Confirm your email — CasperAgent",
     html: shell(
-      "Confirme seu e-mail",
-      "Para ativar sua conta no CasperAgent, confirme este endereço de e-mail.",
-      { label: "Confirmar e-mail", href: input.url },
+      "Confirm your email",
+      "To activate your CasperAgent account, please confirm this email address.",
+      { label: "Confirm email", href: input.url },
     ),
   });
 }
 
-/** E-mail de reset de senha (better-auth sendResetPassword). */
+/** Password reset email (better-auth sendResetPassword). */
 export async function emailResetPassword(input: {
   to: string;
   url: string;
 }): Promise<void> {
   await sendEmail({
     to: input.to,
-    subject: "Redefinir senha — CasperAgent",
+    subject: "Reset password — CasperAgent",
     html: shell(
-      "Redefinir sua senha",
-      "Recebemos um pedido para redefinir sua senha. Se não foi você, ignore este e-mail.",
-      { label: "Criar nova senha", href: input.url },
+      "Reset your password",
+      "We received a request to reset your password. If this wasn't you, ignore this email.",
+      { label: "Create new password", href: input.url },
     ),
   });
 }
 
-/** E-mail com magic link (better-auth magicLink plugin). */
+/** Magic link email (better-auth magicLink plugin). */
 export async function emailMagicLink(input: {
   to: string;
   url: string;
 }): Promise<void> {
   await sendEmail({
     to: input.to,
-    subject: "Seu link de acesso — CasperAgent",
+    subject: "Your access link — CasperAgent",
     html: shell(
-      "Entrar no CasperAgent",
-      "Clique no botão para entrar. O link expira em alguns minutos e só pode ser usado uma vez.",
-      { label: "Entrar", href: input.url },
+      "Sign in to CasperAgent",
+      "Click the button to sign in. The link expires in a few minutes and can only be used once.",
+      { label: "Sign in", href: input.url },
     ),
   });
 }
 
-/** E-mail "você foi convocado" — disparado ao criar uma request multisig. */
+/** Shared body of the signature invitation (in-app user OR external). */
+function signatureRequestEmail(input: {
+  to: string;
+  requestId: string;
+  description?: string | null;
+}) {
+  return {
+    to: input.to,
+    subject: "You've been called to sign a payment",
+    html: shell(
+      "Signature requested",
+      `You've been added as a signer on a multisig payment${
+        input.description ? `: <strong>${input.description}</strong>` : ""
+      }. Open the link, connect your wallet, and sign so the payment can move forward to quorum. No account needed — just the wallet.`,
+      { label: "Review and sign", href: `${appUrl()}/sign/${input.requestId}` },
+    ),
+  };
+}
+
+/** "You've been called" email — triggered when creating a multisig request. */
 export async function emailSignatureRequested(input: {
   userId: string;
   requestId: string;
@@ -163,15 +183,20 @@ export async function emailSignatureRequested(input: {
 }): Promise<void> {
   const to = await userEmailById(input.userId);
   if (!to) return;
-  await sendEmail({
-    to,
-    subject: "Você foi convocado para assinar um pagamento",
-    html: shell(
-      "Assinatura solicitada",
-      `Você foi adicionado como signatário de um pagamento multisig${
-        input.description ? `: <strong>${input.description}</strong>` : ""
-      }. Conecte sua carteira e assine para que o pagamento avance até o quórum.`,
-      { label: "Revisar e assinar", href: `${appUrl()}/sign/${input.requestId}` },
-    ),
-  });
+  await sendEmail(
+    signatureRequestEmail({ ...input, to }),
+  );
+}
+
+/**
+ * Invites an EXTERNAL signer (no linked account) via direct email: the
+ * creator provided the address when creating the request. Same body as the
+ * in-app invitation, but addressed to the email string instead of resolving by userId.
+ */
+export async function emailExternalSignatureRequested(input: {
+  to: string;
+  requestId: string;
+  description?: string | null;
+}): Promise<void> {
+  await sendEmail(signatureRequestEmail(input));
 }

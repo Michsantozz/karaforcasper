@@ -1,15 +1,15 @@
 "use client";
 
 /**
- * Camada TanStack Query do fluxo multisig / signature-request.
+ * TanStack Query layer for the multisig / signature-request flow.
  *
- * Centraliza as query keys e os hooks para que a invalidação seja consistente
- * cross-component: assinar em /sign/:id invalida a mesma chave que a lista
- * pendente do dashboard consome, então tudo revalida junto sem esperar o
- * próximo tick de polling.
+ * Centralizes the query keys and hooks so invalidation stays consistent
+ * cross-component: signing at /sign/:id invalidates the same key that the
+ * dashboard's pending list consumes, so everything revalidates together
+ * without waiting for the next polling tick.
  *
- * Shapes (MyRequest, PendingRequest, RequestDetail, …) espelham o que as rotas
- * /api/signature-requests* devolvem hoje — mantidos aqui como fonte única.
+ * Shapes (MyRequest, PendingRequest, RequestDetail, …) mirror what the
+ * /api/signature-requests* routes return today — kept here as the single source.
  */
 
 import {
@@ -20,7 +20,7 @@ import {
 } from "@tanstack/react-query";
 
 // ---------------------------------------------------------------------------
-// Tipos das respostas /api (fonte única — antes duplicados nas páginas).
+// Types for the /api responses (single source — previously duplicated across pages).
 // ---------------------------------------------------------------------------
 
 export interface RequiredSigner {
@@ -85,26 +85,26 @@ export interface RequestDetail {
 }
 
 // ---------------------------------------------------------------------------
-// Query keys — hierárquicas para invalidação por prefixo.
+// Query keys — hierarchical for prefix-based invalidation.
 // ---------------------------------------------------------------------------
 
 export const qk = {
-  /** Prefixo de tudo que é signature-request; invalida o fluxo inteiro. */
+  /** Prefix for everything signature-request related; invalidates the whole flow. */
   signatureRequests: ["signature-requests"] as const,
-  /** Lista "minhas" com filtro active|all. */
+  /** "Mine" list with active|all filter. */
   mine: (filter: "active" | "all") =>
     ["signature-requests", "mine", filter] as const,
-  /** Lista "aguardando minha assinatura". */
+  /** "Awaiting my signature" list. */
   pending: ["signature-requests", "pending"] as const,
-  /** Detalhe de uma request específica (usado por /sign/:id e /multisig/:id). */
+  /** Detail of a specific request (used by /sign/:id and /multisig/:id). */
   detail: (id: string) => ["signature-requests", "detail", id] as const,
   notifications: ["notifications"] as const,
   userWallets: ["user-wallets"] as const,
-  /** Metadados de uma tx do store (/api/tx/:id) — imutável, cacheável forever. */
+  /** Metadata of a tx from the store (/api/tx/:id) — immutable, cacheable forever. */
   txMeta: (txId: string) => ["tx-meta", txId] as const,
 } as const;
 
-// Estados terminais: uma request nesses status não muda mais → para o polling.
+// Terminal states: a request in these statuses no longer changes → stop polling.
 const TERMINAL = ["broadcast", "confirmed", "cancelled", "expired"];
 
 export function isTerminal(status: string | undefined): boolean {
@@ -112,8 +112,8 @@ export function isTerminal(status: string | undefined): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Fetchers — jogam em cima do fetch nativo, throw em não-ok para o Query
-// tratar como erro (em vez de engolir silenciosamente).
+// Fetchers — wrap the native fetch, throw on not-ok so Query treats it as an
+// error (instead of swallowing it silently).
 // ---------------------------------------------------------------------------
 
 async function getJson<T>(url: string): Promise<T> {
@@ -127,25 +127,25 @@ async function getJson<T>(url: string): Promise<T> {
 // ---------------------------------------------------------------------------
 
 /**
- * Detalhe de uma signature-request com polling terminal-aware: enquanto a
- * request não estiver em estado terminal, refaz a cada 5s (outros signatários
- * podem assinar em paralelo). Compartilhada por /sign/:id e /multisig/:id.
+ * Detail of a signature-request with terminal-aware polling: while the
+ * request isn't in a terminal state, refetches every 5s (other signers may
+ * sign in parallel). Shared by /sign/:id and /multisig/:id.
  *
- * `enabled` permite a página desligar a query (ex.: sem sessão) sem condicionar
- * a chamada do hook.
+ * `enabled` lets the page turn off the query (e.g. no session) without
+ * conditioning the hook call.
  */
 export function useRequestDetail(id: string, enabled = true) {
   return useQuery({
     queryKey: qk.detail(id),
     queryFn: () => getJson<RequestDetail>(`/api/signature-requests/${id}`),
     enabled,
-    // Polling só enquanto não-terminal. `query.state.data` é o último detalhe.
+    // Polling only while non-terminal. `query.state.data` is the latest detail.
     refetchInterval: (query) =>
       isTerminal(query.state.data?.status) ? false : 5_000,
   });
 }
 
-/** Lista "minhas solicitações" com filtro active|all. */
+/** "My requests" list with active|all filter. */
 export function useMyRequests(filter: "active" | "all", enabled = true) {
   const url =
     filter === "active"
@@ -159,7 +159,7 @@ export function useMyRequests(filter: "active" | "all", enabled = true) {
   });
 }
 
-/** Lista "aguardando minha assinatura". */
+/** "Awaiting my signature" list. */
 export function usePendingRequests(enabled = true) {
   return useQuery({
     queryKey: qk.pending,
@@ -192,8 +192,8 @@ export function useLinkedWallets(enabled = true) {
 }
 
 /**
- * Metadados de tx do store (/api/tx/:id). O txId é imutável → o dado nunca
- * muda; staleTime Infinity evita qualquer refetch. Retorna só `meta`.
+ * Tx metadata from the store (/api/tx/:id). txId is immutable → the data
+ * never changes; staleTime Infinity avoids any refetch. Returns only `meta`.
  */
 export function useTxMeta<TMeta>(txId: string | undefined) {
   return useQuery({
@@ -206,10 +206,10 @@ export function useTxMeta<TMeta>(txId: string | undefined) {
 }
 
 // ---------------------------------------------------------------------------
-// Invalidação — um lugar só, chamado pelas mutations após sucesso.
+// Invalidation — a single place, called by mutations after success.
 // ---------------------------------------------------------------------------
 
-/** Revalida o fluxo inteiro (listas + detalhe + notificações + carteiras). */
+/** Revalidates the whole flow (lists + detail + notifications + wallets). */
 export function invalidateSignatureFlow(client: QueryClient) {
   void client.invalidateQueries({ queryKey: qk.signatureRequests });
   void client.invalidateQueries({ queryKey: qk.notifications });
@@ -217,7 +217,7 @@ export function invalidateSignatureFlow(client: QueryClient) {
 }
 
 // ---------------------------------------------------------------------------
-// Mutations — cada uma invalida o que muda no sucesso. `variables` tipadas.
+// Mutations — each one invalidates what changes on success. Typed `variables`.
 // ---------------------------------------------------------------------------
 
 async function postJson(
@@ -233,7 +233,7 @@ async function postJson(
   return { ok: res.ok, status: res.status, data };
 }
 
-/** Registra assinatura em /sign/:id → invalida detalhe + listas (cross-page). */
+/** Registers a signature at /sign/:id → invalidates detail + lists (cross-page). */
 export function useApproveRequest(id: string) {
   const client = useQueryClient();
   return useMutation({

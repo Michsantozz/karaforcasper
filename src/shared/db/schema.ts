@@ -12,29 +12,31 @@ import {
 } from "drizzle-orm/pg-core";
 import { user } from "./auth-schema";
 
-// Tabelas do better-auth (user/session/account/verification). Geradas via CLI
-// (auth-schema.ts) e re-exportadas aqui para entrarem nas migrations + no client.
+// better-auth tables (user/session/account/verification). Generated via the
+// CLI (auth-schema.ts) and re-exported here so they're picked up by
+// migrations + the client.
 export * from "./auth-schema";
 
 /**
- * Mapeamento dedup_key → bot_id do Recall.ai.
+ * dedup_key → Recall.ai bot_id mapping.
  *
- * O Recall NÃO deduplica bots criados via Create Bot (só na Calendar Integration).
- * Esta tabela é a fonte de verdade do app: garante 1 bot por (escopo de) meeting.
- * dedup_key típico: `${meeting_start_time}-${meeting_url}` (um bot por meeting).
+ * Recall does NOT dedupe bots created via Create Bot (only in the Calendar
+ * Integration). This table is the app's source of truth: it guarantees 1 bot
+ * per meeting (scope). Typical dedup_key:
+ * `${meeting_start_time}-${meeting_url}` (one bot per meeting).
  */
 export const recallBots = pgTable(
   "recall_bots",
   {
-    /** Chave de deduplicação estável definida pelo app. PK. */
+    /** Stable dedup key defined by the app. PK. */
     dedupKey: text("dedup_key").primaryKey(),
-    /** ID do bot retornado pelo Recall. */
+    /** Bot ID returned by Recall. */
     botId: text("bot_id").notNull(),
-    /** URL da meeting (pode ser limpa pelo Recall dias após o join). */
+    /** Meeting URL (Recall may clear it days after the join). */
     meetingUrl: text("meeting_url").notNull(),
-    /** join_at ISO 8601, null para bots ad-hoc. */
+    /** join_at ISO 8601, null for ad-hoc bots. */
     joinAt: timestamp("join_at", { withTimezone: true }),
-    /** Metadata arbitrária do app (resourceId, threadId, etc.). */
+    /** Arbitrary app metadata (resourceId, threadId, etc.). */
     metadata: jsonb("metadata").$type<Record<string, unknown>>(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
@@ -47,29 +49,31 @@ export type RecallBotRow = typeof recallBots.$inferSelect;
 export type NewRecallBotRow = typeof recallBots.$inferInsert;
 
 /**
- * Mapeamento user → calendar do Recall.ai (Calendar V2, multi-usuário).
+ * User → Recall.ai calendar mapping (Calendar V2, multi-user).
  *
- * Cada usuário do app conecta a própria agenda (Google/Outlook). O Recall cria
- * um calendar por conexão e devolve um `id`. Esta tabela liga esse `id` ao user.
+ * Each app user connects their own calendar (Google/Outlook). Recall creates
+ * a calendar per connection and returns an `id`. This table links that `id`
+ * to the user.
  *
- * Dedup é por (platform, platformEmail): o Recall NÃO deduplica calendars na
- * criação. Antes de criar, consultamos por e-mail+plataforma e reconectamos
- * (PATCH) se já existir desconectado, em vez de criar duplicata.
+ * Dedup is by (platform, platformEmail): Recall does NOT dedupe calendars on
+ * creation. Before creating one, we look it up by email+platform and
+ * reconnect (PATCH) if it already exists disconnected, instead of creating a
+ * duplicate.
  */
 export const userCalendars = pgTable(
   "user_calendars",
   {
-    /** ID do calendar retornado pelo Recall (api/v2/calendars). PK. */
+    /** Calendar ID returned by Recall (api/v2/calendars). PK. */
     recallCalendarId: text("recall_calendar_id").primaryKey(),
-    /** ID do usuário no nosso sistema (dono da agenda). */
+    /** User ID in our system (calendar owner). */
     userId: text("user_id").notNull(),
-    /** Plataforma: "google_calendar" | "microsoft_outlook". */
+    /** Platform: "google_calendar" | "microsoft_outlook". */
     platform: text("platform").notNull(),
-    /** E-mail da conta autorizada (chave de dedup junto com platform). */
+    /** Authorized account email (dedup key together with platform). */
     platformEmail: text("platform_email"),
-    /** Último status conhecido do calendar (connecting/connected/disconnected). */
+    /** Last known calendar status (connecting/connected/disconnected). */
     status: text("status"),
-    /** Metadata arbitrária do app. */
+    /** Arbitrary app metadata. */
     metadata: jsonb("metadata").$type<Record<string, unknown>>(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
@@ -91,22 +95,24 @@ export type UserCalendarRow = typeof userCalendars.$inferSelect;
 export type NewUserCalendarRow = typeof userCalendars.$inferInsert;
 
 // ───────────────────────────────────────────────────────────────────────────
-// Multisig SaaS — coleta distribuída de assinaturas
+// Multisig SaaS — distributed signature collection
 //
-// Fluxo: o dono cria uma signature_request (a tx base + lista de signatários +
-// quórum). Cada signatário abre o link /sign/:id, assina pela própria carteira,
-// e a assinatura é persistida em signature_approvals (1 por signatário). Quando
-// o nº de approvals atinge o threshold, a request fica "ready" e pode ser
-// broadcast on-chain. notifications avisa in-app cada signatário que tem conta.
+// Flow: the owner creates a signature_request (the base tx + list of signers
+// + quorum). Each signer opens the /sign/:id link, signs with their own
+// wallet, and the signature is persisted in signature_approvals (1 per
+// signer). When the number of approvals reaches the threshold, the request
+// becomes "ready" and can be broadcast on-chain. notifications notifies
+// in-app each signer who has an account.
 //
-// Nota de enforcement: a rede Casper só honra N assinaturas se a conta pagadora
-// for multisig NATIVA (associated keys + weights, via multisig-setup.ts). Sem
-// isso, as approvals existem on-chain (demonstrável) mas só a do dono conta para
-// o threshold da rede. Esta camada coleta as assinaturas; o enforcement real
-// depende do setup nativo da conta — ver src/lib/casper/multisig-setup.ts.
+// Enforcement note: the Casper network only honors N signatures if the payer
+// account is NATIVELY multisig (associated keys + weights, via
+// multisig-setup.ts). Without that, the approvals exist on-chain
+// (demonstrable) but only the owner's counts toward the network threshold.
+// This layer collects the signatures; the real enforcement depends on the
+// account's native setup — see src/lib/casper/multisig-setup.ts.
 // ───────────────────────────────────────────────────────────────────────────
 
-/** Ciclo de vida de uma solicitação (enforced pelo banco via enum). */
+/** Lifecycle of a request (enforced by the database via enum). */
 export const signatureRequestStatusEnum = pgEnum("signature_request_status", [
   "pending",
   "ready",
@@ -116,7 +122,7 @@ export const signatureRequestStatusEnum = pgEnum("signature_request_status", [
   "cancelled",
 ]);
 
-/** Tipo de solicitação. */
+/** Request kind. */
 export const signatureRequestKindEnum = pgEnum("signature_request_kind", [
   "payment",
   "setup",
@@ -128,29 +134,29 @@ export type SignatureRequestKind =
   (typeof signatureRequestKindEnum.enumValues)[number];
 
 /**
- * Carteira(s) Casper vinculada(s) a um usuário do app.
+ * Casper wallet(s) linked to an app user.
  *
- * Permite resolver carteira → user (para notificar signatários que têm conta) e
- * montar o dashboard "aguardando minha assinatura" (match por publicKeyHex).
- * Idempotente por (userId, publicKeyHex): vincular a mesma carteira duas vezes
- * não duplica.
+ * Allows resolving wallet → user (to notify signers who have an account) and
+ * building the "awaiting my signature" dashboard (matched by publicKeyHex).
+ * Idempotent by (userId, publicKeyHex): linking the same wallet twice
+ * doesn't duplicate.
  */
 export const userWallets = pgTable(
   "user_wallets",
   {
     id: text("id").primaryKey(),
-    /** Dono da carteira (FK better-auth user). */
+    /** Wallet owner (FK better-auth user). */
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
-    /** Public key Casper (hex, normalizada lowercase). */
+    /** Casper public key (hex, normalized lowercase). */
     publicKeyHex: text("public_key_hex").notNull(),
-    /** Rótulo opcional definido pelo usuário ("cold wallet", etc.). */
+    /** Optional user-defined label ("cold wallet", etc.). */
     label: text("label"),
     /**
-     * Quando a posse da chave foi PROVADA (assinatura de nonce verificada).
-     * null = vínculo sem prova (não deve acontecer no fluxo novo; mantido
-     * nullable para compat). Só carteiras verificadas contam como signatário.
+     * When key possession was PROVEN (verified nonce signature). null = link
+     * without proof (shouldn't happen in the new flow; kept nullable for
+     * compat). Only verified wallets count as a signer.
      */
     verifiedAt: timestamp("verified_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -170,49 +176,58 @@ export const userWallets = pgTable(
 export type UserWalletRow = typeof userWallets.$inferSelect;
 export type NewUserWalletRow = typeof userWallets.$inferInsert;
 
-/** Um signatário exigido por uma signature_request. */
+/** A signer required by a signature_request. */
 export interface RequiredSigner {
   publicKeyHex: string;
   label?: string;
+  /**
+   * Optional e-mail supplied by the creator to invite an EXTERNAL signer — one
+   * who has no linked wallet, so wallet→user resolution can't find them. When
+   * present, the request-creation route e-mails the /sign link directly to this
+   * address. Signers with a linked account are reached via user resolution and
+   * don't need this. Stored in the jsonb column, so no migration is required.
+   */
+  email?: string;
 }
 
 /**
- * Uma solicitação multisig: a tx base + quem precisa assinar + o quórum + estado.
+ * A multisig request: the base tx + who needs to sign + the quorum + state.
  *
- * `transactionJson` é a tx serializada (mesmo formato do multisig.ts em memória),
- * persistida aqui em vez de trafegar pelo LLM/sessão. As approvals acumulam em
- * signature_approvals; ao broadcast, gravamos transactionHash.
+ * `transactionJson` is the serialized tx (same format as the in-memory
+ * multisig.ts), persisted here instead of traveling through the LLM/session.
+ * Approvals accumulate in signature_approvals; on broadcast, we record
+ * transactionHash.
  */
 export const signatureRequests = pgTable(
   "signature_requests",
   {
-    /** ID curto/uuid — também o slug do link /sign/:id. */
+    /** Short ID/uuid — also the /sign/:id link slug. */
     id: text("id").primaryKey(),
-    /** Quem criou (FK user). Só o criador pode broadcast/cancelar. */
+    /** Who created it (FK user). Only the creator can broadcast/cancel. */
     createdByUserId: text("created_by_user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
-    /** Tipo (enum). */
+    /** Kind (enum). */
     kind: signatureRequestKindEnum("kind").notNull(),
-    /** Descrição em linguagem natural ("Pagar 100 CSPR ao fornecedor X"). */
+    /** Natural-language description ("Pay 100 CSPR to supplier X"). */
     description: text("description"),
-    /** A tx base serializada (sem approvals completas). */
+    /** The serialized base tx (without completed approvals). */
     transactionJson: text("transaction_json").notNull(),
     chainName: text("chain_name").notNull(),
-    /** Signatários exigidos: [{ publicKeyHex, label? }]. */
+    /** Required signers: [{ publicKeyHex, label? }]. */
     requiredSigners: jsonb("required_signers")
       .$type<RequiredSigner[]>()
       .notNull(),
-    /** Quórum: nº de assinaturas necessárias para broadcast. */
+    /** Quorum: number of signatures required to broadcast. */
     threshold: integer("threshold").notNull(),
-    /** Ciclo de vida (enum). */
+    /** Lifecycle (enum). */
     status: signatureRequestStatusEnum("status").notNull().default("pending"),
     /**
-     * Optimistic-lock / contador de mutações de estado. Incrementa a cada
-     * transição. Permite CAS genérico em updates concorrentes.
+     * Optimistic-lock / state mutation counter. Increments on every
+     * transition. Enables generic CAS on concurrent updates.
      */
     version: integer("version").notNull().default(0),
-    /** Hash on-chain após broadcast. */
+    /** On-chain hash after broadcast. */
     transactionHash: text("transaction_hash"),
     expiresAt: timestamp("expires_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -224,11 +239,11 @@ export const signatureRequests = pgTable(
   },
   (table) => [
     index("signature_requests_creator_idx").on(table.createdByUserId),
-    // Índice parcial: só as requests ATIVAS (o grosso das queries de leitura).
+    // Partial index: only ACTIVE requests (the bulk of read queries).
     index("signature_requests_active_idx")
       .on(table.createdAt.desc())
       .where(sql`${table.status} in ('pending','ready')`),
-    // Quórum tem que ser >= 1 (enforced pelo banco).
+    // Quorum must be >= 1 (enforced by the database).
     check("signature_requests_threshold_check", sql`${table.threshold} >= 1`),
   ],
 );
@@ -237,11 +252,11 @@ export type SignatureRequestRow = typeof signatureRequests.$inferSelect;
 export type NewSignatureRequestRow = typeof signatureRequests.$inferInsert;
 
 /**
- * Uma assinatura coletada para uma signature_request (1 por signatário).
+ * A signature collected for a signature_request (1 per signer).
  *
- * unique (requestId, signerPublicKeyHex) garante idempotência: re-assinar não
- * duplica. signedByUserId é nullable (o signatário pode assinar via link sem ter
- * conta, identificado só pela carteira).
+ * unique (requestId, signerPublicKeyHex) guarantees idempotency: re-signing
+ * doesn't duplicate. signedByUserId is nullable (a signer can sign via link
+ * without an account, identified only by their wallet).
  */
 export const signatureApprovals = pgTable(
   "signature_approvals",
@@ -250,11 +265,11 @@ export const signatureApprovals = pgTable(
     requestId: text("request_id")
       .notNull()
       .references(() => signatureRequests.id, { onDelete: "cascade" }),
-    /** Public key que assinou (hex, normalizada). */
+    /** Public key that signed (hex, normalized). */
     signerPublicKeyHex: text("signer_public_key_hex").notNull(),
-    /** Assinatura crua hex retornada pela carteira. */
+    /** Raw hex signature returned by the wallet. */
     signatureHex: text("signature_hex").notNull(),
-    /** User que assinou, se autenticado (nullable — assinatura via link). */
+    /** User who signed, if authenticated (nullable — signature via link). */
     signedByUserId: text("signed_by_user_id").references(() => user.id, {
       onDelete: "set null",
     }),
@@ -275,20 +290,20 @@ export type SignatureApprovalRow = typeof signatureApprovals.$inferSelect;
 export type NewSignatureApprovalRow = typeof signatureApprovals.$inferInsert;
 
 /**
- * Notificação in-app. Criada ao abrir uma request (avisa cada signatário que tem
- * conta) e ao mudar de estado. Marcada lida via readAt.
+ * In-app notification. Created when a request is opened (notifies each
+ * signer who has an account) and on state changes. Marked read via readAt.
  */
 export const notifications = pgTable(
   "notifications",
   {
     id: text("id").primaryKey(),
-    /** Destinatário (FK user). */
+    /** Recipient (FK user). */
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
-    /** Tipo: "signature_requested" | "request_ready" | "broadcast" | ... */
+    /** Type: "signature_requested" | "request_ready" | "broadcast" | ... */
     type: text("type").notNull(),
-    /** Request relacionada, se houver. */
+    /** Related request, if any. */
     requestId: text("request_id").references(() => signatureRequests.id, {
       onDelete: "cascade",
     }),
@@ -300,7 +315,7 @@ export const notifications = pgTable(
   },
   (table) => [
     index("notifications_user_idx").on(table.userId),
-    // Índice parcial: só as NÃO lidas (o que o sininho consulta).
+    // Partial index: only UNREAD ones (what the bell queries).
     index("notifications_user_unread_idx")
       .on(table.userId)
       .where(sql`${table.readAt} is null`),
@@ -311,22 +326,23 @@ export type NotificationRow = typeof notifications.$inferSelect;
 export type NewNotificationRow = typeof notifications.$inferInsert;
 
 /**
- * Nonce de prova de posse de carteira (SIWE-style).
+ * Wallet proof-of-possession nonce (SIWE-style).
  *
- * Para vincular uma carteira, o usuário assina este nonce com a chave; o server
- * verifica a assinatura (PublicKey.verifySignature) antes de gravar o vínculo.
- * Nonce é de uso único e expira. Evita vincular pubkey alheia.
+ * To link a wallet, the user signs this nonce with the key; the server
+ * verifies the signature (PublicKey.verifySignature) before recording the
+ * link. The nonce is single-use and expires. Prevents linking someone else's
+ * pubkey.
  */
 export const walletLinkNonces = pgTable(
   "wallet_link_nonces",
   {
-    /** O nonce (string aleatória). PK. */
+    /** The nonce (random string). PK. */
     nonce: text("nonce").primaryKey(),
-    /** Usuário que pediu o nonce (FK). */
+    /** User who requested the nonce (FK). */
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
-    /** Consumido (após verificação bem-sucedida). */
+    /** Consumed (after successful verification). */
     consumedAt: timestamp("consumed_at", { withTimezone: true }),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -339,58 +355,60 @@ export const walletLinkNonces = pgTable(
 export type WalletLinkNonceRow = typeof walletLinkNonces.$inferSelect;
 
 // ───────────────────────────────────────────────────────────────────────────
-// Atas de reunião persistidas (meeting_records)
+// Persisted meeting minutes (meeting_records)
 //
-// O Recall limpa transcript/artefatos dias após a reunião, e gerar a ata custa
-// uma chamada de LLM. Persistir aqui torna a ata a fonte de verdade do app:
-//  - o webhook de bot enfileira o enrichment (durável, com retry via Inngest);
-//  - o enrichment grava aqui o resumo estruturado + o texto da transcrição;
-//  - a UI/tools leem daqui (cache), sem re-buscar do Recall nem re-pagar LLM;
-//  - o cron de reconciliação varre linhas presas em "pending"/"processing".
+// Recall clears the transcript/artifacts days after the meeting, and
+// generating the minutes costs an LLM call. Persisting here makes the
+// minutes the app's source of truth:
+//  - the bot webhook enqueues the enrichment (durable, with retry via Inngest);
+//  - the enrichment writes the structured summary + transcript text here;
+//  - the UI/tools read from here (cache), without re-fetching from Recall or
+//    re-paying for the LLM;
+//  - the reconciliation cron sweeps rows stuck in "pending"/"processing".
 // ───────────────────────────────────────────────────────────────────────────
 
-/** Ciclo de vida do enrichment de uma ata (enforced pelo banco via enum). */
+/** Lifecycle of a minutes' enrichment (enforced by the database via enum). */
 export const meetingRecordStatusEnum = pgEnum("meeting_record_status", [
-  "pending", // enfileirado, transcrição ainda não processada
-  "processing", // enrichment em execução
-  "done", // ata gerada e persistida
-  "failed", // falhou após os retries
+  "pending", // queued, transcript not yet processed
+  "processing", // enrichment running
+  "done", // minutes generated and persisted
+  "failed", // failed after retries
 ]);
 
 export const meetingRecords = pgTable(
   "meeting_records",
   {
-    /** botId do Recall — 1 ata por bot. PK. */
+    /** Recall botId — 1 minutes record per bot. PK. */
     botId: text("bot_id").primaryKey(),
-    /** Dono da reunião (para escopo/notificação). */
+    /** Meeting owner (for scoping/notification). */
     userId: text("user_id"),
-    /** URL da meeting (denormalizada para exibição). */
+    /** Meeting URL (denormalized for display). */
     meetingUrl: text("meeting_url"),
-    /** Estado do enrichment. */
+    /** Enrichment state. */
     status: meetingRecordStatusEnum("status").notNull().default("pending"),
-    /** Nº de tentativas de enrichment (para diagnóstico/backoff). */
+    /** Number of enrichment attempts (for diagnostics/backoff). */
     attempts: integer("attempts").notNull().default(0),
-    /** Última mensagem de erro, se failed. */
+    /** Last error message, if failed. */
     error: text("error"),
-    /** Texto "Participante: fala" da transcrição (cache; Recall expira). */
+    /** "Speaker: line" transcript text (cache; Recall expires it). */
     transcript: text("transcript"),
-    /** Resumo executivo gerado pelo LLM. */
+    /** Executive summary generated by the LLM. */
     summary: text("summary"),
-    /** Overview em prosa (parágrafo). */
+    /** Prose overview (paragraph). */
     overview: text("overview"),
-    /** Decisões: string[]. */
+    /** Decisions: string[]. */
     decisions: jsonb("decisions").$type<string[]>(),
     /** Action items: { task, owner|null }[]. */
     actionItems: jsonb("action_items").$type<
       Array<{ task: string; owner: string | null }>
     >(),
-    /** Tópicos principais: string[]. */
+    /** Main topics: string[]. */
     topics: jsonb("topics").$type<string[]>(),
-    /** Seções temáticas: { title, bullets[], startSeconds|null }[]. */
+    /** Thematic sections: { title, bullets[], startSeconds|null }[]. */
     sections: jsonb("sections").$type<
       Array<{ title: string; bullets: string[]; startSeconds: number | null }>
     >(),
-    /** Momentos-chave: { label, kind, atSeconds|null }[]. */
+    /** Key moments: { label, kind, atSeconds|null }[]. */
     moments: jsonb("moments").$type<
       Array<{
         label: string;
@@ -398,7 +416,7 @@ export const meetingRecords = pgTable(
         atSeconds: number | null;
       }>
     >(),
-    /** % de tempo de fala por participante: { name, share }[] (share 0..1). */
+    /** % speaking time per participant: { name, share }[] (share 0..1). */
     talkShares: jsonb("talk_shares").$type<
       Array<{ name: string; share: number }>
     >(),
@@ -419,32 +437,34 @@ export type MeetingRecordRow = typeof meetingRecords.$inferSelect;
 export type NewMeetingRecordRow = typeof meetingRecords.$inferInsert;
 
 // ───────────────────────────────────────────────────────────────────────────
-// Billing web3 — prepaid ledger + on-chain anchor
+// Web3 billing — prepaid ledger + on-chain anchor
 //
-// Modelo: o usuário DEPOSITA CSPR na conta do app (tx assinada pela carteira
-// dele, verificada on-chain pelo transactionHash). Cada reunião gravada gera um
-// débito de uso (minutos × preço). O saldo é a soma de créditos (depósitos)
-// menos débitos (uso) — mantido off-chain (rápido, sem gas por minuto).
+// Model: the user DEPOSITS CSPR into the app's account (tx signed by their
+// wallet, verified on-chain via transactionHash). Each recorded meeting
+// generates a usage debit (minutes × price). The balance is the sum of
+// credits (deposits) minus debits (usage) — kept off-chain (fast, no gas per
+// minute).
 //
-// Settle: um cron agrega o uso ainda não ancorado por usuário e NOTARIZA o batch
-// on-chain (hash do batch como transfer_id, mesmo motor de meeting-notary) —
-// prova imutável e auditável de quanto foi cobrado, sem mover fundos por minuto.
+// Settle: a cron aggregates not-yet-anchored usage per user and NOTARIZES the
+// batch on-chain (batch hash as transfer_id, same engine as meeting-notary) —
+// immutable, auditable proof of how much was charged, without moving funds
+// per minute.
 //
-// Valores monetários em MOTES (bigint como string via numeric) para não perder
-// precisão — 1 CSPR = 1e9 motes. Nunca usar float para dinheiro.
+// Monetary values in MOTES (bigint as string via numeric) to avoid losing
+// precision — 1 CSPR = 1e9 motes. Never use float for money.
 // ───────────────────────────────────────────────────────────────────────────
 
-/** Créditos: depósitos de CSPR do usuário, cada um lastreado por uma tx on-chain. */
+/** Credits: user CSPR deposits, each backed by an on-chain tx. */
 export const billingDeposits = pgTable(
   "billing_deposits",
   {
-    /** Hash da transação de depósito on-chain. PK (idempotência: 1 crédito/tx). */
+    /** On-chain deposit transaction hash. PK (idempotency: 1 credit/tx). */
     txHash: text("tx_hash").primaryKey(),
-    /** Usuário creditado. */
+    /** Credited user. */
     userId: text("user_id").notNull(),
-    /** Valor creditado, em motes (1 CSPR = 1e9). */
+    /** Credited amount, in motes (1 CSPR = 1e9). */
     amountMotes: text("amount_motes").notNull(),
-    /** Public key de origem do depósito (para auditoria). */
+    /** Deposit's source public key (for auditing). */
     fromPublicKey: text("from_public_key"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
@@ -456,19 +476,19 @@ export const billingDeposits = pgTable(
 export type BillingDepositRow = typeof billingDeposits.$inferSelect;
 export type NewBillingDepositRow = typeof billingDeposits.$inferInsert;
 
-/** Débitos: uso medido por reunião. 1 linha por bot (idempotente no metering). */
+/** Debits: usage measured per meeting. 1 row per bot (idempotent metering). */
 export const usageLedger = pgTable(
   "usage_ledger",
   {
-    /** botId da reunião cobrada. PK: 1 débito por reunião. */
+    /** botId of the charged meeting. PK: 1 debit per meeting. */
     botId: text("bot_id").primaryKey(),
-    /** Usuário cobrado. */
+    /** Charged user. */
     userId: text("user_id").notNull(),
-    /** Minutos gravados (arredondados p/ cima), base do custo. */
+    /** Recorded minutes (rounded up), basis for the cost. */
     minutes: integer("minutes").notNull(),
-    /** Custo em motes = minutes × preço/min. */
+    /** Cost in motes = minutes × price/min. */
     costMotes: text("cost_motes").notNull(),
-    /** Tx de settle que ancorou este uso on-chain (null = ainda não settled). */
+    /** Settle tx that anchored this usage on-chain (null = not yet settled). */
     settledTxHash: text("settled_tx_hash"),
     settledAt: timestamp("settled_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -477,7 +497,7 @@ export const usageLedger = pgTable(
   },
   (table) => [
     index("usage_ledger_user_idx").on(table.userId),
-    // Índice parcial: só os débitos ainda NÃO ancorados (o que o settle varre).
+    // Partial index: only debits NOT YET anchored (what settle sweeps).
     index("usage_ledger_unsettled_idx")
       .on(table.userId)
       .where(sql`${table.settledTxHash} is null`),

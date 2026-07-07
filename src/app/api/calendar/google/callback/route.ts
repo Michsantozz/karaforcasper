@@ -18,15 +18,15 @@ import { verifyOAuthState } from "@/server/recall/oauth-state";
 const PLATFORM = "google_calendar" as const;
 
 /**
- * Callback do OAuth do Google.
+ * Google OAuth callback.
  *
- * Passos:
- * 1. Verifica o `state` HMAC-assinado (verifyOAuthState) e extrai o userId dele
- *    — NUNCA confia no query param cru. Bloqueia account-linking forjado.
- * 2. Troca o `code` por refresh_token + e-mail da conta.
- * 3. Dedup por (platform, e-mail): se já existe calendar desconectado,
- *    reconecta (PATCH); senão cria um novo no Recall.
- * 4. Persiste o mapa user↔calendar no nosso DB.
+ * Steps:
+ * 1. Verifies the HMAC-signed `state` (verifyOAuthState) and extracts the userId
+ *    from it — NEVER trusts the raw query param. Blocks forged account-linking.
+ * 2. Exchanges the `code` for a refresh_token + account email.
+ * 3. Dedup by (platform, email): if a disconnected calendar already exists,
+ *    reconnects it (PATCH); otherwise creates a new one in Recall.
+ * 4. Persists the user↔calendar mapping in our DB.
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -44,7 +44,7 @@ export async function GET(req: Request) {
     );
   }
 
-  // O userId vem do state assinado e verificado — não do query param cru.
+  // userId comes from the signed and verified state — not the raw query param.
   let userId: string;
   try {
     userId = verifyOAuthState(state);
@@ -53,16 +53,16 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: reason }, { status: 403 });
   }
 
-  // webhook_url absoluto a partir da request (ou APP_URL se definido).
-  // O Recall BLOQUEIA (403 request_blocked) URLs localhost/privadas. Em dev,
-  // omitimos o webhook_url (o connect funciona; updates só via túnel público).
-  // Pra receber webhooks, aponte APP_URL pra uma URL https pública (ex: ngrok).
+  // Absolute webhook_url derived from the request (or APP_URL if set).
+  // Recall BLOCKS (403 request_blocked) localhost/private URLs. In dev,
+  // we omit webhook_url (connect still works; updates only via public tunnel).
+  // To receive webhooks, point APP_URL to a public https URL (e.g. ngrok).
   const appUrl = process.env.APP_URL ?? url.origin;
   const isLocal = /localhost|127\.0\.0\.1|0\.0\.0\.0/.test(appUrl);
   const webhookUrl = isLocal ? undefined : `${appUrl}/api/webhooks/recall`;
 
   try {
-    // 1. Google: code → tokens → e-mail
+    // 1. Google: code → tokens → email
     const tokens = await exchangeCode(code);
     const email = await fetchUserEmail(tokens.accessToken);
 
@@ -73,14 +73,14 @@ export async function GET(req: Request) {
       oauthEmail: email,
     };
 
-    // 2. Dedup por (platform, e-mail): reconecta se já existe (refresh do token),
-    // senão cria um novo. O Recall não deduplica calendars na criação.
+    // 2. Dedup by (platform, email): reconnect if one already exists (token
+    // refresh), otherwise create a new one. Recall doesn't dedup calendars on creation.
     const existing = await findCalendarByEmail(PLATFORM, email);
     const calendar = existing
       ? await reconnectCalendar(existing.recallCalendarId, oauth)
       : await createCalendar({ platform: PLATFORM, webhookUrl, ...oauth });
 
-    // 3. Persiste o vínculo
+    // 3. Persists the mapping
     await saveCalendarMapping({
       recallCalendarId: calendar.id,
       userId,
@@ -89,7 +89,7 @@ export async function GET(req: Request) {
       status: calendar.status,
     });
 
-    // Volta pra UI do agente de reuniões, sinalizando conexão.
+    // Redirects back to the meetings agent UI, signaling the connection.
     return NextResponse.redirect(`${appUrl}/meetings?connected=1`);
   } catch (err) {
     const message = err instanceof Error ? err.message : "unknown error";

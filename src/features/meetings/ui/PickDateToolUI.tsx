@@ -10,42 +10,42 @@ import { Calendar } from "@/shared/ui/calendar";
 import { cn } from "@/shared/lib/utils";
 
 /**
- * pick_date — frontend tool que renderiza um CALENDÁRIO + SELETOR DE HORÁRIO
- * clicável no chat, com DISPONIBILIDADE REAL da agenda do usuário.
+ * pick_date — frontend tool that renders a clickable CALENDAR + TIME PICKER
+ * in the chat, with the user's REAL calendar AVAILABILITY.
  *
- * Fluxo (human-in-the-loop, igual connect_wallet):
- *  1. O agente chama pick_date quando precisa que o usuário escolha dia/hora.
- *  2. `execute` roda no browser e devolve um estado "aguardando" — não bloqueia.
- *  3. `render` mostra o <Calendar> + coluna de horários. Ao escolher um dia,
- *     busca GET /api/calendar/availability?date&tz e marca cada horário como
- *     LIVRE (clicável) ou OCUPADO (visível, desabilitado, com o motivo). O
- *     usuário só consegue clicar em horário livre → addToolResult → volta ao
- *     agente.
- *  4. sendAutomaticallyWhen ligado: o agente CONTINUA o loop sozinho.
+ * Flow (human-in-the-loop, same as connect_wallet):
+ *  1. The agent calls pick_date when it needs the user to choose a day/time.
+ *  2. `execute` runs in the browser and returns a "waiting" state — it doesn't block.
+ *  3. `render` shows the <Calendar> + a column of time slots. When a day is
+ *     chosen, it fetches GET /api/calendar/availability?date&tz and marks each
+ *     slot as FREE (clickable) or BUSY (visible, disabled, with the reason).
+ *     The user can only click a free slot → addToolResult → back to the agent.
+ *  4. sendAutomaticallyWhen enabled: the agent CONTINUES the loop on its own.
  *
- * Diferença crítica vs. a versão anterior: os horários NÃO são mais uma grade
- * fixa que ignora a agenda. Antes o usuário clicava num horário já ocupado e o
- * create_calendar_event gerava conflito silencioso — agora a UI é honesta.
+ * Critical difference vs. the previous version: the time slots are NO LONGER
+ * a fixed grid that ignores the calendar. Before, the user could click an
+ * already-busy slot and create_calendar_event would create a silent conflict
+ * — now the UI is honest.
  */
 
 type PickDateArgs = {
-  /** Texto curto do que o usuário está escolhendo (ex.: "dia da reunião"). */
+  /** Short text describing what the user is choosing (e.g. "meeting day"). */
   prompt?: string;
-  /** ISO mínimo selecionável (default: hoje — não deixa escolher passado). */
+  /** Minimum selectable ISO date (default: today — no picking the past). */
   minIso?: string;
 };
 
 type PickDateResult = {
   picked: boolean;
-  /** Data escolhida (yyyy-mm-dd). */
+  /** Chosen date (yyyy-mm-dd). */
   dateIso: string | null;
-  /** Hora escolhida (HH:mm). */
+  /** Chosen time (HH:mm). */
   timeHm: string | null;
-  /** Data+hora combinadas em ISO local (yyyy-mm-ddTHH:mm). */
+  /** Combined date+time in local ISO (yyyy-mm-ddTHH:mm). */
   datetimeIso: string | null;
 };
 
-/** Um slot vindo da API de disponibilidade. */
+/** A slot coming from the availability API. */
 type Slot = {
   timeHm: string;
   datetimeIso: string;
@@ -60,7 +60,7 @@ type AvailabilityResponse = {
   noCalendar: boolean;
 };
 
-/** Fuso do navegador (ex.: "America/Sao_Paulo"), com fallback para BRT. */
+/** Browser timezone (e.g. "America/Sao_Paulo"), falling back to BRT. */
 function browserTz(): string {
   try {
     return Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Sao_Paulo";
@@ -70,14 +70,14 @@ function browserTz(): string {
 }
 
 function fmtDay(d: Date): string {
-  return d.toLocaleDateString("pt-BR", {
+  return d.toLocaleDateString("en-US", {
     weekday: "long",
     day: "2-digit",
     month: "long",
   });
 }
 
-/** ISO yyyy-mm-dd no fuso local (sem deslocar o dia por UTC). */
+/** ISO yyyy-mm-dd in the local timezone (doesn't shift the day via UTC). */
 function toLocalIso(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -86,9 +86,10 @@ function toLocalIso(d: Date): string {
 }
 
 /**
- * Registro de Promises pendentes por toolCallId. `execute` cria uma Promise que
- * NÃO resolve até o usuário clicar — assim a tool call só "completa" após a
- * escolha real, e o sendAutomaticallyWhen não reenvia um picked:false prematuro.
+ * Registry of pending Promises per toolCallId. `execute` creates a Promise that
+ * does NOT resolve until the user clicks — this way the tool call only
+ * "completes" after the actual choice, and sendAutomaticallyWhen doesn't
+ * resend a premature picked:false.
  */
 const pending = new Map<string, (r: PickDateResult) => void>();
 
@@ -105,17 +106,17 @@ export function PickDateCard({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | undefined>();
 
-  // Fuso do navegador, resolvido uma vez (inicializador lazy do useState).
+  // Browser timezone, resolved once (lazy useState initializer).
   const [tz] = useState(browserTz);
 
-  // Ao escolher um dia, busca a disponibilidade real dele. Cancela via flag se
-  // o usuário trocar de dia antes da resposta chegar (evita race de estado).
+  // When a day is chosen, fetch its real availability. Cancel via flag if the
+  // user switches days before the response arrives (avoids a state race).
   useEffect(() => {
     if (!day) return;
     let cancelled = false;
     const dateIso = toLocalIso(day);
-    // Resets fora do corpo síncrono do effect (regra react-hooks/set-state-in-effect):
-    // um microtask agenda o estado inicial de carregamento antes do fetch resolver.
+    // Resets outside the effect's synchronous body (react-hooks/set-state-in-effect
+    // rule): a microtask schedules the initial loading state before the fetch resolves.
     Promise.resolve().then(() => {
       if (cancelled) return;
       setLoading(true);
@@ -127,7 +128,7 @@ export function PickDateCard({
       `/api/calendar/availability?date=${dateIso}&tz=${encodeURIComponent(tz)}`,
     )
       .then(async (r) => {
-        if (!r.ok) throw new Error(`falha ${r.status}`);
+        if (!r.ok) throw new Error(`failed ${r.status}`);
         return (await r.json()) as AvailabilityResponse;
       })
       .then((data) => {
@@ -135,7 +136,7 @@ export function PickDateCard({
       })
       .catch((e: unknown) => {
         if (!cancelled)
-          setError(e instanceof Error ? e.message : "erro ao carregar horários");
+          setError(e instanceof Error ? e.message : "error loading time slots");
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -145,12 +146,12 @@ export function PickDateCard({
     };
   }, [day, tz]);
 
-  // Já respondido: mostra o que foi escolhido, some o seletor.
+  // Already answered: show what was chosen, hide the picker.
   const settled = result?.picked ? result : done;
   if (settled?.picked && settled.dateIso) {
     const d = new Date(`${settled.dateIso}T00:00:00`);
     return (
-      <ToolCard label="horário escolhido" tone="success" meta="ok">
+      <ToolCard label="time chosen" tone="success" meta="ok">
         <p className="font-mono text-sm capitalize">
           {fmtDay(d)}
           {settled.timeHm ? (
@@ -167,8 +168,8 @@ export function PickDateCard({
   const min = args.minIso ? new Date(`${args.minIso}T00:00:00`) : new Date();
   min.setHours(0, 0, 0, 0);
 
-  /** Só um slot LIVRE confirma. Resolve a Promise do execute → a tool call
-   *  completa e o agente continua o loop (sendAutomaticallyWhen). */
+  /** Only a FREE slot confirms. Resolves the execute Promise → the tool call
+   *  completes and the agent continues the loop (sendAutomaticallyWhen). */
   function confirm(nextDay: Date, slot: Slot) {
     if (slot.busy) return;
     const dateIso = toLocalIso(nextDay);
@@ -191,9 +192,9 @@ export function PickDateCard({
   const freeCount = slots.filter((s) => !s.busy).length;
 
   return (
-    <ToolCard label={args.prompt ?? "escolha dia e horário"}>
+    <ToolCard label={args.prompt ?? "choose day and time"}>
       <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
-        {/* Calendário */}
+        {/* Calendar */}
         <Calendar
           mode="single"
           selected={day}
@@ -202,7 +203,7 @@ export function PickDateCard({
           className="rounded-[5px] border bg-background p-2"
         />
 
-        {/* Coluna de horários (scrollável) */}
+        {/* Time slots column (scrollable) */}
         <div className="flex flex-col rounded-[5px] border bg-background">
           <div className="flex items-center justify-between gap-1.5 border-b px-2.5 py-2 font-mono text-[11px] text-muted-foreground">
             <span className="flex items-center gap-1.5">
@@ -213,24 +214,24 @@ export function PickDateCard({
               )}
               {day ? (
                 <span className="capitalize text-foreground">
-                  {day.toLocaleDateString("pt-BR", {
+                  {day.toLocaleDateString("en-US", {
                     weekday: "long",
                     day: "2-digit",
                   })}
                 </span>
               ) : (
-                "horário"
+                "time"
               )}
             </span>
             {day && !loading && !error ? (
-              <span>{freeCount} livre{freeCount === 1 ? "" : "s"}</span>
+              <span>{freeCount} free</span>
             ) : null}
           </div>
 
           <div className="grid max-h-[248px] grid-cols-2 gap-1.5 overflow-y-auto p-2 sm:w-[184px] sm:grid-cols-1">
             {!day ? (
               <p className="col-span-full px-1 py-2 text-center font-mono text-[11px] text-muted-foreground">
-                escolha um dia
+                choose a day
               </p>
             ) : error ? (
               <p className="col-span-full px-1 py-2 text-center font-mono text-[11px] text-(--thread-accent-secondary)">
@@ -238,11 +239,11 @@ export function PickDateCard({
               </p>
             ) : loading ? (
               <p className="col-span-full px-1 py-2 text-center font-mono text-[11px] text-muted-foreground">
-                carregando…
+                loading…
               </p>
             ) : freeCount === 0 ? (
               <p className="col-span-full px-1 py-2 text-center font-mono text-[11px] text-muted-foreground">
-                sem horários livres neste dia
+                no free time slots on this day
               </p>
             ) : (
               slots.map((slot) => {
@@ -252,7 +253,7 @@ export function PickDateCard({
                     key={slot.timeHm}
                     type="button"
                     disabled={slot.busy}
-                    title={slot.busy ? slot.reason ?? "ocupado" : undefined}
+                    title={slot.busy ? slot.reason ?? "busy" : undefined}
                     onClick={() => day && confirm(day, slot)}
                     className={cn(
                       "rounded-[5px] border px-2 py-1.5 text-center font-mono text-sm transition-colors",
@@ -275,12 +276,12 @@ export function PickDateCard({
       <div className="mt-1 flex items-center justify-between font-mono text-[11px] text-muted-foreground">
         <span>
           {!day
-            ? "escolha um dia, depois o horário"
+            ? "choose a day, then the time"
             : avail?.noCalendar
-              ? "agenda não conectada — horários não checados"
-              : "riscado = ocupado na sua agenda"}
+              ? "calendar not connected — time slots not checked"
+              : "strikethrough = busy on your calendar"}
         </span>
-        <span>fuso: {avail?.timeZone ?? tz}</span>
+        <span>timezone: {avail?.timeZone ?? tz}</span>
       </div>
     </ToolCard>
   );
@@ -290,7 +291,7 @@ export const PickDateTool = makeAssistantTool<PickDateArgs, PickDateResult>({
   toolName: "pick_date",
   type: "frontend",
   description:
-    "Mostra um CALENDÁRIO + seletor de HORÁRIO clicável no chat para o usuário escolher dia e hora. Os horários (09:00–18:00) refletem a AGENDA REAL do usuário: os ocupados aparecem riscados e não-clicáveis — o usuário só escolhe horário livre. Use SEMPRE que precisar de uma data/horário do usuário (ex.: quando enviar o bot, agendar reunião) em vez de pedir por texto. Retorna { picked, dateIso (yyyy-mm-dd), timeHm (HH:mm), datetimeIso (yyyy-mm-ddTHH:mm) } — o horário retornado JÁ está livre. Depois use datetimeIso (ex.: como join_at em send_bot_to_meeting / schedule_bot_for_event). minIso (opcional) define o dia mínimo selecionável.",
+    "Shows a clickable CALENDAR + TIME picker in the chat for the user to choose a day and time. Time slots (09:00–18:00) reflect the user's REAL CALENDAR: busy ones show struck through and non-clickable — the user can only choose a free slot. ALWAYS use this when you need a date/time from the user (e.g. when sending the bot, scheduling a meeting) instead of asking in text. Returns { picked, dateIso (yyyy-mm-dd), timeHm (HH:mm), datetimeIso (yyyy-mm-ddTHH:mm) } — the returned time slot is ALREADY free. Then use datetimeIso (e.g. as join_at in send_bot_to_meeting / schedule_bot_for_event). minIso (optional) sets the minimum selectable day.",
   parameters: {
     type: "object",
     properties: {
@@ -299,10 +300,10 @@ export const PickDateTool = makeAssistantTool<PickDateArgs, PickDateResult>({
     },
     additionalProperties: false,
   },
-  // execute NÃO resolve na hora: retorna uma Promise que só completa quando o
-  // usuário clica um horário LIVRE no render (confirm chama o resolver). Assim a
-  // tool call fica "pendente" e o sendAutomaticallyWhen não reenvia um
-  // picked:false prematuro (que fazia o agente dizer "você fechou sem escolher").
+  // execute does NOT resolve right away: it returns a Promise that only
+  // completes when the user clicks a FREE slot in render (confirm calls the
+  // resolver). This way the tool call stays "pending" and sendAutomaticallyWhen
+  // doesn't resend a premature picked:false (which made the agent say "you closed without choosing").
   execute: async (_args, { toolCallId }) =>
     new Promise<PickDateResult>((resolve) => {
       pending.set(toolCallId, resolve);
@@ -310,7 +311,7 @@ export const PickDateTool = makeAssistantTool<PickDateArgs, PickDateResult>({
   render: PickDateCard,
 });
 
-/* ── card visual (espelha o ToolCard dos outros ToolUIs) ──────────────── */
+/* ── visual card (mirrors the ToolCard from other ToolUIs) ──────────────── */
 
 type Tone = "default" | "success";
 

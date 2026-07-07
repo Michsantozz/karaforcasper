@@ -4,17 +4,19 @@ import { useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 /**
- * Provider global do TanStack Query. Envolve a árvore client no layout.
+ * Global TanStack Query provider. Wraps the client tree in the layout.
  *
- * O QueryClient é criado UMA vez por montagem via useState (não no módulo) para
- * não vazar cache entre requests no SSR do Next e não recriar a cada render.
+ * The QueryClient is created ONCE per mount via useState (not at module
+ * scope) so it doesn't leak cache between requests in Next's SSR and doesn't
+ * get recreated on every render.
  *
- * Defaults escolhidos para o fluxo multisig/on-chain:
- *  - staleTime 3s: as telas fazem polling curto (5–8s); manter um staleTime
- *    baixo evita refetch redundante entre re-renders sem atrasar a atualização.
- *  - refetchOnWindowFocus: revalida ao voltar à aba (signatários remotos podem
- *    ter assinado enquanto a aba estava em background).
- *  - retry 1: as rotas /api são locais; falha real é rede, não vale insistir.
+ * Defaults chosen for the multisig/on-chain flow:
+ *  - staleTime 3s: screens do short polling (5–8s); keeping a low staleTime
+ *    avoids redundant refetches between re-renders without delaying updates.
+ *  - refetchOnWindowFocus: revalidates when returning to the tab (remote
+ *    signers may have signed while the tab was in the background).
+ *  - retry 1: /api routes are local; a real failure is network-related, not
+ *    worth retrying further.
  */
 export function QueryProvider({ children }: { children: React.ReactNode }) {
   const [client] = useState(

@@ -18,25 +18,25 @@ import { getSession } from "@/features/auth/model/session";
 import { withUserScope } from "@/shared/db/rls";
 
 /**
- * Tools de Calendar V2 do agente de reuniões — escopadas ao usuário da sessão.
+ * Calendar V2 tools for the meeting agent — scoped to the session user.
  *
- * O dono da agenda é o usuário autenticado (better-auth). As tools resolvem a
- * sessão server-side e só operam sobre calendars que pertencem a ele — o agente
- * nunca recebe nem confia em um user_id vindo do chat.
+ * The calendar owner is the authenticated user (better-auth). The tools
+ * resolve the session server-side and only operate on calendars that belong
+ * to them — the agent never receives nor trusts a user_id coming from chat.
  */
 
-/** Resolve o user_id da sessão; lança se não autenticado (vira erro de tool). */
+/** Resolves the session's user_id; throws if not authenticated (becomes a tool error). */
 async function sessionUserId(): Promise<string> {
   const session = await getSession();
   if (!session?.user?.id) {
     throw new Error(
-      "Usuário não autenticado. Peça para fazer login antes de usar a agenda.",
+      "User not authenticated. Ask them to log in before using the calendar.",
     );
   }
   return session.user.id;
 }
 
-/** Garante que o calendar pertence ao usuário; lança caso contrário. */
+/** Ensures the calendar belongs to the user; throws otherwise. */
 async function assertOwnedCalendar(
   calendarId: string,
   userId: string,
@@ -45,7 +45,7 @@ async function assertOwnedCalendar(
     findCalendarById(calendarId),
   );
   if (!mapping || mapping.userId !== userId) {
-    throw new Error("Calendar não encontrado para este usuário.");
+    throw new Error("Calendar not found for this user.");
   }
 }
 
@@ -61,18 +61,18 @@ function projectEvent(e: CalendarEvent) {
   };
 }
 
-/** Lista os próximos eventos das agendas conectadas do usuário. */
+/** Lists the upcoming events from the user's connected calendars. */
 export const listCalendarEventsTool = createTool({
   id: "list_calendar_events",
   description:
-    "Lista os próximos eventos das agendas conectadas do usuário (Google/Outlook). " +
-    "Mostra horário, link da reunião e quantos bots já estão agendados para cada evento. " +
-    "Use para o usuário escolher em qual reunião colocar o bot.",
+    "Lists the upcoming events from the user's connected calendars (Google/Outlook). " +
+    "Shows the time, the meeting link, and how many bots are already scheduled for each event. " +
+    "Use it so the user can choose which meeting to put the bot on.",
   inputSchema: z.object({
     calendarId: z
       .string()
       .optional()
-      .describe("Restringe a um calendar específico. Omita para todos."),
+      .describe("Restricts to a specific calendar. Omit for all."),
   }),
   outputSchema: z.object({
     count: z.number(),
@@ -100,8 +100,8 @@ export const listCalendarEventsTool = createTool({
       calendarIds = mappings.map((m) => m.recallCalendarId);
     }
 
-    // Janela: de agora até +30 dias. start_time__lte evita listar eventos
-    // muito distantes (recorrências longe no futuro).
+    // Window: from now until +30 days. start_time__lte avoids listing events
+    // too far out (recurrences far in the future).
     const now = new Date();
     const horizon = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
@@ -128,21 +128,21 @@ export const listCalendarEventsTool = createTool({
 });
 
 /**
- * Agenda (ou atualiza) um bot para um evento da agenda. meeting_url e join_at
- * são preenchidos automaticamente pelo Recall a partir do evento.
+ * Schedules (or updates) a bot for a calendar event. meeting_url and join_at
+ * are filled in automatically by Recall from the event.
  */
 export const scheduleBotForEventTool = createTool({
   id: "schedule_bot_for_event",
   description:
-    "Agenda um bot do Recall.ai para entrar automaticamente em um evento da agenda do usuário. " +
-    "O link e o horário vêm do próprio evento. Chamar de novo no mesmo evento atualiza o bot. " +
-    "O bot entra sem gravar; o usuário pode pedir para começar a gravar depois.",
+    "Schedules a Recall.ai bot to automatically join a user's calendar event. " +
+    "The link and time come from the event itself. Calling it again on the same event updates the bot. " +
+    "The bot joins without recording; the user can ask it to start recording later.",
   inputSchema: z.object({
-    eventId: z.string().describe("ID do evento da agenda (de list_calendar_events)"),
+    eventId: z.string().describe("Calendar event ID (from list_calendar_events)"),
     botName: z
       .string()
       .optional()
-      .describe('Nome exibido na call. Default do Recall: "Meeting Notetaker".'),
+      .describe('Name shown in the call. Recall default: "Meeting Notetaker".'),
   }),
   outputSchema: z.object({
     ok: z.boolean(),
@@ -152,7 +152,7 @@ export const scheduleBotForEventTool = createTool({
   execute: async (input) => {
     const userId = await sessionUserId();
 
-    // Confirma posse: busca o evento e valida que o calendar dele é do usuário.
+    // Confirms ownership: fetches the event and validates its calendar belongs to the user.
     const event = await recallFetch<CalendarEvent>({
       method: "GET",
       path: `v2/calendar-events/${input.eventId}/`,
@@ -178,14 +178,14 @@ export const scheduleBotForEventTool = createTool({
   },
 });
 
-/** Remove o bot agendado de um evento da agenda. */
+/** Removes the scheduled bot from a calendar event. */
 export const removeBotFromEventTool = createTool({
   id: "remove_bot_from_event",
   description:
-    "Remove o bot agendado de um evento da agenda do usuário (desagenda). " +
-    "Use quando o usuário não quiser mais gravar aquela reunião.",
+    "Removes the scheduled bot from a user's calendar event (unschedules it). " +
+    "Use it when the user no longer wants to record that meeting.",
   inputSchema: z.object({
-    eventId: z.string().describe("ID do evento da agenda"),
+    eventId: z.string().describe("Calendar event ID"),
   }),
   outputSchema: z.object({ ok: z.boolean(), eventId: z.string() }),
   execute: async (input) => {
@@ -206,44 +206,44 @@ export const removeBotFromEventTool = createTool({
 });
 
 /**
- * Cria um evento no Google Calendar do usuário, com link do Meet por padrão, e
- * opcionalmente já envia um bot de gravação para esse link.
+ * Creates an event on the user's Google Calendar, with a Meet link by
+ * default, and optionally sends a recording bot to that link right away.
  *
- * O access token vem do Recall (que gerencia o refresh do calendar conectado),
- * então não guardamos credenciais do Google. Requer o scope calendar.events —
- * se a agenda foi conectada com o scope antigo (readonly), o usuário precisa
- * reconectar para conceder permissão de escrita.
+ * The access token comes from Recall (which manages refreshing the connected
+ * calendar), so we don't store Google credentials. Requires the
+ * calendar.events scope — if the calendar was connected with the old scope
+ * (readonly), the user needs to reconnect to grant write permission.
  */
 export const createCalendarEventTool = createTool({
   id: "create_calendar_event",
   description:
-    "Cria uma reunião no Google Calendar do usuário (gera link do Google Meet por padrão) e, " +
-    "se pedido, já envia um bot de gravação para a reunião. Requer agenda Google conectada com permissão de escrita. " +
-    "Datas em ISO 8601 com fuso (ex: 2026-06-25T10:00:00-03:00).",
+    "Creates a meeting on the user's Google Calendar (generates a Google Meet link by default) and, " +
+    "if requested, sends a recording bot to the meeting right away. Requires a Google calendar connected with write permission. " +
+    "Dates in ISO 8601 with timezone (e.g. 2026-06-25T10:00:00-03:00).",
   inputSchema: z.object({
-    summary: z.string().describe("Título da reunião"),
+    summary: z.string().describe("Meeting title"),
     startIso: z
       .string()
-      .describe("Início em ISO 8601 com offset de fuso"),
-    endIso: z.string().describe("Fim em ISO 8601 com offset de fuso"),
+      .describe("Start time in ISO 8601 with timezone offset"),
+    endIso: z.string().describe("End time in ISO 8601 with timezone offset"),
     timeZone: z
       .string()
       .optional()
-      .describe('IANA tz, ex: "America/Sao_Paulo". Opcional se o ISO já tem offset.'),
-    description: z.string().optional().describe("Descrição/pauta"),
+      .describe('IANA tz, e.g. "America/Sao_Paulo". Optional if the ISO already has an offset.'),
+    description: z.string().optional().describe("Description/agenda"),
     attendees: z
       .array(z.string())
       .optional()
-      .describe("E-mails dos convidados"),
+      .describe("Attendee emails"),
     withMeet: z
       .boolean()
       .optional()
-      .describe("Gerar link do Google Meet. Default: true."),
+      .describe("Generate a Google Meet link. Default: true."),
     sendBot: z
       .boolean()
       .optional()
-      .describe("Se true, já envia um bot de gravação para o link do Meet criado."),
-    botName: z.string().optional().describe("Nome do bot na call, se sendBot."),
+      .describe("If true, sends a recording bot to the created Meet link right away."),
+    botName: z.string().optional().describe("Bot name in the call, if sendBot."),
   }),
   outputSchema: z.object({
     ok: z.boolean(),
@@ -255,12 +255,12 @@ export const createCalendarEventTool = createTool({
   execute: async (input) => {
     const userId = await sessionUserId();
 
-    // Resolve um calendar Google conectado do usuário para obter o access token.
+    // Resolves a connected Google calendar for the user to get the access token.
     const mappings = await withUserScope(userId, () => listCalendarsByUser(userId));
     const google = mappings.find((m) => m.platform === "google_calendar");
     if (!google) {
       throw new Error(
-        "Nenhuma agenda Google conectada. Peça para o usuário conectar a agenda.",
+        "No Google calendar connected. Ask the user to connect their calendar.",
       );
     }
 
@@ -277,7 +277,7 @@ export const createCalendarEventTool = createTool({
       withMeet: input.withMeet ?? true,
     });
 
-    // Opcional: já manda um bot ad-hoc para o link do Meet recém-criado.
+    // Optional: already sends an ad-hoc bot to the newly created Meet link.
     let botId: string | null = null;
     if (input.sendBot && event.meetingUrl) {
       const bot = await recallFetch<{ id: string }>({
@@ -291,8 +291,8 @@ export const createCalendarEventTool = createTool({
       });
       botId = bot.id;
 
-      // Persiste o bot com o dono (user_id) para o webhook de bot saber quem
-      // notificar quando a ata ficar pronta (transcript.done). Idempotente.
+      // Persists the bot with its owner (user_id) so the bot webhook knows who
+      // to notify when the minutes are ready (transcript.done). Idempotent.
       await saveBotMapping({
         dedupKey: defaultDedupKey(event.meetingUrl),
         botId: bot.id,
@@ -312,24 +312,24 @@ export const createCalendarEventTool = createTool({
 });
 
 /**
- * Disponibilidade de um dia: a grade de horário comercial já classificada
- * (livre/ocupado) contra a agenda real do usuário. Espelha o que o pick_date
- * mostra no chat — útil quando o agente quer SUGERIR um horário livre em texto
- * (ex.: "amanhã você tem 09h, 11h e 15h livres") sem abrir o seletor.
+ * Availability for a day: the business-hours grid already classified
+ * (free/busy) against the user's real calendar. Mirrors what pick_date
+ * shows in the chat — useful when the agent wants to SUGGEST a free time in
+ * text (e.g. "tomorrow you have 9am, 11am and 3pm free") without opening the picker.
  */
 export const getFreeSlotsTool = createTool({
   id: "get_free_slots",
   description:
-    "Retorna os horários LIVRES e OCUPADOS de um dia, cruzando o horário comercial (09:00–18:00) " +
-    "com os eventos da agenda conectada do usuário. Use para sugerir horários livres em texto ou " +
-    "para checar se um horário específico está disponível antes de create_calendar_event. " +
-    "Se o usuário não tem agenda conectada, todos os horários (futuros) voltam como livres.",
+    "Returns the FREE and BUSY time slots for a day, cross-referencing business hours (09:00-18:00) " +
+    "with the user's connected calendar events. Use it to suggest free times in text or " +
+    "to check whether a specific time is available before create_calendar_event. " +
+    "If the user has no calendar connected, all (future) time slots come back as free.",
   inputSchema: z.object({
-    dateIso: z.string().describe("Dia a consultar (yyyy-mm-dd)"),
+    dateIso: z.string().describe("Day to query (yyyy-mm-dd)"),
     timeZone: z
       .string()
       .optional()
-      .describe('IANA tz do usuário, ex: "America/Sao_Paulo" (default). BRT.'),
+      .describe('User\'s IANA tz, e.g. "America/Sao_Paulo" (default). BRT.'),
   }),
   outputSchema: z.object({
     dateIso: z.string(),
@@ -363,23 +363,23 @@ export const getFreeSlotsTool = createTool({
 });
 
 /**
- * Liga/desliga a gravação AUTOMÁTICA de uma agenda (opt-in). Quando ligada, o
- * app agenda bots sozinho nos próximos eventos com link de reunião — via webhook
- * de sync e um cron de varredura. É consentimento explícito do usuário: sem isso
- * o app nunca grava reuniões automaticamente.
+ * Turns AUTOMATIC recording on/off for a calendar (opt-in). When on, the app
+ * schedules bots on its own for upcoming events with a meeting link — via a
+ * sync webhook and a sweep cron. This is explicit user consent: without it
+ * the app never records meetings automatically.
  */
 export const setCalendarAutoRecordTool = createTool({
   id: "set_calendar_auto_record",
   description:
-    "Liga ou desliga a gravação automática de uma agenda conectada do usuário. " +
-    "Quando ligada, o app envia bots sozinho para os próximos eventos com link de reunião. " +
-    "Use quando o usuário pedir para 'gravar todas as reuniões' de uma agenda, ou parar.",
+    "Turns automatic recording on or off for a user's connected calendar. " +
+    "When on, the app sends bots on its own to upcoming events with a meeting link. " +
+    "Use it when the user asks to 'record all meetings' on a calendar, or to stop.",
   inputSchema: z.object({
     calendarId: z
       .string()
       .optional()
-      .describe("Calendar a configurar. Omita para aplicar a todas as agendas do usuário."),
-    enabled: z.boolean().describe("true = liga a gravação automática; false = desliga."),
+      .describe("Calendar to configure. Omit to apply to all of the user's calendars."),
+    enabled: z.boolean().describe("true = turns on automatic recording; false = turns it off."),
   }),
   outputSchema: z.object({
     ok: z.boolean(),

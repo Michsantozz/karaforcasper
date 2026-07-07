@@ -6,13 +6,13 @@ import { getAgentPublicKeyHex } from "@/server/casper/client";
 import { withUserScope } from "@/shared/db/rls";
 
 /**
- * Billing do usuário autenticado.
+ * Billing for the authenticated user.
  *
- * GET  → saldo atual + endereço da conta do app (para onde depositar).
- * POST → { txHash } confirma um depósito on-chain e credita o ledger.
+ * GET  → current balance + app account address (where to deposit).
+ * POST → { txHash } confirms an on-chain deposit and credits the ledger.
  *
- * O crédito é idempotente por txHash e só confia no que está on-chain (valor e
- * destino são lidos do nó, não do corpo da requisição).
+ * The credit is idempotent by txHash and only trusts what's on-chain (amount
+ * and destination are read from the node, not from the request body).
  */
 export async function GET() {
   const session = await getSession();
@@ -30,7 +30,7 @@ export async function GET() {
   return NextResponse.json({
     balanceCspr: cspr,
     balanceMotes: motes.toString(),
-    // Endereço da conta do app: o usuário transfere CSPR para cá para creditar.
+    // App account address: the user transfers CSPR here to get credited.
     depositAddress,
   });
 }

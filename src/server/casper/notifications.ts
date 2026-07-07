@@ -5,11 +5,11 @@ import { db } from "@/shared/db";
 import { notifications, type NotificationRow } from "@/shared/db/schema";
 
 /**
- * Notificações in-app do fluxo multisig.
+ * In-app notifications for the multisig flow.
  *
- * Criadas ao abrir uma request (avisa cada signatário que tem conta) e ao mudar
- * de estado (ready/broadcast). Não há transporte externo (email) por ora — só
- * in-app, lido pelo sininho do dashboard /multisig.
+ * Created when a request is opened (notifies each signer who has an account)
+ * and when its state changes (ready/broadcast). No external transport (email)
+ * for now — just in-app, read via the /multisig dashboard bell icon.
  */
 
 export type NotificationType =
@@ -17,10 +17,10 @@ export type NotificationType =
   | "request_ready"
   | "request_broadcast"
   | "request_cancelled"
-  // Ata da reunião gerada automaticamente após o fim da call (webhook de bot).
+  // Meeting minutes generated automatically after the call ends (bot webhook).
   | "meeting_summary_ready";
 
-/** Cria uma notificação para um usuário. */
+/** Creates a notification for a user. */
 export async function createNotification(input: {
   userId: string;
   type: NotificationType;
@@ -37,8 +37,8 @@ export async function createNotification(input: {
 }
 
 /**
- * Cria a mesma notificação para vários usuários de uma vez (ex.: avisar todos os
- * signatários que têm conta ao abrir uma request). Ignora lista vazia.
+ * Creates the same notification for several users at once (e.g.: notifying
+ * all signers who have an account when a request is opened). Ignores an empty list.
  */
 export async function createNotificationsForUsers(input: {
   userIds: string[];
@@ -60,7 +60,7 @@ export async function createNotificationsForUsers(input: {
   );
 }
 
-/** Notificações de um usuário, mais recentes primeiro. */
+/** A user's notifications, most recent first. */
 export async function listNotifications(
   userId: string,
   opts?: { unreadOnly?: boolean; limit?: number },
@@ -78,8 +78,8 @@ export async function listNotifications(
 }
 
 /**
- * Marca uma notificação como lida. Restrito ao dono (userId) para um usuário não
- * conseguir marcar a notificação de outro.
+ * Marks a notification as read. Restricted to the owner (userId) so a user
+ * can't mark another user's notification.
  */
 export async function markNotificationRead(
   notificationId: string,
@@ -96,7 +96,7 @@ export async function markNotificationRead(
     );
 }
 
-/** Marca todas as notificações não lidas de um usuário como lidas. */
+/** Marks all of a user's unread notifications as read. */
 export async function markAllNotificationsRead(userId: string): Promise<void> {
   await db
     .update(notifications)

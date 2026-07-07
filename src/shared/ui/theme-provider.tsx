@@ -4,9 +4,10 @@ import { ThemeProvider as NextThemesProvider } from "next-themes";
 import type { ComponentProps } from "react";
 
 /**
- * Wrapper do next-themes. Aplica/remove a classe `dark` no <html> conforme o
- * tema escolhido (persistido em localStorage). Antes o `dark` era cravado no
- * layout; agora o tema é alternável pela UI (ver ThemeToggle no AppShell).
+ * next-themes wrapper. Applies/removes the `dark` class on <html> according
+ * to the chosen theme (persisted in localStorage). Previously `dark` was
+ * hardcoded in the layout; now the theme is toggleable from the UI (see
+ * ThemeToggle in AppShell).
  */
 export function ThemeProvider({
   children,

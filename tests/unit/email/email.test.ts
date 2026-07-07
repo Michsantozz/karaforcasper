@@ -134,7 +134,7 @@ describe("templates transacionais", () => {
     const { emailMagicLink } = await import("@/server/email");
     await emailMagicLink({ to: "a@b.com", url: "https://link/magic?token=abc" });
     const call = send.mock.calls[0][0];
-    expect(call.subject).toMatch(/link de acesso/i);
+    expect(call.subject).toMatch(/access link/i);
     expect(call.html).toContain("https://link/magic?token=abc");
   });
 
@@ -143,7 +143,7 @@ describe("templates transacionais", () => {
     const { emailResetPassword } = await import("@/server/email");
     await emailResetPassword({ to: "a@b.com", url: "https://link/reset?t=1" });
     const call = send.mock.calls[0][0];
-    expect(call.subject).toMatch(/redefinir senha/i);
+    expect(call.subject).toMatch(/reset password/i);
     expect(call.html).toContain("https://link/reset?t=1");
   });
 
@@ -177,5 +177,40 @@ describe("templates transacionais", () => {
     expect(call.to).toBe("signer@x.com");
     expect(call.html).toContain("https://app.example.com/sign/req-42");
     expect(call.html).toContain("Pagar fornecedor");
+  });
+
+  it("emailSignatureRequested: sem e-mail do usuário resolvido, não envia", async () => {
+    limit.mockResolvedValue([]);
+    const { emailSignatureRequested } = await import("@/server/email");
+    await emailSignatureRequested({ userId: "ghost", requestId: "req-1" });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("emailExternalSignatureRequested: manda para o e-mail direto (sem resolver userId)", async () => {
+    send.mockResolvedValue({ id: "e" });
+    const { emailExternalSignatureRequested } = await import("@/server/email");
+    await emailExternalSignatureRequested({
+      to: "externo@fora.com",
+      requestId: "req-99",
+      description: "Pagar consultor",
+    });
+    const call = send.mock.calls[0][0];
+    // Endereça direto ao e-mail informado; não passa por userEmailById (nenhuma
+    // query de db resolvida neste teste — limit não é mockado com linha).
+    expect(call.to).toBe("externo@fora.com");
+    expect(call.html).toContain("https://app.example.com/sign/req-99");
+    expect(call.html).toContain("Pagar consultor");
+  });
+
+  it("emailExternalSignatureRequested: funciona sem descrição", async () => {
+    send.mockResolvedValue({ id: "e" });
+    const { emailExternalSignatureRequested } = await import("@/server/email");
+    await emailExternalSignatureRequested({
+      to: "externo@fora.com",
+      requestId: "req-100",
+    });
+    const call = send.mock.calls[0][0];
+    expect(call.to).toBe("externo@fora.com");
+    expect(call.html).toContain("https://app.example.com/sign/req-100");
   });
 });

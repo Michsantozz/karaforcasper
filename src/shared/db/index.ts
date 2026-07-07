@@ -4,10 +4,10 @@ import { requireEnv } from "@/mastra/env";
 import * as schema from "./schema";
 
 /**
- * Cliente Drizzle (node-postgres) compartilhado.
+ * Shared Drizzle client (node-postgres).
  *
- * Pool único reutilizado entre invocações (evita esgotar conexões em serverless
- * e em hot-reload do dev). Conexão via DATABASE_URL.
+ * Single pool reused across invocations (avoids exhausting connections in
+ * serverless and dev hot-reload). Connection via DATABASE_URL.
  */
 
 declare global {
@@ -23,10 +23,11 @@ function getPool(): Pool {
   return globalThis.__recallPgPool;
 }
 
-// Instância drizzle criada só no primeiro uso. Se `db` fosse inicializado no
-// top-level (`drizzle(getPool())`), `requireEnv("DATABASE_URL")` rodaria já no
-// import — e o `next build` coleta page data importando as rotas, quebrando o
-// build sem DATABASE_URL. O Proxy adia a conexão pro runtime, quando a env existe.
+// Drizzle instance created only on first use. If `db` were initialized at the
+// top level (`drizzle(getPool())`), `requireEnv("DATABASE_URL")` would run
+// already at import time — and `next build` collects page data by importing
+// the routes, breaking the build without DATABASE_URL. The Proxy defers the
+// connection to runtime, when the env exists.
 let dbInstance: ReturnType<typeof drizzle<typeof schema>> | null = null;
 function getDb() {
   if (!dbInstance) {

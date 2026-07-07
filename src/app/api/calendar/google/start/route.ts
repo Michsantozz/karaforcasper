@@ -4,11 +4,11 @@ import { signOAuthState } from "@/server/recall/oauth-state";
 import { getSession } from "@/features/auth/model/session";
 
 /**
- * Inicia o OAuth do Google (conexão de agenda): redireciona ao consent screen.
+ * Starts the Google OAuth flow (calendar connection): redirects to the consent screen.
  *
- * O dono da agenda é o usuário autenticado (sessão better-auth), não um query
- * param. O user_id vai no `state` HMAC-assinado (signOAuthState) e é verificado
- * no callback antes de qualquer gravação — bloqueia account-linking forjado.
+ * The calendar owner is the authenticated user (better-auth session), not a
+ * query param. The user_id goes in the HMAC-signed `state` (signOAuthState) and
+ * is verified in the callback before any write — blocks forged account-linking.
  */
 export async function GET() {
   const session = await getSession();

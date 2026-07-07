@@ -6,21 +6,21 @@ import { hasBalanceForMinutes } from "@/server/casper/billing";
 import { withSystemScope, withUserScope } from "@/shared/db/rls";
 
 /**
- * Auto-scheduling de bots por agenda (opt-in).
+ * Auto-scheduling of bots per calendar (opt-in).
  *
- * Para cada calendar com gravação automática ligada, agenda um bot do Recall nos
- * próximos eventos que têm meeting_url. Idempotente: o Recall deduplica pela
- * deduplication_key por evento, então rodar de novo não cria bot duplicado.
+ * For each calendar with auto-record enabled, schedules a Recall bot on the
+ * upcoming events that have a meeting_url. Idempotent: Recall deduplicates by
+ * deduplication_key per event, so running it again doesn't create a duplicate bot.
  *
- * Disparado por dois caminhos:
- *  - o webhook calendar.sync_events (reação a mudança de agenda);
- *  - o cron de varredura periódica (rede de segurança se o webhook falhar).
+ * Triggered by two paths:
+ *  - the calendar.sync_events webhook (reacts to calendar changes);
+ *  - the periodic sweep cron (safety net if the webhook fails).
  */
 
-/** Janela à frente para agendar (min). Eventos além disso ficam para depois. */
+/** Look-ahead window to schedule (min). Events beyond this are left for later. */
 const HORIZON_MINUTES = Number(process.env.AUTO_SCHEDULE_HORIZON_MINUTES ?? 60);
 
-/** Estimativa de duração p/ o gate de saldo (o custo real é medido depois). */
+/** Duration estimate for the balance gate (actual cost is measured later). */
 const ESTIMATED_MINUTES = Number(process.env.BILLING_ESTIMATED_MINUTES ?? 30);
 
 export interface AutoScheduleResult {
@@ -31,9 +31,9 @@ export interface AutoScheduleResult {
 }
 
 /**
- * Agenda bots para os eventos próximos (com meeting_url) de UM calendar. Recebe
- * o dono para o gate de saldo e a deduplication_key. Não abre escopo de banco em
- * volta da chamada REST/gate: cada um cuida do próprio.
+ * Schedules bots for the upcoming events (with meeting_url) of ONE calendar.
+ * Takes the owner for the balance gate and the deduplication_key. Doesn't open
+ * a db scope around the REST call/gate: each one handles its own.
  */
 export async function autoScheduleForCalendar(input: {
   calendarId: string;
@@ -58,11 +58,11 @@ export async function autoScheduleForCalendar(input: {
       skippedNoUrl++;
       continue;
     }
-    // Já tem bot agendado neste evento? O Recall dedup por key, mas evitamos a
-    // chamada quando o próprio evento já reporta bots.
+    // Already has a bot scheduled on this event? Recall dedups by key, but we
+    // avoid the call when the event itself already reports bots.
     if ((event.bots?.length ?? 0) > 0) continue;
 
-    // Gate de saldo por dono (leitura tenant, sob escopo do usuário).
+    // Balance gate per owner (tenant read, under user scope).
     const ok = await withUserScope(input.userId, () =>
       hasBalanceForMinutes(input.userId, ESTIMATED_MINUTES),
     );
@@ -93,9 +93,9 @@ export async function autoScheduleForCalendar(input: {
 }
 
 /**
- * Percorre todos os calendars com auto-record ligado e agenda bots. Chamado pelo
- * cron. Lê a lista sob system scope (cruza usuários); cada calendar agenda com o
- * próprio dono.
+ * Walks all calendars with auto-record enabled and schedules bots. Called by
+ * the cron. Reads the list under system scope (crosses users); each calendar
+ * schedules with its own owner.
  */
 export async function autoScheduleAll(): Promise<{
   calendars: number;

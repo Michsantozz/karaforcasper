@@ -5,13 +5,14 @@ import {
 } from "@/server/casper/signature-request";
 
 /**
- * Detalhe público de uma solicitação, para a página do link /sign/:id.
+ * Public detail of a request, for the /sign/:id link page.
  *
- * Acessível sem login (o signatário remoto pode não ter conta) — o próprio id
- * (uuid v4 opaco) é o token de acesso. Expõe o transactionJson (o signatário
- * precisa do JSON íntegro para a carteira assinar) E o `decoded` (valor/destino
- * REAIS extraídos da tx no servidor) — para a UI mostrar o que está sendo
- * assinado sem depender só da `description` (que o criador pode falsear).
+ * Accessible without login (the remote signer may not have an account) — the id
+ * itself (opaque uuid v4) is the access token. Exposes the transactionJson (the
+ * signer needs the full JSON for the wallet to sign) AND the `decoded` (actual
+ * values extracted from the tx server-side) — so the UI can show what is being
+ * signed without relying only on the `description` (which the creator could
+ * falsify).
  */
 export async function GET(
   _req: Request,

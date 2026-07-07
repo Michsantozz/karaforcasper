@@ -2,16 +2,16 @@ import { z } from "zod";
 import { createWorkflow, createStep } from "@/inngest/client";
 
 /**
- * Reconciliação de atas de reunião (sem humano no loop).
+ * Meeting minutes reconciliation (no human in the loop).
  *
- * O caminho feliz gera a ata no webhook de bot (transcript.done). Este cron é a
- * REDE DE SEGURANÇA: se o webhook se perdeu, chegou antes da transcrição ficar
- * pronta, ou o enrichment falhou transitoriamente, a linha em meeting_records
- * fica "pending"/"processing". Aqui varremos as presas e reprocessamos — durável
- * por construção (cada tick é uma nova tentativa).
+ * The happy path generates the minutes in the bot webhook (transcript.done). This cron is the
+ * SAFETY NET: if the webhook got lost, arrived before the transcript was
+ * ready, or the enrichment failed transiently, the row in meeting_records
+ * stays "pending"/"processing". Here we scan the stuck ones and reprocess them — durable
+ * by construction (each tick is a new attempt).
  *
- * Roda a cada 5 min. staleMs=5min: só toca linhas paradas há tempo suficiente,
- * evitando corrida com o enrichment disparado pelo webhook.
+ * Runs every 5 min. staleMs=5min: only touches rows stuck long enough,
+ * avoiding a race with the enrichment triggered by the webhook.
  */
 const reconcile = createStep({
   id: "meeting-reconcile",

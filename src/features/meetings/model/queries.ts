@@ -1,11 +1,11 @@
 "use client";
 
 /**
- * Camada TanStack Query do detalhe de reunião (player + karaoke).
+ * TanStack Query layer for the meeting detail (player + karaoke).
  *
- * O backend GET /api/meetings/:botId retorna a ata persistida + a transcrição
- * com timestamps + a URL do vídeo. A transcrição/vídeo podem estar "processing"
- * logo após a reunião, então fazemos polling leve enquanto não fica pronto.
+ * The GET /api/meetings/:botId backend returns the persisted minutes + the
+ * transcript with timestamps + the video URL. The transcript/video may be
+ * "processing" right after the meeting, so we do light polling until ready.
  */
 
 import { useQuery } from "@tanstack/react-query";
@@ -64,8 +64,8 @@ async function getJson<T>(url: string): Promise<T> {
 }
 
 /**
- * Detalhe de uma reunião pelo botId. Enquanto a transcrição estiver "processing",
- * faz polling a cada 15s para o player/karaoke aparecerem assim que ficarem prontos.
+ * Meeting detail by botId. While the transcript is "processing", polls every
+ * 15s so the player/karaoke appear as soon as they're ready.
  */
 export function useMeetingDetail(botId: string) {
   return useQuery({

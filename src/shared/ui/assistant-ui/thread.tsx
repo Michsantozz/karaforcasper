@@ -191,10 +191,10 @@ const ThreadWelcome: FC = () => {
         casper agent · testnet
       </span>
       <h1 className="aui-thread-welcome-message-inner fade-in slide-in-from-bottom-1 animate-in fill-mode-both text-2xl font-semibold tracking-tight duration-200">
-        Como posso ajudar on-chain hoje?
+        How can I help on-chain today?
       </h1>
       <p className="aui-thread-welcome-subtitle fade-in slide-in-from-bottom-1 animate-in fill-mode-both text-sm text-muted-foreground duration-300">
-        Consulte saldos, transfira CSPR ou opere na DEX CSPR.trade.
+        Check balances, transfer CSPR, or trade on the CSPR.trade DEX.
       </p>
     </div>
   );
@@ -237,7 +237,7 @@ const Composer: FC = () => {
           </span>
         </div>
         <ComposerPrimitive.AttachmentDropzone render={<div data-slot="aui_composer-shell" className="data-[dragging=true]:border-(--thread-accent-primary) focus-within:border-(--thread-accent-primary) flex w-full flex-col gap-2 rounded-[5px] border bg-background p-(--composer-padding) transition-colors data-[dragging=true]:border-dashed data-[dragging=true]:bg-(--thread-accent-primary-soft)" />}><ComposerAttachments /><ComposerPrimitive.Input
-                        placeholder="Envie uma mensagem…"
+                        placeholder="Send a message…"
                         className="aui-composer-input placeholder:text-muted-foreground/80 max-h-48 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-base outline-none"
                         rows={1}
                         autoFocus
@@ -359,13 +359,13 @@ const AssistantMessage: FC = () => {
                   <span
                     data-slot="aui_assistant-message-indicator"
                     className="flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground"
-                    aria-label="O agente está trabalhando"
+                    aria-label="The agent is working"
                     aria-live="polite"
                   >
                     <span aria-hidden className="animate-pulse font-sans">
                       {"●"}
                     </span>
-                    pensando…
+                    thinking…
                   </span>
                 );
               default:

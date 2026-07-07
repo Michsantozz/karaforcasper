@@ -1,12 +1,12 @@
 "use client";
 
 /**
- * Surface de detalhe de reunião: player de vídeo + transcrição "karaoke" (a
- * palavra falada é destacada em sincronia com o playhead) + notas de IA (resumo,
- * seções, momentos, decisões, action items, talk-shares).
+ * Meeting detail surface: video player + "karaoke" transcript (the spoken
+ * word is highlighted in sync with the playhead) + AI notes (summary,
+ * sections, moments, decisions, action items, talk shares).
  *
- * Fireflies/Gong-style, sem dependências externas: player HTML5 nativo, sync via
- * evento `timeupdate`. Clicar numa palavra/seção/momento salta o vídeo (seek).
+ * Fireflies/Gong-style, no external dependencies: native HTML5 player, sync
+ * via the `timeupdate` event. Clicking a word/section/moment seeks the video.
  */
 
 import { useMemo, useRef, useState } from "react";
@@ -27,19 +27,19 @@ export function MeetingDetail({ botId }: { botId: string }) {
   }
 
   if (isLoading) {
-    return <div className="p-6 text-sm text-muted-foreground">Carregando ata…</div>;
+    return <div className="p-6 text-sm text-muted-foreground">Loading minutes…</div>;
   }
   if (error || !data) {
     return (
       <div className="p-6 text-sm text-destructive">
-        Não foi possível carregar esta reunião.
+        Could not load this meeting.
       </div>
     );
   }
 
   return (
     <div className="grid gap-6 p-4 lg:grid-cols-[1fr_380px]">
-      {/* Coluna principal: player + transcrição karaoke */}
+      {/* Main column: player + karaoke transcript */}
       <div className="flex flex-col gap-4">
         <VideoPanel
           videoUrl={data.videoUrl}
@@ -54,7 +54,7 @@ export function MeetingDetail({ botId }: { botId: string }) {
         />
       </div>
 
-      {/* Coluna lateral: notas de IA */}
+      {/* Side column: AI notes */}
       <NotesPanel data={data} onSeek={seek} />
     </div>
   );
@@ -75,8 +75,8 @@ function VideoPanel({
     return (
       <div className="flex aspect-video items-center justify-center rounded-lg border bg-muted/30 text-sm text-muted-foreground">
         {transcriptState === "processing"
-          ? "Gravação ainda sendo processada…"
-          : "Sem vídeo disponível para esta reunião."}
+          ? "Recording still being processed…"
+          : "No video available for this meeting."}
       </div>
     );
   }
@@ -104,14 +104,14 @@ function TranscriptPanel({
     return (
       <div className="rounded-lg border p-4 text-sm text-muted-foreground">
         {data.transcriptState === "processing"
-          ? "Transcrição em processamento — aparece aqui assim que ficar pronta."
-          : "Sem transcrição para esta reunião."}
+          ? "Transcript processing — it will appear here once ready."
+          : "No transcript for this meeting."}
       </div>
     );
   }
   return (
     <div className="max-h-[420px] overflow-y-auto rounded-lg border p-4">
-      <h3 className="mb-3 text-sm font-semibold">Transcrição</h3>
+      <h3 className="mb-3 text-sm font-semibold">Transcript</h3>
       <div className="space-y-3 text-sm leading-relaxed">
         {data.transcript.map((utt, i) => (
           <p key={i}>
@@ -165,21 +165,21 @@ function NotesPanel({
     <div className="flex max-h-[860px] flex-col gap-5 overflow-y-auto rounded-lg border p-4">
       {data.summary && (
         <section>
-          <h3 className="mb-1 text-sm font-semibold">Resumo</h3>
+          <h3 className="mb-1 text-sm font-semibold">Summary</h3>
           <p className="text-sm text-muted-foreground">{data.summary}</p>
         </section>
       )}
 
       {data.overview && (
         <section>
-          <h3 className="mb-1 text-sm font-semibold">Visão geral</h3>
+          <h3 className="mb-1 text-sm font-semibold">Overview</h3>
           <p className="text-sm text-muted-foreground">{data.overview}</p>
         </section>
       )}
 
       {data.moments.length > 0 && (
         <section>
-          <h3 className="mb-2 text-sm font-semibold">Momentos-chave</h3>
+          <h3 className="mb-2 text-sm font-semibold">Key Moments</h3>
           <ul className="space-y-1">
             {data.moments.map((m, i) => (
               <li key={i} className="flex items-center gap-2 text-sm">
@@ -201,7 +201,7 @@ function NotesPanel({
 
       {data.sections.length > 0 && (
         <section>
-          <h3 className="mb-2 text-sm font-semibold">Seções</h3>
+          <h3 className="mb-2 text-sm font-semibold">Sections</h3>
           <div className="space-y-3">
             {data.sections.map((s, i) => (
               <div key={i}>
@@ -225,7 +225,7 @@ function NotesPanel({
 
       {data.decisions.length > 0 && (
         <section>
-          <h3 className="mb-2 text-sm font-semibold">Decisões</h3>
+          <h3 className="mb-2 text-sm font-semibold">Decisions</h3>
           <ul className="ml-4 list-disc space-y-1 text-sm text-muted-foreground">
             {data.decisions.map((d, i) => (
               <li key={i}>{d}</li>
@@ -252,7 +252,7 @@ function NotesPanel({
 
       {sortedShares.length > 0 && (
         <section>
-          <h3 className="mb-2 text-sm font-semibold">Tempo de fala</h3>
+          <h3 className="mb-2 text-sm font-semibold">Talk Time</h3>
           <div className="space-y-2">
             {sortedShares.map((p, i) => (
               <div key={i}>
@@ -276,7 +276,7 @@ function NotesPanel({
 }
 
 function momentLabel(kind: MeetingDetailResponse["moments"][number]["kind"]) {
-  return { topic: "Tópico", action: "Ação", question: "Pergunta", objection: "Objeção" }[
+  return { topic: "Topic", action: "Action", question: "Question", objection: "Objection" }[
     kind
   ];
 }

@@ -2,11 +2,11 @@ import "server-only";
 import { requireEnv } from "@/mastra/env";
 
 /**
- * OAuth 2.0 do Google (authorization code flow, server-side).
+ * Google OAuth 2.0 (authorization code flow, server-side).
  *
- * Fluxo: buildConsentUrl() → usuário autoriza → callback com `code` →
- * exchangeCode() devolve refresh_token + e-mail. O refresh_token é então
- * entregue ao Recall (createCalendar), que gerencia a renovação do access token.
+ * Flow: buildConsentUrl() → user authorizes → callback with `code` →
+ * exchangeCode() returns refresh_token + email. The refresh_token is then
+ * handed to Recall (createCalendar), which manages access-token renewal.
  *
  * Docs: https://developers.google.com/identity/protocols/oauth2/web-server
  */
@@ -16,10 +16,10 @@ const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 const USERINFO_ENDPOINT = "https://www.googleapis.com/oauth2/v3/userinfo";
 
 /**
- * Scopes do OAuth de calendar.
+ * Calendar OAuth scopes.
  *
- * `calendar.events` (read+write) permite tanto a integração do Recall (que lê
- * eventos) quanto criar eventos com link do Meet pela Google Calendar API.
+ * `calendar.events` (read+write) allows both the Recall integration (which
+ * reads events) and creating events with a Meet link via the Google Calendar API.
  */
 const SCOPES = [
   "https://www.googleapis.com/auth/calendar.events",
@@ -37,12 +37,12 @@ export function googleRedirectUri(): string {
 }
 
 /**
- * URL do consent screen do Google.
+ * URL of the Google consent screen.
  *
- * `access_type=offline` + `prompt=consent` garantem que sempre venha um
- * refresh_token (sem isso o Google só o devolve na primeira autorização).
- * `state` carrega o user_id (assinado/opaco do lado do app) para amarrar o
- * callback ao usuário logado.
+ * `access_type=offline` + `prompt=consent` guarantee a refresh_token always
+ * comes back (without this Google only returns it on the first authorization).
+ * `state` carries the user_id (signed/opaque on the app side) to tie the
+ * callback to the logged-in user.
  */
 export function buildConsentUrl(state: string): string {
   const url = new URL(AUTH_ENDPOINT);
@@ -62,7 +62,7 @@ export type GoogleTokens = {
   expiresIn: number;
 };
 
-/** Troca o authorization code por access_token + refresh_token. */
+/** Exchanges the authorization code for an access_token + refresh_token. */
 export async function exchangeCode(code: string): Promise<GoogleTokens> {
   const res = await fetch(TOKEN_ENDPOINT, {
     method: "POST",
@@ -90,8 +90,8 @@ export async function exchangeCode(code: string): Promise<GoogleTokens> {
     );
   }
   if (!data.refresh_token) {
-    // Sem offline/consent, ou re-autorização sem prompt — não dá pra criar o
-    // calendar no Recall (refresh_token é obrigatório).
+    // Without offline/consent, or re-authorization without prompt — can't
+    // create the calendar in Recall (refresh_token is required).
     throw new Error(
       "Google did not return a refresh_token. Ensure access_type=offline & prompt=consent.",
     );
@@ -103,7 +103,7 @@ export async function exchangeCode(code: string): Promise<GoogleTokens> {
   };
 }
 
-/** Busca o e-mail da conta autorizada (chave de dedup do calendar). */
+/** Fetches the email of the authorized account (calendar dedup key). */
 export async function fetchUserEmail(accessToken: string): Promise<string> {
   const res = await fetch(USERINFO_ENDPOINT, {
     headers: { Authorization: `Bearer ${accessToken}` },

@@ -17,6 +17,17 @@ import {
   XIcon,
 } from "lucide-react";
 import { Button } from "@/shared/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/shared/ui/alert-dialog";
 import { useCasperWallet } from "@/features/wallet/model/useCasperWallet";
 import { signMessageWithWallet } from "@/features/wallet/model/provider";
 import { useSession, signIn, signOut } from "@/features/auth/model/auth-client";
@@ -32,13 +43,13 @@ import {
 import { cn } from "@/shared/lib/utils";
 import { AppShell } from "@/features/auth/ui/AppShell";
 
-// Erros do POST /api/user-wallets → mensagem amigável.
+// Errors from POST /api/user-wallets → friendly message.
 const LINK_ERROR_MSG: Record<string, string> = {
-  invalid_public_key: "Chave pública inválida.",
-  invalid_nonce: "Nonce inválido — tente de novo.",
-  nonce_already_used: "Nonce já usado — tente de novo.",
-  nonce_expired: "Nonce expirou — tente de novo.",
-  proof_failed: "Prova de posse falhou: a assinatura não bate com a carteira.",
+  invalid_public_key: "Invalid public key.",
+  invalid_nonce: "Invalid nonce — try again.",
+  nonce_already_used: "Nonce already used — try again.",
+  nonce_expired: "Nonce expired — try again.",
+  proof_failed: "Proof of possession failed: the signature doesn't match the wallet.",
 };
 
 function short(hex: string) {
@@ -46,9 +57,80 @@ function short(hex: string) {
 }
 
 /**
- * Dashboard /multisig (auth): solicitações criadas + "aguardando minha
- * assinatura" (match por carteira vinculada) + sininho de notificações +
- * vincular carteira.
+ * Destructive icon button with confirmation. Matches the dashboard's
+ * unlink/cancel to the pattern used on detail pages (broadcast/cancel already
+ * use AlertDialog); previously it was a single click with no undo.
+ */
+function ConfirmIconButton({
+  icon: Icon,
+  title,
+  description,
+  confirmLabel,
+  ariaLabel,
+  disabled,
+  onConfirm,
+}: {
+  icon: typeof Trash2Icon;
+  title: string;
+  description: string;
+  confirmLabel: string;
+  ariaLabel: string;
+  disabled?: boolean;
+  onConfirm: () => void;
+}) {
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger
+        render={
+          <button
+            type="button"
+            disabled={disabled}
+            className="text-muted-foreground hover:text-(--thread-accent-secondary) disabled:opacity-50"
+            aria-label={ariaLabel}
+            title={ariaLabel}
+          />
+        }
+      >
+        <Icon className="size-3.5" />
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{title}</AlertDialogTitle>
+          <AlertDialogDescription>{description}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel
+            render={
+              <Button
+                variant="outline"
+                size="sm"
+                className="rounded-[5px] font-mono text-xs"
+              />
+            }
+          >
+            back
+          </AlertDialogCancel>
+          <AlertDialogAction
+            render={
+              <Button
+                variant="default"
+                size="sm"
+                className="rounded-[5px] font-mono text-xs"
+              />
+            }
+            onClick={onConfirm}
+          >
+            {confirmLabel}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+/**
+ * Dashboard /multisig (auth): requests created + "awaiting my signature"
+ * (matched by linked wallet) + notifications bell + link wallet.
  */
 function MultisigDashboard() {
   const { data: session, isPending } = useSession();
@@ -62,10 +144,11 @@ function MultisigDashboard() {
   const [createdLink, setCreatedLink] = useState<string | null>(null);
   const [linkMsg, setLinkMsg] = useState<string | null>(null);
 
-  // Todas as listas viram queries. O polling de 8s (refetchInterval) é herdado
-  // via qk.mine/pending/... — aqui só ligamos o intervalo no dashboard todo.
-  // enabled só com sessão. As 4 queries compartilham o QueryClient, então dedup
-  // e cache são automáticos; invalidar qualquer uma revalida em todo lugar.
+  // All lists become queries. The 8s polling (refetchInterval) is inherited
+  // via qk.mine/pending/... — here we just enable the interval for the whole
+  // dashboard. enabled only with a session. The 4 queries share the
+  // QueryClient, so dedup and caching are automatic; invalidating any one
+  // revalidates everywhere.
   const enabled = Boolean(session?.user);
   const mineQ = useMyRequests(mineFilter, enabled);
   const pendingQ = usePendingRequests(enabled);
@@ -76,14 +159,14 @@ function MultisigDashboard() {
   const pending = pendingQ.data ?? [];
   const notifs = notifsQ.data ?? [];
   const wallets = walletsQ.data ?? [];
-  // Qualquer query em erro → banner "falha ao carregar" (antes: flag manual).
+  // Any query in error → "failed to load" banner (previously: manual flag).
   const fetchError =
     mineQ.isError || pendingQ.isError || notifsQ.isError || walletsQ.isError;
 
   const markReadMut = useMarkNotificationRead();
 
-  // Polling do dashboard: signatários remotos podem assinar a qualquer momento.
-  // Refetch das 4 listas a cada 8s enquanto logado.
+  // Dashboard polling: remote signers can sign at any moment.
+  // Refetch the 4 lists every 8s while logged in.
   useEffect(() => {
     if (!enabled) return;
     const t = setInterval(() => {
@@ -94,24 +177,24 @@ function MultisigDashboard() {
     return () => clearInterval(t);
   }, [enabled, client]);
 
-  // Restaura o último link criado se o usuário recarregou antes de compartilhá-lo.
+  // Restores the last created link if the user reloaded before sharing it.
   useEffect(() => {
     const saved = sessionStorage.getItem("multisig:lastCreatedLink");
-    // sessionStorage é client-only; restaurar é I/O de montagem.
+    // sessionStorage is client-only; restoring it is mount-time I/O.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (saved) setCreatedLink(saved);
   }, []);
 
-  // Vincular carteira COM PROVA DE POSSE (SIWE-style):
-  //  1. pede um nonce ao backend;
-  //  2. a carteira assina o nonce (signMessage, popup);
-  //  3. POSTa pubkey + nonce + assinatura — o backend verifica antes de gravar.
+  // Link wallet WITH PROOF OF POSSESSION (SIWE-style):
+  //  1. requests a nonce from the backend;
+  //  2. the wallet signs the nonce (signMessage, popup);
+  //  3. POSTs pubkey + nonce + signature — the backend verifies before saving.
   const linkActiveWallet = useCallback(async () => {
     setLinkMsg(null);
     let key = wallet.activeKey;
     if (!key) key = await wallet.connect();
     if (!key) {
-      setLinkMsg("Conecte a carteira primeiro.");
+      setLinkMsg("Connect the wallet first.");
       return;
     }
     setBusy(true);
@@ -121,19 +204,19 @@ function MultisigDashboard() {
         method: "POST",
       });
       if (!nonceRes.ok) {
-        setLinkMsg("Falha ao obter nonce.");
+        setLinkMsg("Failed to get nonce.");
         return;
       }
       const { nonce } = (await nonceRes.json()) as { nonce: string };
 
-      // 2. assina o nonce (a extensão prefixa "Casper Message:\n")
+      // 2. signs the nonce (the extension prefixes "Casper Message:\n")
       const out = await signMessageWithWallet(nonce, key);
       if (!out.signed || !out.signatureHex) {
-        setLinkMsg(out.error ?? "Assinatura cancelada.");
+        setLinkMsg(out.error ?? "Signature cancelled.");
         return;
       }
 
-      // 3. vincula com a prova
+      // 3. links with the proof
       const res = await fetch("/api/user-wallets", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -147,11 +230,11 @@ function MultisigDashboard() {
         const err = (await res.json()) as { error?: string };
         setLinkMsg(
           LINK_ERROR_MSG[err.error ?? ""] ??
-            `Falha ao vincular: ${err.error ?? res.status}`,
+            `Failed to link: ${err.error ?? res.status}`,
         );
         return;
       }
-      setLinkMsg("Carteira vinculada ✓");
+      setLinkMsg("Wallet linked ✓");
       invalidateSignatureFlow(client);
     } catch (e) {
       setLinkMsg(e instanceof Error ? e.message : String(e));
@@ -177,7 +260,7 @@ function MultisigDashboard() {
     [client],
   );
 
-  // Marcar notificação como lida via mutation (invalida só as notificações).
+  // Mark a notification as read via mutation (invalidates only notifications).
   const markRead = useCallback(
     (notifId: string) => void markReadMut.mutate(notifId),
     [markReadMut],
@@ -186,7 +269,7 @@ function MultisigDashboard() {
   const createRequest = useCallback(
     async (form: {
       transactionJson: string;
-      requiredSigners: { publicKeyHex: string; label?: string }[];
+      requiredSigners: { publicKeyHex: string; label?: string; email?: string }[];
       threshold: number;
       description?: string;
     }) => {
@@ -202,18 +285,18 @@ function MultisigDashboard() {
           const err = (await res.json()) as { error?: string };
           const map: Record<string, string> = {
             transfer_below_minimum:
-              "Valor abaixo do mínimo da rede (2.5 CSPR).",
-            invalid_transaction_json: "Transação inválida.",
-            transaction_too_large: "Transação grande demais.",
+              "Amount below the network minimum (2.5 CSPR).",
+            invalid_transaction_json: "Invalid transaction.",
+            transaction_too_large: "Transaction too large.",
           };
-          setLinkMsg(map[err.error ?? ""] ?? `Falha ao criar: ${err.error ?? res.status}`);
+          setLinkMsg(map[err.error ?? ""] ?? `Failed to create: ${err.error ?? res.status}`);
           return;
         }
         const data = (await res.json()) as { link: string };
         const fullLink = `${window.location.origin}${data.link}`;
         setCreatedLink(fullLink);
-        // Persiste na sessão para o link não sumir se o usuário recarregar antes
-        // de compartilhá-lo. Some ao fechar a aba.
+        // Persists in the session so the link doesn't disappear if the user
+        // reloads before sharing it. Cleared when the tab closes.
         sessionStorage.setItem("multisig:lastCreatedLink", fullLink);
         setShowCreate(false);
         invalidateSignatureFlow(client);
@@ -246,7 +329,7 @@ function MultisigDashboard() {
       <main className="mx-auto w-full max-w-3xl px-4 py-10">
         <div className="flex items-center gap-2 font-mono text-muted-foreground text-sm">
           <LoaderIcon className="size-4 animate-spin" />
-          carregando…
+          loading…
         </div>
       </main>
     );
@@ -260,11 +343,11 @@ function MultisigDashboard() {
             <UsersIcon className="size-5 text-(--thread-accent-primary)" />
           </span>
           <h1 className="font-semibold text-lg tracking-tight">
-            Multisig — coleta de assinaturas
+            Multisig — signature collection
           </h1>
           <p className="max-w-sm text-sm text-muted-foreground">
-            Entre para criar solicitações de pagamento, vincular sua carteira e
-            acompanhar o que aguarda sua assinatura.
+            Log in to create payment requests, link your wallet, and track
+            what&apos;s awaiting your signature.
           </p>
         </div>
         <Button
@@ -272,7 +355,7 @@ function MultisigDashboard() {
             signIn.social({ provider: "google", callbackURL: "/multisig" })
           }
         >
-          Entrar com Google
+          Sign in with Google
         </Button>
       </main>
     );
@@ -287,7 +370,7 @@ function MultisigDashboard() {
           </span>
           <div>
             <h1 className="font-semibold text-2xl tracking-tight">
-              Assinaturas
+              Signatures
             </h1>
             <p className="font-mono text-[11px] text-muted-foreground">
               {session.user.email}
@@ -299,8 +382,8 @@ function MultisigDashboard() {
             href="#notificacoes"
             aria-label={
               unread > 0
-                ? `${unread} notificações não lidas — ir para notificações`
-                : "Ir para notificações"
+                ? `${unread} unread notifications — go to notifications`
+                : "Go to notifications"
             }
             className="relative flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground hover:text-foreground"
           >
@@ -315,7 +398,7 @@ function MultisigDashboard() {
             type="button"
             onClick={() => signOut()}
             className="text-muted-foreground hover:text-foreground"
-            aria-label="sair"
+            aria-label="sign out"
           >
             <LogOutIcon className="size-4" />
           </button>
@@ -324,18 +407,18 @@ function MultisigDashboard() {
 
       {fetchError && (
         <div className="mb-4 flex items-center justify-between gap-3 rounded-[6px] border border-(--thread-accent-secondary)/40 bg-(--thread-accent-secondary)/10 px-3 py-2 font-mono text-[11px] text-(--thread-accent-secondary)">
-          <span>Falha ao carregar dados. Verifique sua conexão.</span>
+          <span>Failed to load data. Check your connection.</span>
           <button
             type="button"
             onClick={() => invalidateSignatureFlow(client)}
             className="shrink-0 underline hover:no-underline"
           >
-            tentar de novo
+            try again
           </button>
         </div>
       )}
 
-      {/* Criar solicitação */}
+      {/* Create request */}
       <div className="mb-4 flex items-center justify-between">
         <Button
           variant="default"
@@ -344,7 +427,7 @@ function MultisigDashboard() {
           onClick={() => setShowCreate((v) => !v)}
         >
           <PlusIcon className="size-3.5" />
-          nova solicitação
+          new request
         </Button>
       </div>
 
@@ -360,7 +443,7 @@ function MultisigDashboard() {
             type="button"
             onClick={() => navigator.clipboard.writeText(createdLink)}
             className="text-muted-foreground hover:text-(--thread-accent-primary)"
-            aria-label="copiar"
+            aria-label="copy"
           >
             <CopyIcon className="size-3.5" />
           </button>
@@ -371,7 +454,7 @@ function MultisigDashboard() {
               sessionStorage.removeItem("multisig:lastCreatedLink");
             }}
             className="text-muted-foreground hover:text-foreground"
-            aria-label="dispensar"
+            aria-label="dismiss"
           >
             <XIcon className="size-3.5" />
           </button>
@@ -386,12 +469,12 @@ function MultisigDashboard() {
         />
       )}
 
-      {/* Carteiras vinculadas */}
+      {/* Linked wallets */}
       <div className="mb-4 rounded-[8px] bg-(--thread-frame-outer) p-1">
         <div className="flex items-center justify-between px-2 py-1.5">
           <span className="flex items-center gap-1.5 font-mono text-muted-foreground text-xs">
             <WalletIcon className="size-3.5" />
-            carteiras vinculadas
+            linked wallets
           </span>
           <Button
             variant="ghost"
@@ -401,7 +484,7 @@ function MultisigDashboard() {
             disabled={busy || !wallet.installed}
           >
             <Link2Icon className="size-3" />
-            vincular ativa
+            link active
           </Button>
         </div>
         {linkMsg && (
@@ -420,7 +503,7 @@ function MultisigDashboard() {
         <div className="flex flex-col gap-1.5 rounded-[5px] border bg-background p-3">
           {wallets.length === 0 ? (
             <span className="font-mono text-[11px] text-muted-foreground">
-              nenhuma carteira vinculada
+              no linked wallets
             </span>
           ) : (
             wallets.map((w) => (
@@ -429,15 +512,17 @@ function MultisigDashboard() {
                   {w.label ? `${w.label} · ` : ""}
                   {short(w.publicKeyHex)}
                 </span>
-                <button
-                  type="button"
-                  onClick={() => unlink(w.publicKeyHex)}
+                <ConfirmIconButton
+                  icon={Trash2Icon}
+                  ariaLabel="unlink"
+                  title="Unlink wallet?"
+                  description={`The wallet ${short(
+                    w.publicKeyHex,
+                  )} will stop appearing under "awaiting my signature". You can re-link it later by signing the proof of possession again.`}
+                  confirmLabel="unlink"
                   disabled={busy}
-                  className="text-muted-foreground hover:text-(--thread-accent-secondary)"
-                  aria-label="desvincular"
-                >
-                  <Trash2Icon className="size-3.5" />
-                </button>
+                  onConfirm={() => unlink(w.publicKeyHex)}
+                />
               </div>
             ))
           )}
@@ -445,20 +530,20 @@ function MultisigDashboard() {
       </div>
 
       {/* Tabs */}
-      <div role="tablist" aria-label="solicitações" className="mb-3 flex gap-2">
+      <div role="tablist" aria-label="requests" className="mb-3 flex gap-2">
         <TabButton
           id="tab-mine"
           active={tab === "mine"}
           onClick={() => setTab("mine")}
         >
-          minhas ({mine.length})
+          mine ({mine.length})
         </TabButton>
         <TabButton
           id="tab-pending"
           active={tab === "pending"}
           onClick={() => setTab("pending")}
         >
-          aguardando minha assinatura ({pending.length})
+          awaiting my signature ({pending.length})
         </TabButton>
       </div>
 
@@ -478,12 +563,12 @@ function MultisigDashboard() {
                     : "text-muted-foreground hover:text-foreground",
                 )}
               >
-                {f === "active" ? "ativas" : "histórico"}
+                {f === "active" ? "active" : "history"}
               </button>
             ))}
           </div>
           <RequestList
-            empty="você não criou solicitações."
+            empty="you haven't created any requests."
             items={mine.map((r) => ({
               id: r.id,
               title: r.description ?? `${r.kind} · ${r.id}`,
@@ -500,7 +585,7 @@ function MultisigDashboard() {
       ) : (
         <div role="tabpanel" aria-labelledby="tab-pending">
           <RequestList
-            empty="nada aguardando sua assinatura."
+            empty="nothing awaiting your signature."
             items={pending.map((p) => ({
               id: p.id,
               title: p.description ?? `${p.kind} · ${p.id}`,
@@ -512,19 +597,19 @@ function MultisigDashboard() {
         </div>
       )}
 
-      {/* Notificações */}
+      {/* Notifications */}
       <div
         id="notificacoes"
         className="mt-6 scroll-mt-4 rounded-[8px] bg-(--thread-frame-outer) p-1"
       >
         <div className="flex items-center gap-1.5 px-2 py-1.5 font-mono text-muted-foreground text-xs">
           <InboxIcon className="size-3.5" />
-          notificações
+          notifications
         </div>
         <div className="flex flex-col gap-1.5 rounded-[5px] border bg-background p-3">
           {notifs.length === 0 ? (
             <span className="font-mono text-[11px] text-muted-foreground">
-              sem notificações
+              no notifications
             </span>
           ) : (
             notifs.map((n) => (
@@ -622,17 +707,16 @@ function RequestList({
           </a>
           <div className="flex shrink-0 items-center gap-2">
             {it.onCancel && (
-              <button
-                type="button"
-                onClick={it.onCancel}
-                className="text-muted-foreground hover:text-(--thread-accent-secondary)"
-                aria-label="cancelar solicitação"
-                title="cancelar"
-              >
-                <Trash2Icon className="size-3.5" />
-              </button>
+              <ConfirmIconButton
+                icon={Trash2Icon}
+                ariaLabel="cancel request"
+                title="Cancel request?"
+                description="Invalidates the signature link. Signatures already collected are discarded. This cannot be undone."
+                confirmLabel="confirm cancellation"
+                onConfirm={it.onCancel}
+              />
             )}
-            <a href={it.href} aria-label="abrir">
+            <a href={it.href} aria-label="open">
               <ExternalLinkIcon className="size-3.5 text-muted-foreground" />
             </a>
           </div>
@@ -643,10 +727,10 @@ function RequestList({
 }
 
 /**
- * Form de criação de solicitação. Monta a tx base (transfer nativo multisig) no
- * client via casper-js-sdk e POSTa transactionJson + signatários ao backend. Usa
- * `.build()` (Transaction 2.0) — mesmo formato do fluxo de user-transfer que já
- * funciona com a Casper Wallet.
+ * Request creation form. Builds the base tx (native multisig transfer) on
+ * the client via casper-js-sdk and POSTs transactionJson + signers to the
+ * backend. Uses `.build()` (Transaction 2.0) — the same format as the
+ * user-transfer flow that already works with the Casper Wallet.
  */
 function CreateRequestForm({
   busy,
@@ -656,7 +740,7 @@ function CreateRequestForm({
   busy: boolean;
   onSubmit: (form: {
     transactionJson: string;
-    requiredSigners: { publicKeyHex: string; label?: string }[];
+    requiredSigners: { publicKeyHex: string; label?: string; email?: string }[];
     threshold: number;
     description?: string;
   }) => void;
@@ -677,22 +761,31 @@ function CreateRequestForm({
     try {
       const amountCspr = Number(amount);
       if (!from || !to || !amountCspr) {
-        setError("Preencha pagadora, destino e valor.");
+        setError("Fill in payer, target, and amount.");
         return;
       }
-      // A rede recusa transfer nativo abaixo de 2.5 CSPR.
+      // The network rejects a native transfer below 2.5 CSPR.
       if (amountCspr < 2.5) {
-        setError("Valor mínimo de transferência na rede é 2.5 CSPR.");
+        setError("The minimum transfer amount on the network is 2.5 CSPR.");
         return;
       }
-      // Signatários extras (além da pagadora), um por linha: "pubkey" ou "pubkey,label".
+      // Extra signers (besides the payer), one per line:
+      // "pubkey" | "pubkey,label" | "pubkey,label,email". The email is
+      // optional and is used to invite a signer WITHOUT a linked account —
+      // the backend sends the /sign link directly to them. Anyone who
+      // already has a linked wallet is matched automatically and doesn't
+      // need the email here.
       const extra = signersRaw
         .split("\n")
         .map((l) => l.trim())
         .filter(Boolean)
         .map((l) => {
-          const [pk, label] = l.split(",").map((s) => s.trim());
-          return { publicKeyHex: pk, label: label || undefined };
+          const [pk, label, email] = l.split(",").map((s) => s.trim());
+          return {
+            publicKeyHex: pk,
+            label: label || undefined,
+            email: email || undefined,
+          };
         });
 
       const { NativeTransferBuilder, PublicKey, CasperNetworkName } =
@@ -708,9 +801,9 @@ function CreateRequestForm({
         .payment(100_000_000)
         .build();
 
-      // Pagadora é sempre signatária exigida.
+      // The payer is always a required signer.
       const requiredSigners = [
-        { publicKeyHex: from, label: "pagadora" },
+        { publicKeyHex: from, label: "payer" },
         ...extra,
       ];
       const th = Number(threshold) || requiredSigners.length;
@@ -731,26 +824,26 @@ function CreateRequestForm({
   return (
     <div className="mb-4 rounded-[8px] bg-(--thread-frame-outer) p-1">
       <div className="px-2 py-1.5 font-mono text-muted-foreground text-xs">
-        nova solicitação de pagamento
+        new payment request
       </div>
       <div className="flex flex-col gap-2 rounded-[5px] border bg-background p-3">
-        <Field label="carteira pagadora (from)" value={from} onChange={setFrom} />
-        <Field label="destino (to)" value={to} onChange={setTo} />
+        <Field label="payer wallet (from)" value={from} onChange={setFrom} />
+        <Field label="target (to)" value={to} onChange={setTo} />
         <Field
-          label="valor (CSPR)"
+          label="amount (CSPR)"
           value={amount}
           onChange={setAmount}
           placeholder="1.5"
         />
         <Field
-          label="quórum (threshold, opcional)"
+          label="quorum (threshold, optional)"
           value={threshold}
           onChange={setThreshold}
-          placeholder="padrão: todos"
+          placeholder="default: all"
         />
         <label className="flex flex-col gap-1">
           <span className="font-mono text-[10px] text-muted-foreground uppercase tracking-wider">
-            outros signatários (1 por linha: pubkey ou pubkey,label)
+            other signers (1 per line: pubkey | pubkey,label | pubkey,label,email)
           </span>
           <textarea
             value={signersRaw}
@@ -760,7 +853,7 @@ function CreateRequestForm({
           />
         </label>
         <Field
-          label="descrição (opcional)"
+          label="description (optional)"
           value={description}
           onChange={setDescription}
         />
@@ -781,7 +874,7 @@ function CreateRequestForm({
             ) : (
               <PlusIcon className="size-3.5" />
             )}
-            criar + gerar link
+            create + generate link
           </Button>
           <Button
             variant="ghost"
@@ -790,7 +883,7 @@ function CreateRequestForm({
             onClick={onCancel}
             disabled={building}
           >
-            cancelar
+            cancel
           </Button>
         </div>
       </div>
@@ -824,9 +917,9 @@ function Field({
   );
 }
 
-// Wrapper com o shell de navegação global (rail + theme + onboarding). O
-// dashboard em si permanece como MultisigDashboard; aqui só envolvemos com o
-// AppShell e abrimos espaço para o rail (md:pl-14).
+// Wrapper with the global navigation shell (rail + theme + onboarding). The
+// dashboard itself remains MultisigDashboard; here we just wrap it with
+// AppShell and make room for the rail (md:pl-14).
 export default function MultisigPage() {
   return (
     <div className="md:pl-14">

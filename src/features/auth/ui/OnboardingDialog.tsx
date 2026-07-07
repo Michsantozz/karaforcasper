@@ -34,32 +34,32 @@ type Feature = {
 const FEATURES: Feature[] = [
   {
     icon: MessageSquareIcon,
-    title: "Converse com o agente",
-    desc: "Peça saldo, faça transferências e analise trades on-chain na Casper — tudo pela conversa.",
+    title: "Talk to the agent",
+    desc: "Check balances, make transfers, and analyze on-chain trades on Casper — all through conversation.",
     href: "/",
-    cta: "Abrir chat",
+    cta: "Open chat",
   },
   {
     icon: VideoIcon,
-    title: "Agente de reuniões",
-    desc: "Envie bots a reuniões, grave, transcreva e conecte sua agenda para agendar por evento.",
+    title: "Meeting agent",
+    desc: "Send bots to meetings, record, transcribe, and connect your calendar to schedule per event.",
     href: "/meetings",
-    cta: "Ir para reuniões",
+    cta: "Go to meetings",
   },
   {
     icon: UsersIcon,
-    title: "Multisig & assinaturas",
-    desc: "Crie solicitações de assinatura distribuída, acompanhe o quórum e faça broadcast.",
+    title: "Multisig & signatures",
+    desc: "Create distributed signature requests, track quorum, and broadcast.",
     href: "/multisig",
-    cta: "Abrir multisig",
+    cta: "Open multisig",
   },
 ];
 
 /**
- * Experiência de primeiro uso. Antes o login levava direto ao chat seco, sem
- * contexto do que o produto faz. Mostra uma vez (flag em localStorage) um
- * resumo das três áreas com atalhos. Auto-contido: só dispara para sessão ativa
- * e some após visto ou dispensado.
+ * First-use experience. Before, signing in led straight into a bare chat,
+ * with no context on what the product does. Shows once (localStorage flag)
+ * a summary of the three areas with shortcuts. Self-contained: only fires
+ * for an active session and disappears once seen or dismissed.
  */
 export function OnboardingDialog() {
   const { data: session, isPending } = useSession();
@@ -68,11 +68,12 @@ export function OnboardingDialog() {
   useEffect(() => {
     if (isPending || !session?.user) return;
     try {
-      // localStorage só existe client-side; abrir depende dele, logo é no effect.
+      // localStorage only exists client-side; opening depends on it, so it's
+      // in the effect.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       if (!localStorage.getItem(STORAGE_KEY)) setOpen(true);
     } catch {
-      /* localStorage indisponível — não bloqueia */
+      /* localStorage unavailable — doesn't block */
     }
   }, [isPending, session?.user]);
 
@@ -94,9 +95,9 @@ export function OnboardingDialog() {
           <span className="mb-1 flex size-10 items-center justify-center rounded-[10px] border bg-background text-(--thread-accent-primary)">
             <SparklesIcon className="size-5" />
           </span>
-          <DialogTitle>Bem-vindo ao Casper Agent</DialogTitle>
+          <DialogTitle>Welcome to Casper Agent</DialogTitle>
           <DialogDescription>
-            Um agente autônomo na Casper Network. Veja o que dá para fazer:
+            An autonomous agent on the Casper Network. Here&apos;s what you can do:
           </DialogDescription>
         </DialogHeader>
 
@@ -133,7 +134,7 @@ export function OnboardingDialog() {
         </ul>
 
         <DialogFooter>
-          <Button onClick={() => dismiss(false)}>Começar</Button>
+          <Button onClick={() => dismiss(false)}>Get started</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
