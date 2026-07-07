@@ -175,7 +175,7 @@ function BalanceCell() {
   return (
     <Cell icon={WalletIcon} label="balance" kind="read" flow={flow}>
       <p className="text-xs text-muted-foreground">
-        Looks up an account's balance. Pure read, no signature needed.
+        Looks up an account&apos;s balance. Pure read, no signature needed.
       </p>
       <div className="flex flex-col gap-1 rounded-[5px] border bg-background p-3">
         <span className="font-mono text-[10px] text-muted-foreground uppercase tracking-wider">
@@ -287,7 +287,7 @@ function NamedKeysCell() {
   return (
     <Cell icon={ArchiveIcon} label="named keys" kind="write" flow={flow}>
       <p className="text-xs text-muted-foreground">
-        A drawer inside the account. Stores the summary's hash = proof of delivery.
+        A drawer inside the account. Stores the summary&apos;s hash = proof of delivery.
       </p>
       <div className="rounded-[5px] border bg-background p-3">
         <KVInline k="key" v="summary-42007" />

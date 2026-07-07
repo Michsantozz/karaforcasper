@@ -54,7 +54,7 @@ describe("LoginScreen — Google", () => {
   it("botão Google chama signIn.social com provider google + callbackURL", async () => {
     const user = userEvent.setup();
     render(<LoginScreen />);
-    await user.click(screen.getByRole("button", { name: /entrar com google/i }));
+    await user.click(screen.getByRole("button", { name: /sign in with google/i }));
     expect(social).toHaveBeenCalledWith({ provider: "google", callbackURL: "/" });
   });
 });
@@ -78,7 +78,7 @@ describe("LoginScreen — erro de verificação do magic link (?error=)", () => 
     render(<LoginScreen />);
     await waitFor(() =>
       expect(toastError).toHaveBeenCalledWith(
-        "Link inválido ou já usado. Peça um novo abaixo.",
+        "Invalid or already used link. Request a new one below.",
       ),
     );
     expect(replaceState).toHaveBeenCalledWith({}, "", "/");
@@ -88,7 +88,7 @@ describe("LoginScreen — erro de verificação do magic link (?error=)", () => 
     stubLocation("?error=weird_thing");
     render(<LoginScreen />);
     await waitFor(() =>
-      expect(toastError).toHaveBeenCalledWith("Falha ao entrar. Tente de novo."),
+      expect(toastError).toHaveBeenCalledWith("Failed to sign in. Please try again."),
     );
   });
 
@@ -107,8 +107,8 @@ describe("LoginScreen — magic link (tab default)", () => {
     const user = userEvent.setup();
     render(<LoginScreen />);
 
-    await user.type(screen.getByPlaceholderText("voce@email.com"), "a@b.com");
-    await user.click(screen.getByRole("button", { name: /enviar link/i }));
+    await user.type(screen.getByPlaceholderText("you@email.com"), "a@b.com");
+    await user.click(screen.getByRole("button", { name: /send access link/i }));
 
     expect(magicLink).toHaveBeenCalledWith({
       email: "a@b.com",
@@ -117,7 +117,7 @@ describe("LoginScreen — magic link (tab default)", () => {
       errorCallbackURL: "/",
     });
     await waitFor(() =>
-      expect(screen.getByText(/enviamos um link de acesso/i)).toBeInTheDocument(),
+      expect(screen.getByText(/we sent an access link/i)).toBeInTheDocument(),
     );
     expect(toastSuccess).toHaveBeenCalled();
   });
@@ -127,17 +127,17 @@ describe("LoginScreen — magic link (tab default)", () => {
     const user = userEvent.setup();
     render(<LoginScreen />);
 
-    await user.type(screen.getByPlaceholderText("voce@email.com"), "a@b.com");
-    await user.click(screen.getByRole("button", { name: /enviar link/i }));
+    await user.type(screen.getByPlaceholderText("you@email.com"), "a@b.com");
+    await user.click(screen.getByRole("button", { name: /send access link/i }));
 
     await waitFor(() => expect(toastError).toHaveBeenCalledWith("rate limited"));
-    expect(screen.queryByText(/enviamos um link/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/we sent an access link/i)).not.toBeInTheDocument();
   });
 });
 
 describe("LoginScreen — e-mail + senha", () => {
   async function switchToPassword(user: ReturnType<typeof userEvent.setup>) {
-    await user.click(screen.getByRole("button", { name: /senha/i }));
+    await user.click(screen.getByRole("button", { name: /password/i }));
   }
 
   it("login por senha chama signIn.email e navega em sucesso", async () => {
@@ -146,9 +146,9 @@ describe("LoginScreen — e-mail + senha", () => {
     render(<LoginScreen />);
     await switchToPassword(user);
 
-    await user.type(screen.getByPlaceholderText("voce@email.com"), "a@b.com");
-    await user.type(screen.getByPlaceholderText("Senha"), "s3nh4forte");
-    await user.click(screen.getByRole("button", { name: /^entrar$/i }));
+    await user.type(screen.getByPlaceholderText("you@email.com"), "a@b.com");
+    await user.type(screen.getByPlaceholderText("Password"), "s3nh4forte");
+    await user.click(screen.getByRole("button", { name: /^sign in$/i }));
 
     expect(signInEmail).toHaveBeenCalledWith({
       email: "a@b.com",
@@ -159,17 +159,17 @@ describe("LoginScreen — e-mail + senha", () => {
   });
 
   it("credencial inválida vira toast, sem navegar", async () => {
-    signInEmail.mockResolvedValue({ error: { message: "E-mail ou senha inválidos." } });
+    signInEmail.mockResolvedValue({ error: { message: "Invalid email or password." } });
     const user = userEvent.setup();
     render(<LoginScreen />);
     await switchToPassword(user);
 
-    await user.type(screen.getByPlaceholderText("voce@email.com"), "a@b.com");
-    await user.type(screen.getByPlaceholderText("Senha"), "errada");
-    await user.click(screen.getByRole("button", { name: /^entrar$/i }));
+    await user.type(screen.getByPlaceholderText("you@email.com"), "a@b.com");
+    await user.type(screen.getByPlaceholderText("Password"), "errada");
+    await user.click(screen.getByRole("button", { name: /^sign in$/i }));
 
     await waitFor(() =>
-      expect(toastError).toHaveBeenCalledWith("E-mail ou senha inválidos."),
+      expect(toastError).toHaveBeenCalledWith("Invalid email or password."),
     );
     expect(window.location.href).toBe("");
   });
@@ -180,12 +180,12 @@ describe("LoginScreen — e-mail + senha", () => {
     render(<LoginScreen />);
     await switchToPassword(user);
 
-    await user.click(screen.getByRole("button", { name: /criar conta/i }));
+    await user.click(screen.getByRole("button", { name: /sign up/i }));
     // Agora o form tem campo de nome e botão "Criar conta".
-    await user.type(screen.getByPlaceholderText("Seu nome"), "Fulano");
-    await user.type(screen.getByPlaceholderText("voce@email.com"), "novo@b.com");
-    await user.type(screen.getByPlaceholderText("Senha"), "s3nh4forte");
-    await user.click(screen.getByRole("button", { name: /^criar conta$/i }));
+    await user.type(screen.getByPlaceholderText("Your name"), "Fulano");
+    await user.type(screen.getByPlaceholderText("you@email.com"), "novo@b.com");
+    await user.type(screen.getByPlaceholderText("Password"), "s3nh4forte");
+    await user.click(screen.getByRole("button", { name: /^sign up$/i }));
 
     expect(signUpEmail).toHaveBeenCalledWith({
       name: "Fulano",
@@ -201,8 +201,8 @@ describe("LoginScreen — e-mail + senha", () => {
     render(<LoginScreen />);
     await switchToPassword(user);
 
-    await user.type(screen.getByPlaceholderText("voce@email.com"), "a@b.com");
-    await user.click(screen.getByRole("button", { name: /esqueci a senha/i }));
+    await user.type(screen.getByPlaceholderText("you@email.com"), "a@b.com");
+    await user.click(screen.getByRole("button", { name: /forgot password/i }));
 
     expect(requestPasswordReset).toHaveBeenCalledWith({
       email: "a@b.com",
@@ -216,8 +216,8 @@ describe("LoginScreen — e-mail + senha", () => {
     render(<LoginScreen />);
     await switchToPassword(user);
 
-    await user.click(screen.getByRole("button", { name: /esqueci a senha/i }));
+    await user.click(screen.getByRole("button", { name: /forgot password/i }));
     expect(requestPasswordReset).not.toHaveBeenCalled();
-    expect(toastError).toHaveBeenCalledWith("Informe seu e-mail primeiro.");
+    expect(toastError).toHaveBeenCalledWith("Enter your email first.");
   });
 });

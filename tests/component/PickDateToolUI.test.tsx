@@ -76,8 +76,8 @@ describe("PickDateCard — estado inicial", () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
     render(<PickDateCard {...props()} />);
-    // "escolha um dia" aparece na coluna de horários e no rodapé — basta existir.
-    expect(screen.getAllByText(/escolha um dia/i).length).toBeGreaterThan(0);
+    // "choose ... day" shows in the slots column and the footer — just needs to exist.
+    expect(screen.getAllByText(/choose (a )?day/i).length).toBeGreaterThan(0);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
@@ -102,7 +102,7 @@ describe("PickDateCard — disponibilidade real", () => {
     expect(busy).toBeDisabled();
     expect(busy).toHaveAttribute("title", "Reunião X");
     // Contador de livres: 2 (09:00 e 11:00).
-    expect(screen.getByText(/2 livres/i)).toBeInTheDocument();
+    expect(screen.getByText(/2 free/i)).toBeInTheDocument();
   });
 
   it("clicar num horário LIVRE mostra o resumo do horário escolhido", async () => {
@@ -119,7 +119,7 @@ describe("PickDateCard — disponibilidade real", () => {
     await user.click(screen.getByRole("button", { name: "09:00" }));
     // done state → card de resumo ("horário escolhido").
     await waitFor(() =>
-      expect(screen.getByText(/horário escolhido/i)).toBeInTheDocument(),
+      expect(screen.getByText(/time chosen/i)).toBeInTheDocument(),
     );
     expect(screen.getByText(/09:00/)).toBeInTheDocument();
   });
@@ -137,7 +137,7 @@ describe("PickDateCard — disponibilidade real", () => {
 
     await user.click(screen.getByRole("button", { name: "10:00" }));
     // Não deve ter virado o card de resumo.
-    expect(screen.queryByText(/horário escolhido/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/time chosen/i)).not.toBeInTheDocument();
   });
 
   it("dia sem horários livres mostra aviso", async () => {
@@ -155,7 +155,7 @@ describe("PickDateCard — disponibilidade real", () => {
     await user.click(dayButtons[dayButtons.length - 1]);
 
     await waitFor(() =>
-      expect(screen.getByText(/sem horários livres/i)).toBeInTheDocument(),
+      expect(screen.getByText(/no free time slots/i)).toBeInTheDocument(),
     );
   });
 
@@ -170,7 +170,7 @@ describe("PickDateCard — disponibilidade real", () => {
     await user.click(dayButtons[dayButtons.length - 1]);
 
     await waitFor(() =>
-      expect(screen.getByText(/agenda não conectada/i)).toBeInTheDocument(),
+      expect(screen.getByText(/calendar not connected/i)).toBeInTheDocument(),
     );
   });
 });
@@ -189,9 +189,9 @@ describe("PickDateCard — já respondido", () => {
         })}
       />,
     );
-    expect(screen.getByText(/horário escolhido/i)).toBeInTheDocument();
+    expect(screen.getByText(/time chosen/i)).toBeInTheDocument();
     expect(screen.getByText(/14:00/)).toBeInTheDocument();
     // Sem coluna "escolha um dia" — o seletor sumiu.
-    expect(screen.queryByText(/escolha um dia/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/choose day and time/i)).not.toBeInTheDocument();
   });
 });

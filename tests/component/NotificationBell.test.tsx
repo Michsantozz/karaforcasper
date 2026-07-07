@@ -61,7 +61,7 @@ describe("NotificationBell — visibilidade", () => {
 
   it("logado renderiza o botão do sino", () => {
     render(<NotificationBell />);
-    expect(screen.getByRole("button", { name: /notificações/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /notifications/i })).toBeInTheDocument();
   });
 });
 
@@ -69,7 +69,7 @@ describe("NotificationBell — badge de não-lidas", () => {
   it("mostra a contagem exata", () => {
     notifData = { notifications: [notif()], unreadCount: 3 };
     render(<NotificationBell />);
-    expect(screen.getByLabelText(/3 não lidas/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/3 unread/i)).toBeInTheDocument();
     expect(screen.getByText("3")).toBeInTheDocument();
   });
 
@@ -94,7 +94,7 @@ describe("NotificationBell — painel e deep-link", () => {
     };
     const user = userEvent.setup();
     render(<NotificationBell />);
-    await user.click(screen.getByRole("button", { name: /notificações/i }));
+    await user.click(screen.getByRole("button", { name: /notifications/i }));
     expect(screen.getByText("Ata pronta")).toBeInTheDocument();
   });
 
@@ -102,8 +102,8 @@ describe("NotificationBell — painel e deep-link", () => {
     notifData = { notifications: [], unreadCount: 0 };
     const user = userEvent.setup();
     render(<NotificationBell />);
-    await user.click(screen.getByRole("button", { name: /notificações/i }));
-    expect(screen.getByText(/nada por aqui/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /notifications/i }));
+    expect(screen.getByText(/nothing here/i)).toBeInTheDocument();
   });
 
   it("clicar num item com requestId marca lido e vai para /sign/:id", async () => {
@@ -113,7 +113,7 @@ describe("NotificationBell — painel e deep-link", () => {
     };
     const user = userEvent.setup();
     render(<NotificationBell />);
-    await user.click(screen.getByRole("button", { name: /notificações/i }));
+    await user.click(screen.getByRole("button", { name: /notifications/i }));
     await user.click(screen.getByText(/convocado para assinar/i));
 
     expect(markMutate).toHaveBeenCalledWith("nX");
@@ -127,7 +127,7 @@ describe("NotificationBell — painel e deep-link", () => {
     };
     const user = userEvent.setup();
     render(<NotificationBell />);
-    await user.click(screen.getByRole("button", { name: /notificações/i }));
+    await user.click(screen.getByRole("button", { name: /notifications/i }));
     await user.click(screen.getByText("Ata pronta"));
 
     expect(push).toHaveBeenCalledWith("/meetings");
@@ -142,7 +142,7 @@ describe("NotificationBell — painel e deep-link", () => {
     };
     const user = userEvent.setup();
     render(<NotificationBell />);
-    await user.click(screen.getByRole("button", { name: /notificações/i }));
+    await user.click(screen.getByRole("button", { name: /notifications/i }));
     await user.click(screen.getByText(/convocado para assinar/i));
 
     expect(markMutate).not.toHaveBeenCalled();

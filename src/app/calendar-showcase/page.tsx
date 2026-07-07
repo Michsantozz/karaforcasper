@@ -35,7 +35,7 @@ export default function CalendarShowcasePage() {
               Recall.ai · Calendar V2 · Multi-User
             </span>
             <span className="font-mono text-[10px] text-muted-foreground">
-              calendar-showcase / connects N users' calendars → schedules bots
+              calendar-showcase / connects N users&apos; calendars → schedules bots
             </span>
           </div>
         </div>
