@@ -1,16 +1,22 @@
 # pnpm v11 lê settings daqui (não mais do campo "pnpm" do package.json).
 #
-# Aprova apenas as deps que precisam rodar build script nativo/runtime real.
-# pnpm 10+ bloqueia lifecycle scripts por default e sai com erro sob
-# --frozen-lockfile quando algum fica ignorado (ERR_PNPM_IGNORED_BUILDS),
-# quebrando o CI. Drivers de teste (edge/gecko), agent-browser e msw ficam
-# ignorados de propósito — não são necessários pro build/runtime.
-onlyBuiltDependencies:
-  - "@reown/appkit"
-  - bigint-buffer
-  - bufferutil
-  - esbuild
-  - protobufjs
-  - sharp
-  - unrs-resolver
-  - utf-8-validate
+# allowBuilds (v11) substitui onlyBuiltDependencies (v10, deprecated): mapa
+# { pacote: true|false } controlando quem pode rodar lifecycle/build script.
+# pnpm bloqueia build scripts por default e sai com ERR_PNPM_IGNORED_BUILDS
+# sob --frozen-lockfile quando algum fica sem decisão explícita, quebrando o CI.
+#
+# true  = precisa do build nativo/runtime real (compila binário .node, etc).
+# false = tem build script mas não precisamos dele (drivers de teste, mocks).
+allowBuilds:
+  "@reown/appkit": true
+  bigint-buffer: true
+  bufferutil: true
+  esbuild: true
+  protobufjs: true
+  sharp: true
+  unrs-resolver: true
+  utf-8-validate: true
+  agent-browser: false
+  edgedriver: false
+  geckodriver: false
+  msw: false
