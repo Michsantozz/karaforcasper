@@ -42,8 +42,10 @@ const perceive = createStep({
 const AUTONOMOUS_MIN_BALANCE_CSPR = Number(
   process.env.CASPER_AUTONOMOUS_MIN_BALANCE_CSPR ?? "5",
 );
+// Default = piso da rede (2.5). Abaixo disso a policy recusa (amount_below_minimum)
+// e o heartbeat nunca completaria — o default precisa ser >= MIN_TRANSFER_CSPR.
 const AUTONOMOUS_HEARTBEAT_CSPR = Number(
-  process.env.CASPER_AUTONOMOUS_HEARTBEAT_CSPR ?? "1",
+  process.env.CASPER_AUTONOMOUS_HEARTBEAT_CSPR ?? "2.5",
 );
 
 /** Efetua a transferência de heartbeat. Injetável para teste. */

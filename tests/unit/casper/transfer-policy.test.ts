@@ -87,8 +87,9 @@ describe("assertTransferAllowed — allowlist de destinos", () => {
       AGENT_MAX_TRANSFER_CSPR: "5",
       AGENT_TRANSFER_ALLOWLIST: undefined,
     });
+    // amountCspr dentro da faixa válida (>= piso 2.5, <= teto 5).
     expect(() =>
-      assertTransferAllowed({ toPublicKeyHex: "09deadbeef", amountCspr: 1 }),
+      assertTransferAllowed({ toPublicKeyHex: "09deadbeef", amountCspr: 3 }),
     ).not.toThrow();
   });
 
@@ -98,7 +99,7 @@ describe("assertTransferAllowed — allowlist de destinos", () => {
       AGENT_TRANSFER_ALLOWLIST: "01aabb,02ccdd",
     });
     expect(() =>
-      assertTransferAllowed({ toPublicKeyHex: "01AABB", amountCspr: 1 }),
+      assertTransferAllowed({ toPublicKeyHex: "01AABB", amountCspr: 3 }),
     ).not.toThrow();
   });
 
@@ -108,7 +109,7 @@ describe("assertTransferAllowed — allowlist de destinos", () => {
       AGENT_TRANSFER_ALLOWLIST: "01aabb",
     });
     try {
-      assertTransferAllowed({ toPublicKeyHex: "09ffff", amountCspr: 1 });
+      assertTransferAllowed({ toPublicKeyHex: "09ffff", amountCspr: 3 });
       expect.unreachable("deveria ter lançado");
     } catch (err) {
       expect(err).toBeInstanceOf(TransferPolicyError);
@@ -133,4 +134,53 @@ describe("assertTransferAllowed — allowlist de destinos", () => {
       );
     }
   });
+});
+
+describe("assertTransferAllowed — piso da rede (2.5 CSPR)", () => {
+  it("recusa valor abaixo do piso da rede", async () => {
+    const { assertTransferAllowed, TransferPolicyError } = await loadPolicy({
+      AGENT_MAX_TRANSFER_CSPR: "5",
+      AGENT_TRANSFER_ALLOWLIST: undefined,
+    });
+    try {
+      assertTransferAllowed({ toPublicKeyHex: "01aa", amountCspr: 1 });
+      expect.unreachable("deveria ter lançado");
+    } catch (err) {
+      expect(err).toBeInstanceOf(TransferPolicyError);
+      expect((err as InstanceType<typeof TransferPolicyError>).code).toBe(
+        "amount_below_minimum",
+      );
+    }
+  });
+
+  it("aceita exatamente no piso (2.5 CSPR)", async () => {
+    const { assertTransferAllowed } = await loadPolicy({
+      AGENT_MAX_TRANSFER_CSPR: "5",
+      AGENT_TRANSFER_ALLOWLIST: undefined,
+    });
+    expect(() =>
+      assertTransferAllowed({ toPublicKeyHex: "01aa", amountCspr: 2.5 }),
+    ).not.toThrow();
+  });
+});
+
+describe("assertTransferAllowed — teto mal configurado (fail-closed)", () => {
+  it.each(["abc", "0", "-1", ""])(
+    "trata AGENT_MAX_TRANSFER_CSPR inválido (%s) como erro, não 'sem teto'",
+    async (bad) => {
+      const { assertTransferAllowed, TransferPolicyError } = await loadPolicy({
+        AGENT_MAX_TRANSFER_CSPR: bad,
+        AGENT_TRANSFER_ALLOWLIST: undefined,
+      });
+      try {
+        assertTransferAllowed({ toPublicKeyHex: "01aa", amountCspr: 3 });
+        expect.unreachable("deveria ter lançado");
+      } catch (err) {
+        expect(err).toBeInstanceOf(TransferPolicyError);
+        expect((err as InstanceType<typeof TransferPolicyError>).code).toBe(
+          "policy_misconfigured",
+        );
+      }
+    },
+  );
 });
