@@ -2,7 +2,6 @@ import { handleChatStream } from "@mastra/ai-sdk";
 import { createUIMessageStreamResponse, jsonSchema, tool } from "ai";
 import type { JSONSchema7 } from "ai";
 import { NextResponse } from "next/server";
-import { mastra } from "@/mastra";
 import { getSession } from "@/features/auth/model/session";
 
 export const maxDuration = 60;
@@ -52,6 +51,8 @@ export async function POST(req: Request) {
   const { tools, ...rest } = params as {
     tools?: Record<string, FrontendToolJSONSchema>;
   } & Record<string, unknown>;
+
+  const { mastra } = await import("@/mastra");
 
   // version:'v6' required — assistant-ui types against AI SDK v6.
   const stream = await handleChatStream({

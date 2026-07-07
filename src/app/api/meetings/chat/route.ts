@@ -1,6 +1,5 @@
 import { handleChatStream } from "@mastra/ai-sdk";
 import { createUIMessageStreamResponse } from "ai";
-import { mastra } from "@/mastra";
 import { getSession } from "@/features/auth/model/session";
 
 export const maxDuration = 60;
@@ -20,6 +19,7 @@ export async function POST(req: Request) {
   }
 
   const params = await req.json();
+  const { mastra } = await import("@/mastra");
   const stream = await handleChatStream({
     mastra,
     agentId: "meetingAgent",

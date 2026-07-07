@@ -1,10 +1,33 @@
 import { createServe } from "@mastra/inngest";
 import { serve } from "inngest/next";
-import { mastra } from "@/mastra";
 import { inngest } from "@/inngest/client";
 
 // Endpoint discovered by inngest-cli (pnpm dev:inngest -u .../api/inngest).
 // Exposes the autonomous-loop with its cron — this is what makes the agent AUTONOMOUS.
 const serveNext = createServe(serve);
+type InngestHandlers = ReturnType<typeof serveNext>;
 
-export const { GET, POST, PUT } = serveNext({ mastra, inngest });
+let handlers: InngestHandlers | undefined;
+
+async function getHandlers() {
+  if (!handlers) {
+    const { mastra } = await import("@/mastra");
+    handlers = serveNext({ mastra, inngest });
+  }
+  return handlers;
+}
+
+export const GET: InngestHandlers["GET"] = async (...args) => {
+  const currentHandlers = await getHandlers();
+  return currentHandlers.GET(...args);
+};
+
+export const POST: InngestHandlers["POST"] = async (...args) => {
+  const currentHandlers = await getHandlers();
+  return currentHandlers.POST(...args);
+};
+
+export const PUT: InngestHandlers["PUT"] = async (...args) => {
+  const currentHandlers = await getHandlers();
+  return currentHandlers.PUT(...args);
+};
