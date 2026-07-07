@@ -1,0 +1,95 @@
+# CasperAgent — stack de produção self-host.
+#   db      — Postgres (better-auth, Mastra memory, drizzle).
+#   migrate — roda as migrations e sai (job one-shot; app espera terminar).
+#   inngest — servidor Inngest: descobre /api/inngest e dispara o cron autônomo.
+#   app     — Next.js standalone (server.js).
+#
+# Uso:
+#   cp .env.example .env   # e preencha os [SECRET]
+#   docker compose up -d --build
+#
+# Secrets vêm do .env (env_file). Em prod real, prefira Docker/K8s secrets.
+
+name: casperagent
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: casper
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-casper}
+      POSTGRES_DB: casperagent
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U casper -d casperagent"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Job one-shot: aplica migrations e encerra. App só sobe depois deste completar.
+  migrate:
+    build:
+      context: .
+      target: builder
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://casper:${POSTGRES_PASSWORD:-casper}@db:5432/casperagent
+    command: ["pnpm", "db:migrate"]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  # Servidor Inngest: registra o endpoint /api/inngest do app e executa o cron
+  # do loop autônomo + workflows. Sem ele, o agente NÃO é autônomo.
+  inngest:
+    image: inngest/inngest:latest
+    restart: unless-stopped
+    command: ["inngest", "start"]
+    environment:
+      INNGEST_DEV: "0"
+    ports:
+      - "8288:8288"
+    depends_on:
+      app:
+        condition: service_healthy
+
+  app:
+    build:
+      context: .
+      target: runner
+      args:
+        # Server Actions encryption key precisa estar presente no BUILD.
+        NEXT_SERVER_ACTIONS_ENCRYPTION_KEY: ${NEXT_SERVER_ACTIONS_ENCRYPTION_KEY}
+        GIT_HASH: ${GIT_HASH:-}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://casper:${POSTGRES_PASSWORD:-casper}@db:5432/casperagent
+      INNGEST_BASE_URL: http://inngest:8288
+      INNGEST_DEV: "0"
+    ports:
+      - "3000:3000"
+    # Readiness real (pinga Postgres). Node inline — slim não garante curl/wget.
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3000/api/health?ready=1').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  pgdata:

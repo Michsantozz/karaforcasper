@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import path from "node:path";
 
 const isProd = process.env.NODE_ENV === "production";
 
@@ -49,6 +50,18 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  // Build standalone: `.next/standalone` traça só o server + node_modules
+  // necessários, sem `next start` nem node_modules inteiro na imagem Docker.
+  // Padrão oficial de containerização (docs/app/guides/self-hosting).
+  output: "standalone",
+  // pnpm usa symlinks em node_modules; sem tracingRoot explícito o file-tracing
+  // do standalone pode perder deps e o server quebra em runtime. Fixa a raiz.
+  outputFileTracingRoot: path.join(__dirname),
+  // Build ID estável entre imagens/ambientes. Sem isto cada `next build` gera
+  // um ID novo → version skew (assets 404, "Failed to find Server Action") em
+  // rolling deploy. Injetado via CI (git SHA); cai no default se ausente.
+  generateBuildId: async () =>
+    process.env.GIT_HASH ?? process.env.SOURCE_COMMIT ?? null,
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },
