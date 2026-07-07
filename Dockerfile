@@ -15,7 +15,9 @@ RUN corepack enable
 # Instala deps num layer isolado; só invalida quando lockfile/manifest mudam.
 FROM base AS deps
 WORKDIR /app
-COPY package.json pnpm-lock.yaml ./
+# pnpm-workspace.yaml carrega allowBuilds — sem ele o install ignora build
+# scripts nativos (sharp/esbuild) e falha com ERR_PNPM_IGNORED_BUILDS.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 # Cache do store do pnpm entre builds (BuildKit). --frozen-lockfile = reprodutível.
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
     pnpm install --frozen-lockfile
