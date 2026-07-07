@@ -10,6 +10,10 @@ agent-secret.pem
 *.tsbuildinfo
 next-env.d.ts
 
+# Playwright artifacts (test run output / reports) — não são código do projeto.
+/test-results
+/playwright-report
+
 # Docs de trabalho/scratch — NÃO vão pro repo. Mantemos versionados apenas os
 # READMEs (README.md, tests/README.md), o CLAUDE.md e as skills reais
 # (.claude/skills/**). Todo o resto de .md de referência/scratch fica ignorado.
