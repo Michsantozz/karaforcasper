@@ -1,6 +1,8 @@
 import "server-only";
 import { getRpc, getAgentPublicKeyHex } from "./client";
 import { creditDeposit, MOTES_PER_CSPR } from "./billing";
+import { approvalSigners } from "./multisig";
+import { resolveUserByWallet } from "./user-wallets";
 
 /**
  * Verificação de depósito on-chain → crédito no ledger.
@@ -10,8 +12,11 @@ import { creditDeposit, MOTES_PER_CSPR } from "./billing";
  * que os fundos chegaram ao app e credita o ledger — idempotente por txHash, de
  * modo que reenviar o mesmo hash não credita duas vezes.
  *
- * Confiamos apenas no que está on-chain: valor e destino vêm da transação lida
- * do nó, nunca de parâmetros do cliente (que só informa qual tx conferir).
+ * Confiamos apenas no que está on-chain: valor, destino E REMETENTE vêm da
+ * transação lida do nó, nunca de parâmetros do cliente (que só informa qual tx
+ * conferir). O remetente (quem assinou a tx) tem que ser uma carteira VERIFICADA
+ * do próprio usuário — senão qualquer autenticado creditaria em si um depósito
+ * alheio só informando o txHash público (deposit hijack).
  */
 
 export interface VerifyDepositResult {
@@ -53,17 +58,34 @@ export async function verifyAndCreditDeposit(args: {
 }): Promise<VerifyDepositResult> {
   const appPubKey = (await getAgentPublicKeyHex()).toLowerCase();
 
-  let blob: string;
+  let rawBlob: string;
   try {
     const res = await getRpc().getTransactionByTransactionHash(args.txHash);
-    blob = JSON.stringify(res.transaction.toJSON()).toLowerCase();
+    rawBlob = JSON.stringify(res.transaction.toJSON());
   } catch {
     return { credited: false, reason: "transaction not found on-chain" };
   }
+  const blob = rawBlob.toLowerCase();
 
   // O destino tem que ser a conta do app — senão o depósito não chegou a nós.
   if (!blob.includes(appPubKey)) {
     return { credited: false, reason: "transfer target is not the app account" };
+  }
+
+  // O remetente (quem ASSINOU a tx on-chain) tem que ser uma carteira verificada
+  // DESTE usuário. Sem isso, qualquer autenticado creditaria em si um depósito
+  // alheio informando o txHash público. A assinatura é a fonte de verdade de
+  // quem pagou — não confiamos em nenhum campo do corpo da requisição.
+  const signers = approvalSigners(rawBlob);
+  if (signers.length === 0) {
+    return { credited: false, reason: "could not read transaction sender" };
+  }
+  const senderOwners = await Promise.all(signers.map(resolveUserByWallet));
+  if (!senderOwners.includes(args.userId)) {
+    return {
+      credited: false,
+      reason: "sender wallet is not a verified wallet of this user",
+    };
   }
 
   const amountMotes = extractAmountMotes(blob);
@@ -71,10 +93,12 @@ export async function verifyAndCreditDeposit(args: {
     return { credited: false, reason: "could not read transfer amount" };
   }
 
+  // Grava a carteira de origem (primeiro signer) para trilha de auditoria.
   const credited = await creditDeposit({
     txHash: args.txHash,
     userId: args.userId,
     amountMotes,
+    fromPublicKey: signers[0],
   });
 
   return {
