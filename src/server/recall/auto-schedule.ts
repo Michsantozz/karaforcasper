@@ -88,10 +88,19 @@ export async function autoScheduleAll(): Promise<{
   const calendars = await withSystemScope(() => listAutoRecordCalendars());
   let scheduled = 0;
   for (const cal of calendars) {
+    // Isolate per-calendar failures: one broken calendar must not abort the
+    // whole cron tick. Log it (don't swallow silently) so a persistently
+    // failing calendar is visible to operators instead of failing invisibly.
     const res = await autoScheduleForCalendar({
       calendarId: cal.recallCalendarId,
       userId: cal.userId,
-    }).catch(() => null);
+    }).catch((err) => {
+      console.warn(
+        `[auto-schedule] calendar ${cal.recallCalendarId} (user ${cal.userId}) failed:`,
+        err instanceof Error ? err.message : err,
+      );
+      return null;
+    });
     if (res) scheduled += res.scheduled;
   }
   return { calendars: calendars.length, scheduled };

@@ -374,7 +374,9 @@ export const getRecallRecordingTool = createTool({
       method: "GET",
       path: `v1/bot/${input.botId}/`,
     });
-    const rec = bot.recordings?.[0];
+    // A bot can have >1 recording (re-join/resume); pickRecording reads the
+    // transcript-ready one instead of blindly taking recordings[0].
+    const rec = pickRecording(bot.recordings, input.botId);
     const ms = rec?.media_shortcuts ?? {};
 
     const media = (["video_mixed", "audio_mixed", "transcript"] as const).map(
@@ -496,7 +498,10 @@ export const getRecallParticipantsTool = createTool({
       path: `v1/bot/${input.botId}/`,
     });
 
-    const pe = bot.recordings?.[0]?.media_shortcuts?.participant_events;
+    // A bot can have >1 recording (re-join/resume); read the transcript-ready
+    // one via pickRecording instead of blindly taking recordings[0].
+    const rec = pickRecording(bot.recordings, input.botId);
+    const pe = rec?.media_shortcuts?.participant_events;
     const peUrl = pe?.data?.participants_download_url;
     if (!pe || pe.status?.code !== "done" || !peUrl) {
       return { botId: bot.id, state: "processing" as const };
@@ -511,7 +516,7 @@ export const getRecallParticipantsTool = createTool({
 
     // Speaking time derived from the transcript (word duration per name).
     const speaking = new Map<string, number>();
-    const transcript = bot.recordings?.[0]?.media_shortcuts?.transcript;
+    const transcript = rec?.media_shortcuts?.transcript;
     if (transcript?.status?.code === "done" && transcript.data?.download_url) {
       const tRes = await fetch(transcript.data.download_url);
       const segments = (await tRes.json()) as TranscriptSegment[];
