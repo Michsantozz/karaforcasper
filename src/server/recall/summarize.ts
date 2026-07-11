@@ -3,6 +3,7 @@ import { generateObject } from "ai";
 import { z } from "zod";
 import { createChatModel } from "@/mastra/model";
 import { recallFetch } from "@/server/recall/client";
+import { pickRecording } from "@/server/recall/recordings";
 
 /**
  * Meeting summarization from a Recall bot's transcript — reusable server
@@ -80,7 +81,8 @@ async function loadTranscript(botId: string): Promise<{
     path: `v1/bot/${botId}/`,
   });
 
-  const transcript = bot.recordings?.[0]?.media_shortcuts?.transcript;
+  const transcript = pickRecording(bot.recordings, botId)?.media_shortcuts
+    ?.transcript;
   if (!transcript) return { bot, state: "none", segments: [] };
 
   const url = transcript.data?.download_url;

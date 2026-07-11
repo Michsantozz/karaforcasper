@@ -21,11 +21,20 @@ import { inngest } from "@/inngest/client";
  */
 
 type BotBase = {
-  data: { bot?: { id?: string; metadata?: Record<string, unknown> } };
+  data: {
+    bot?: { id?: string; metadata?: Record<string, unknown> };
+    // Status artifact (transcript.failed etc.): machine-readable failure code.
+    data?: { code?: string; sub_code?: string | null };
+  };
 };
 type TranscriptDone = BotBase & { event: "transcript.done" };
+type TranscriptFailed = BotBase & { event: "transcript.failed" };
 type BotDone = BotBase & { event: "bot.done" };
-type BotWebhook = TranscriptDone | BotDone | { event: string; data: unknown };
+type BotWebhook =
+  | TranscriptDone
+  | TranscriptFailed
+  | BotDone
+  | { event: string; data: unknown };
 
 export async function POST(req: Request) {
   const secret = process.env.RECALL_WEBHOOK_SECRET;
@@ -52,8 +61,13 @@ export async function POST(req: Request) {
   }
 
   try {
-    // Only react to the end of the transcript — the moment the minutes can be generated.
-    if (payload.event !== "transcript.done") {
+    // We react to two terminal transcript outcomes:
+    //  - transcript.done   → the minutes can be generated (happy path);
+    //  - transcript.failed → transcription itself failed on Recall (bad audio,
+    //    ASR error). There will be NO transcript.done, so if we ignored this the
+    //    meeting would leave no row at all and be invisible forever (a ghost).
+    //    We record it as failed + notify the owner instead of staying silent.
+    if (payload.event !== "transcript.done" && payload.event !== "transcript.failed") {
       return NextResponse.json({ ok: true, ignored: payload.event });
     }
 
@@ -71,6 +85,40 @@ export async function POST(req: Request) {
         : null;
     const row = await findBotByBotId(botId);
     const userId = payloadUser ?? botOwnerUserId(row);
+
+    // Orphan guard: with no owner, RLS hides the resulting row from every user
+    // and no one can be notified — the meeting would be processed and then
+    // invisible. We still enqueue (so the data isn't lost and can be re-owned
+    // later), but surface it loudly instead of silently.
+    if (!userId) {
+      console.warn(
+        `[webhook-recall-bot] orphan meeting: no owner resolved for bot ${botId} ` +
+          `(no payload metadata.user_id and no recall_bots row). Row will be ` +
+          `hidden by RLS until an owner is attached.`,
+      );
+    }
+
+    // Transcript failed on Recall's side → mark the meeting failed and tell the
+    // owner. Record it as `failed` with the Recall sub_code so the failure is
+    // visible in the list (not a ghost), and skip enrichment (there's nothing to
+    // enrich). Idempotent: enqueue is a no-op if a row already exists, then we
+    // fail it.
+    if (payload.event === "transcript.failed") {
+      const subCode = data.data?.sub_code ?? data.data?.code ?? "unknown";
+      const reason = `transcript.failed: ${subCode}`;
+      const { markMeetingTranscriptFailed } = await import(
+        "@/server/recall/enrich"
+      );
+      await withSystemScope(() =>
+        markMeetingTranscriptFailed({
+          botId,
+          userId,
+          meetingUrl: row?.meetingUrl ?? null,
+          reason,
+        }),
+      );
+      return NextResponse.json({ ok: true, botId, recorded: "transcript_failed" });
+    }
 
     // ENQUEUES the minutes (idempotent) instead of generating them synchronously
     // here. Generation lives in the durable meeting-enrich workflow — persisted to

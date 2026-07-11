@@ -3,6 +3,7 @@ import { summarizeMeeting } from "@/server/recall/summarize";
 import {
   claimMeetingRecord,
   completeMeetingRecord,
+  enqueueMeetingRecord,
   failMeetingRecord,
   findMeetingRecord,
   listStuckMeetingRecords,
@@ -66,6 +67,9 @@ export async function enrichMeeting(botId: string): Promise<EnrichResult> {
       await withSystemScope(() =>
         failMeetingRecord(botId, "empty or unavailable transcript"),
       );
+      // Terminal: no transcript to work with. Tell the owner instead of leaving
+      // a silent failed row no one is told about.
+      await notifyMeetingFailed(botId, claimed.userId, "empty transcript");
       return { state: "failed", error: "empty transcript" };
     }
 
@@ -115,11 +119,65 @@ export async function enrichMeeting(botId: string): Promise<EnrichResult> {
       await withSystemScope(() =>
         failMeetingRecord(botId, `max attempts: ${message}`),
       );
+      // Dead-letter: retries exhausted. Notify the owner so a meeting that
+      // failed 5× doesn't just vanish from their radar.
+      await notifyMeetingFailed(botId, claimed.userId, `max attempts: ${message}`);
       return { state: "failed", error: message };
     }
     await withSystemScope(() => requeueMeetingRecord(botId, message));
     return { state: "processing" };
   }
+}
+
+/**
+ * Records a meeting whose TRANSCRIPT failed on Recall's side (bad audio, ASR
+ * error) as a terminal `failed` row, and notifies the owner. Called by the bot
+ * webhook on `transcript.failed`. Without this, a failed transcription produces
+ * no `transcript.done` and thus no row at all — the meeting is invisible forever
+ * (a ghost). Idempotent: enqueue is a no-op if a row already exists; we then
+ * fail it. Never enriches (there is no transcript to enrich).
+ */
+export async function markMeetingTranscriptFailed(input: {
+  botId: string;
+  userId: string | null;
+  meetingUrl?: string | null;
+  reason: string;
+}): Promise<void> {
+  const { botId, userId, meetingUrl, reason } = input;
+  await withSystemScope(() =>
+    enqueueMeetingRecord({ botId, userId, meetingUrl }),
+  );
+  await withSystemScope(() => failMeetingRecord(botId, reason));
+  await notifyMeetingFailed(botId, userId, reason);
+}
+
+/**
+ * Notifies the owner that a meeting's minutes could NOT be produced — the
+ * transcript failed on Recall, or enrichment exhausted its retries. Shared by
+ * the webhook (transcript.failed) and the enrichment worker (terminal failure),
+ * so a failed meeting is never a silent dead-end. Best-effort like notifyOwner.
+ */
+async function notifyMeetingFailed(
+  botId: string,
+  recordUserId: string | null,
+  reason: string,
+): Promise<boolean> {
+  const userId = recordUserId ?? botOwnerUserId(await findBotByBotId(botId));
+  if (!userId) {
+    console.warn(
+      `[enrich] failed meeting for bot ${botId} has no owner to notify (${reason})`,
+    );
+    return false;
+  }
+  await withSystemScope(() =>
+    createNotification({
+      userId,
+      type: "meeting_failed",
+      message: "We couldn't generate minutes for a meeting. Open to review.",
+      link: `/meetings/${botId}`,
+    }),
+  );
+  return true;
 }
 
 /** Notifies the minutes owner (in-app + best-effort email). */
@@ -130,7 +188,15 @@ async function notifyOwner(
 ): Promise<boolean> {
   const userId =
     recordUserId ?? botOwnerUserId(await findBotByBotId(botId));
-  if (!userId) return false;
+  if (!userId) {
+    // Orphan minutes: enriched but ownerless → no one to notify, hidden by RLS.
+    // Surface it (matching the webhook's orphan guard) so it's diagnosable
+    // instead of a silent no-op after we've already paid the LLM.
+    console.warn(
+      `[enrich] orphan minutes for bot ${botId}: enriched but no owner to notify`,
+    );
+    return false;
+  }
 
   const decisions = summary.decisions?.length ?? 0;
   const tasks = summary.actionItems?.length ?? 0;
@@ -158,11 +224,19 @@ async function notifyOwner(
  * each one. Called by the reconciliation cron. Returns counts per outcome.
  */
 export async function reconcileStuckMeetings(
-  staleMs = 5 * 60_000,
+  // 15 min ≈ 3× the reconcile cron. MUST be ≥ claimMeetingRecord's
+  // staleProcessingMs, so we never LIST a `processing` row as stuck before the
+  // claim itself would consider it stealable — otherwise reconcile calls
+  // enrichMeeting on a live run, which then no-ops at the claim (wasted work,
+  // but not a double-enrich). Keeping the two windows aligned avoids even that.
+  staleMs = 15 * 60_000,
 ): Promise<{ processed: number; done: number; stillPending: number }> {
   // System read (the scan crosses users). enrichMeeting opens its own
-  // system scope per bot.
-  const botIds = await withSystemScope(() => listStuckMeetingRecords(staleMs));
+  // system scope per bot. Pass MAX_ATTEMPTS so failed rows with retry budget
+  // left are rescued too (a transient failure is not a permanent dead-end).
+  const botIds = await withSystemScope(() =>
+    listStuckMeetingRecords(staleMs, MAX_ATTEMPTS),
+  );
   let done = 0;
   let stillPending = 0;
   for (const botId of botIds) {

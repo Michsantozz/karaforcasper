@@ -1,6 +1,7 @@
 import "server-only";
 import { Buffer } from "node:buffer";
 import { recallFetch } from "@/server/recall/client";
+import { pickRecording } from "@/server/recall/recordings";
 import { uploadObject } from "@/server/storage/s3";
 
 /**
@@ -80,7 +81,7 @@ export async function captureMeetingMedia(
     path: `v1/bot/${botId}/`,
   }).catch(() => null);
 
-  const shortcuts = bot?.recordings?.[0]?.media_shortcuts;
+  const shortcuts = pickRecording(bot?.recordings, botId)?.media_shortcuts;
 
   const transcriptStruct = await captureTranscript(shortcuts?.transcript);
   const videoUrl = await captureVideo(shortcuts?.video_mixed, botId, userId);

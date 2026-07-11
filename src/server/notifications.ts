@@ -14,7 +14,10 @@ import { notifications, type NotificationRow } from "@/shared/db/schema";
 
 export type NotificationType =
   // Meeting minutes generated automatically after the call ends (bot webhook).
-  | "meeting_summary_ready";
+  | "meeting_summary_ready"
+  // Minutes could NOT be generated — transcript failed on Recall, or enrichment
+  // exhausted its retries. Surfaced so a failed meeting isn't a silent dead-end.
+  | "meeting_failed";
 
 /** Creates a notification for a user. */
 export async function createNotification(input: {

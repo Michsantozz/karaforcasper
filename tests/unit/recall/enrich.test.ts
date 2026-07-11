@@ -16,6 +16,7 @@ const claimMeetingRecord = vi.fn();
 const completeMeetingRecord = vi.fn();
 const failMeetingRecord = vi.fn();
 const requeueMeetingRecord = vi.fn();
+const enqueueMeetingRecord = vi.fn();
 const listStuckMeetingRecords = vi.fn();
 const summarizeMeeting = vi.fn();
 const captureMeetingMedia = vi.fn();
@@ -30,6 +31,7 @@ vi.mock("@/server/recall/meeting-repository", () => ({
   completeMeetingRecord: (...a: unknown[]) => completeMeetingRecord(...a),
   failMeetingRecord: (...a: unknown[]) => failMeetingRecord(...a),
   requeueMeetingRecord: (...a: unknown[]) => requeueMeetingRecord(...a),
+  enqueueMeetingRecord: (...a: unknown[]) => enqueueMeetingRecord(...a),
   listStuckMeetingRecords: (...a: unknown[]) => listStuckMeetingRecords(...a),
 }));
 vi.mock("@/server/recall/summarize", () => ({
@@ -70,6 +72,7 @@ beforeEach(() => {
     completeMeetingRecord,
     failMeetingRecord,
     requeueMeetingRecord,
+    enqueueMeetingRecord,
     listStuckMeetingRecords,
     summarizeMeeting,
     captureMeetingMedia,
@@ -137,6 +140,10 @@ describe("enrichMeeting — máquina de estados", () => {
       "bot-1",
       "empty or unavailable transcript",
     );
+    // #6: a terminal failure notifies the owner (no silent dead-end).
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: "owner-1", type: "meeting_failed" }),
+    );
   });
 
   it("done: persiste a ata, notifica o dono (in-app + email)", async () => {
@@ -196,6 +203,62 @@ describe("enrichMeeting — máquina de estados", () => {
       "max attempts: LLM down",
     );
     expect(requeueMeetingRecord).not.toHaveBeenCalled();
+    // #6: dead-letter — the owner is told the meeting failed for good.
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: "owner-1", type: "meeting_failed" }),
+    );
+  });
+});
+
+describe("markMeetingTranscriptFailed — transcrição falhou na Recall (#3)", () => {
+  it("registra failed + notifica o dono (não vira reunião fantasma)", async () => {
+    const { markMeetingTranscriptFailed } = await importEnrich();
+
+    await markMeetingTranscriptFailed({
+      botId: "bot-x",
+      userId: "owner-1",
+      meetingUrl: "https://meet/x",
+      reason: "transcript.failed: no_audio",
+    });
+
+    // Row criada (idempotente) e marcada failed com o sub_code da Recall.
+    expect(enqueueMeetingRecord).toHaveBeenCalledWith(
+      expect.objectContaining({ botId: "bot-x", userId: "owner-1" }),
+    );
+    expect(failMeetingRecord).toHaveBeenCalledWith(
+      "bot-x",
+      "transcript.failed: no_audio",
+    );
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: "owner-1",
+        type: "meeting_failed",
+        link: "/meetings/bot-x",
+      }),
+    );
+  });
+
+  it("órfão (sem dono): registra failed mas não notifica, e avisa", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    findBotByBotId.mockResolvedValue(null);
+    botOwnerUserId.mockReturnValue(null);
+    const { markMeetingTranscriptFailed } = await importEnrich();
+
+    await markMeetingTranscriptFailed({
+      botId: "bot-orphan",
+      userId: null,
+      reason: "transcript.failed: no_audio",
+    });
+
+    expect(failMeetingRecord).toHaveBeenCalledWith(
+      "bot-orphan",
+      "transcript.failed: no_audio",
+    );
+    expect(createNotification).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("bot-orphan"),
+    );
+    warn.mockRestore();
   });
 });
 
@@ -217,7 +280,51 @@ describe("reconcileStuckMeetings — sweep", () => {
     const { reconcileStuckMeetings } = await importEnrich();
     const res = await reconcileStuckMeetings(5 * 60_000);
 
-    expect(listStuckMeetingRecords).toHaveBeenCalledWith(5 * 60_000);
+    // Passes the attempt ceiling so the repo can also rescue `failed` rows with
+    // retry budget left (MAX_ATTEMPTS = 5).
+    expect(listStuckMeetingRecords).toHaveBeenCalledWith(5 * 60_000, 5);
     expect(res).toEqual({ processed: 3, done: 1, stillPending: 1 });
+  });
+
+  it("resgata um bot `failed` que voltou à lista de stuck (retry budget)", async () => {
+    // The repo now returns failed-with-budget rows; enrich reprocesses them
+    // like any other. Here the retry succeeds → done.
+    listStuckMeetingRecords.mockResolvedValue(["bot-failed"]);
+    findMeetingRecord.mockResolvedValue({ status: "failed" });
+    claimMeetingRecord.mockResolvedValue({ ...CLAIMED, attempts: 3 });
+    summarizeMeeting.mockResolvedValue({ state: "ready", summary: "recovered" });
+
+    const { reconcileStuckMeetings } = await importEnrich();
+    const res = await reconcileStuckMeetings(5 * 60_000);
+
+    expect(res).toEqual({ processed: 1, done: 1, stillPending: 0 });
+    expect(completeMeetingRecord).toHaveBeenCalledWith(
+      "bot-failed",
+      expect.objectContaining({ summary: "recovered" }),
+    );
+  });
+});
+
+describe("notifyOwner — ata órfã (sem dono)", () => {
+  it("não notifica e emite warn quando não há userId resolvível", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    findMeetingRecord.mockResolvedValue({ status: "pending" });
+    // claimed.userId null → notifyOwner cai no fallback do bot-repository...
+    claimMeetingRecord.mockResolvedValue({ ...CLAIMED, userId: null });
+    summarizeMeeting.mockResolvedValue({ state: "ready", summary: "ok" });
+    // ...que também não resolve dono.
+    findBotByBotId.mockResolvedValue(null);
+    botOwnerUserId.mockReturnValue(null);
+
+    const { enrichMeeting } = await importEnrich();
+    const res = await enrichMeeting("bot-orphan");
+
+    expect(res).toEqual({ state: "done", notified: false });
+    expect(createNotification).not.toHaveBeenCalled();
+    expect(emailMeetingSummaryReady).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("orphan minutes for bot bot-orphan"),
+    );
+    warn.mockRestore();
   });
 });
