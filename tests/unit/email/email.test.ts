@@ -177,3 +177,107 @@ describe("templates transacionais", () => {
     expect(send).not.toHaveBeenCalled();
   });
 });
+
+describe("userIdentityById", () => {
+  it("retorna nome + email quando a linha existe", async () => {
+    limit.mockResolvedValue([{ name: "Ana", email: "ana@x.com" }]);
+    const { userIdentityById } = await import("@/server/email");
+    expect(await userIdentityById("u1")).toEqual({
+      name: "Ana",
+      email: "ana@x.com",
+    });
+  });
+
+  it("name null quando o usuário não tem nome", async () => {
+    limit.mockResolvedValue([{ name: null, email: "no-name@x.com" }]);
+    const { userIdentityById } = await import("@/server/email");
+    expect(await userIdentityById("u1")).toEqual({
+      name: null,
+      email: "no-name@x.com",
+    });
+  });
+
+  it("retorna null quando não há linha", async () => {
+    limit.mockResolvedValue([]);
+    const { userIdentityById } = await import("@/server/email");
+    expect(await userIdentityById("nope")).toBeNull();
+  });
+});
+
+describe("emailMeetingSummaryToRecipient", () => {
+  beforeEach(() => {
+    process.env.RESEND_API_KEY = "re_test_key";
+  });
+
+  const content = {
+    summary: "Resumo executivo.",
+    overview: "Visão geral em prosa.",
+    decisions: ["Adotar plano A"],
+    actionItems: [
+      { task: "Enviar proposta", owner: "João" },
+      { task: "Revisar contrato", owner: null },
+    ],
+    topics: ["Orçamento", "Prazos"],
+  };
+
+  it("assunto nomeia quem compartilhou + o título da reunião", async () => {
+    send.mockResolvedValue({ id: "e" });
+    const { emailMeetingSummaryToRecipient } = await import("@/server/email");
+    await emailMeetingSummaryToRecipient({
+      to: "boss@empresa.com",
+      senderName: "Ana Silva",
+      meetingTitle: "meet.google.com/abc-defg",
+      content,
+    });
+    const call = send.mock.calls[0][0];
+    expect(call.to).toBe("boss@empresa.com");
+    expect(call.subject).toContain("Ana Silva");
+    expect(call.subject).toContain("meet.google.com/abc-defg");
+  });
+
+  it("corpo prioriza overview e renderiza decisões + action items + owner", async () => {
+    send.mockResolvedValue({ id: "e" });
+    const { emailMeetingSummaryToRecipient } = await import("@/server/email");
+    await emailMeetingSummaryToRecipient({
+      to: "boss@empresa.com",
+      senderName: "Ana",
+      meetingTitle: "call",
+      content,
+    });
+    const html = send.mock.calls[0][0].html as string;
+    expect(html).toContain("Visão geral em prosa.");
+    expect(html).toContain("Adotar plano A");
+    expect(html).toContain("Enviar proposta");
+    expect(html).toContain("João"); // owner mencionado
+    expect(html).toContain("Orçamento");
+  });
+
+  it("nota do remetente aparece no corpo quando fornecida", async () => {
+    send.mockResolvedValue({ id: "e" });
+    const { emailMeetingSummaryToRecipient } = await import("@/server/email");
+    await emailMeetingSummaryToRecipient({
+      to: "boss@empresa.com",
+      senderName: "Ana",
+      meetingTitle: "call",
+      content: { summary: "s" },
+      note: "Segue o resumo que pediu.",
+    });
+    expect(send.mock.calls[0][0].html).toContain(
+      "Segue o resumo que pediu.",
+    );
+  });
+
+  it("escapa HTML no conteúdo (anti-injeção no corpo do email)", async () => {
+    send.mockResolvedValue({ id: "e" });
+    const { emailMeetingSummaryToRecipient } = await import("@/server/email");
+    await emailMeetingSummaryToRecipient({
+      to: "boss@empresa.com",
+      senderName: "Ana",
+      meetingTitle: "call",
+      content: { summary: "<script>alert(1)</script>" },
+    });
+    const html = send.mock.calls[0][0].html as string;
+    expect(html).not.toContain("<script>alert(1)</script>");
+    expect(html).toContain("&lt;script&gt;");
+  });
+});

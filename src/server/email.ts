@@ -3,6 +3,7 @@ import { Resend } from "resend";
 import { eq } from "drizzle-orm";
 import { db } from "@/shared/db";
 import { user } from "@/shared/db/auth-schema";
+import { appPublicUrl } from "@/shared/lib/config";
 
 /**
  * Transactional email sending (Resend). External PUSH channel — reaches the
@@ -30,11 +31,7 @@ function fromAddress(): string {
 
 /** Public base URL of the app, to build absolute links in emails. */
 function appUrl(): string {
-  return (
-    process.env.NEXT_PUBLIC_APP_URL ??
-    process.env.APP_URL ??
-    "http://localhost:3000"
-  );
+  return appPublicUrl();
 }
 
 export async function sendEmail(input: {
@@ -74,6 +71,19 @@ export async function userEmailById(userId: string): Promise<string | null> {
     .where(eq(user.id, userId))
     .limit(1);
   return rows[0]?.email ?? null;
+}
+
+/** Fetches a user's display name + email by id (better-auth), or null. */
+export async function userIdentityById(
+  userId: string,
+): Promise<{ name: string | null; email: string } | null> {
+  const rows = await db
+    .select({ name: user.name, email: user.email })
+    .from(user)
+    .where(eq(user.id, userId))
+    .limit(1);
+  const row = rows[0];
+  return row ? { name: row.name ?? null, email: row.email } : null;
 }
 
 /** Minimal HTML layout, consistent across the product's emails. */
@@ -157,6 +167,98 @@ export async function emailMagicLink(input: {
       "Sign in to CasperAgent",
       "Click the button to sign in. The link expires in a few minutes and can only be used once.",
       { label: "Sign in", href: input.url },
+    ),
+  });
+}
+
+/** Escapes text for safe interpolation into the email HTML body. */
+function esc(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/** Structured meeting summary the recipient email renders (subset of MeetingSummary). */
+export type SummaryEmailContent = {
+  summary: string | null;
+  overview?: string | null;
+  decisions?: string[] | null;
+  actionItems?: Array<{ task: string; owner: string | null }> | null;
+  topics?: string[] | null;
+};
+
+/** Renders the summary sections as the email body's inner HTML. */
+function renderSummaryBody(content: SummaryEmailContent): string {
+  const blocks: string[] = [];
+  const heading = (t: string) =>
+    `<h3 style="font-size:13px;text-transform:uppercase;letter-spacing:0.05em;color:#666;margin:20px 0 6px">${t}</h3>`;
+
+  const body = content.overview?.trim() || content.summary?.trim();
+  if (body) blocks.push(`<p style="margin:0 0 8px">${esc(body)}</p>`);
+
+  if (content.decisions?.length) {
+    blocks.push(heading("Decisions"));
+    blocks.push(
+      `<ul style="margin:0;padding-left:18px">${content.decisions
+        .map((d) => `<li>${esc(d)}</li>`)
+        .join("")}</ul>`,
+    );
+  }
+
+  if (content.actionItems?.length) {
+    blocks.push(heading("Action items"));
+    blocks.push(
+      `<ul style="margin:0;padding-left:18px">${content.actionItems
+        .map(
+          (a) =>
+            `<li>${esc(a.task)}${a.owner ? ` <span style="color:#666">— ${esc(a.owner)}</span>` : ""}</li>`,
+        )
+        .join("")}</ul>`,
+    );
+  }
+
+  if (content.topics?.length) {
+    blocks.push(heading("Topics"));
+    blocks.push(
+      `<p style="margin:0;color:#333">${content.topics.map(esc).join(" · ")}</p>`,
+    );
+  }
+
+  return blocks.join("");
+}
+
+/**
+ * "Someone shared meeting minutes with you" email — sent to an ARBITRARY
+ * recipient chosen by the meeting owner (e.g. a manager who didn't attend).
+ *
+ * Transparency (anti-phishing): the subject and body name WHO shared it, so the
+ * recipient sees a real person behind the send, not an anonymous blast. There is
+ * no deep link into the app — the recipient may not have an account — only the
+ * summary content itself.
+ */
+export async function emailMeetingSummaryToRecipient(input: {
+  to: string;
+  /** Display name of the owner who is sharing (falls back to their email). */
+  senderName: string;
+  /** Human title/label for the meeting (falls back to a generic label). */
+  meetingTitle: string;
+  content: SummaryEmailContent;
+  /** Optional free-text note the sender added. */
+  note?: string;
+}): Promise<void> {
+  const noteHtml = input.note?.trim()
+    ? `<p style="margin:0 0 12px;padding:10px 12px;background:#f4f4f5;border-radius:6px;font-style:italic;color:#333">${esc(input.note.trim())}</p>`
+    : "";
+  const intro = `<p style="margin:0 0 12px;color:#666">${esc(input.senderName)} shared the minutes of <strong style="color:#111">${esc(input.meetingTitle)}</strong> with you via CasperAgent.</p>`;
+
+  await sendEmail({
+    to: input.to,
+    subject: `${input.senderName} shared meeting minutes: ${input.meetingTitle}`,
+    html: shell(
+      "Meeting minutes",
+      intro + noteHtml + renderSummaryBody(input.content),
     ),
   });
 }

@@ -20,6 +20,7 @@ import { cn } from "@/shared/lib/utils";
 import { MeetingToolUIs } from "@/features/meetings/ui/MeetingToolUI";
 import { PickDateTool } from "@/features/meetings/ui/PickDateToolUI";
 import { ConnectCalendarTool } from "@/features/meetings/ui/CalendarConnectToolUI";
+import { SendSummaryEmailTool } from "@/features/meetings/ui/SendSummaryEmailToolUI";
 import { createThreadListAdapter } from "@/features/assistant/model/thread-list-adapter";
 import { createUploadAttachmentAdapter } from "@/features/assistant/model/attachment-adapter";
 import { createFeedbackAdapter } from "@/features/assistant/model/feedback-adapter";
@@ -99,6 +100,8 @@ export function Assistant() {
       <PickDateTool />
       {/* Connect Google Calendar via chat (button → OAuth popup → polling). */}
       <ConnectCalendarTool />
+      {/* Confirm + send a meeting's minutes by email (button → POST). */}
+      <SendSummaryEmailTool />
 
       {/* Two-pane layout: conversation sidebar (left) + active thread (right).
           Sits to the right of the app's fixed nav rail (page adds md:pl-14). */}

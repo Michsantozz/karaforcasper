@@ -5,4 +5,5 @@ export * from "./ui/MeetingNotebook";
 export * from "./ui/MeetingsList";
 export * from "./ui/TeamTrends";
 export * from "./ui/PublicMeetingView";
+export * from "./ui/SendSummaryEmailToolUI";
 export * from "./api/actions";
