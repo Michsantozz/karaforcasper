@@ -1,0 +1,139 @@
+import { z } from "zod";
+
+/**
+ * Fail-fast environment validation — a leaf util in shared/.
+ *
+ * Runs once at server boot (see `instrumentation.ts`) so a missing/malformed
+ * secret crashes the process with a readable report instead of surfacing as a
+ * cryptic runtime error the first time some code path touches the var.
+ *
+ * This does NOT replace `requireEnv` (still used at call sites for type-narrowing
+ * a single var to `string`). It is the boot-time gate that validates the whole
+ * surface at once, including conditional requirements (e.g. Bedrock keys only
+ * matter when MODEL_PROVIDER=bedrock).
+ *
+ * `next build` imports route modules to collect page data WITHOUT a real env —
+ * so the caller (`instrumentation.ts`) skips validation during the build phase.
+ */
+
+const boolFromEnv = (def: boolean) =>
+  z
+    .string()
+    .optional()
+    .transform((v) => (v === undefined ? def : v === "true" || v === "1"));
+
+// Base surface — vars that are always required for the app to function at all.
+const baseSchema = z.object({
+  // Postgres — Drizzle + better-auth + Mastra memory. Hard requirement.
+  DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
+  // better-auth session/cookie signing secret. Without a stable value across
+  // replicas, sessions break in multi-instance — treat as required.
+  BETTER_AUTH_SECRET: z
+    .string()
+    .min(1, "BETTER_AUTH_SECRET is required (openssl rand -base64 32)"),
+  NODE_ENV: z
+    .enum(["development", "production", "test"])
+    .default("development"),
+});
+
+// Feature toggles that decide which conditional blocks below are required.
+const togglesSchema = z.object({
+  MODEL_PROVIDER: z
+    .enum(["fireworks", "bedrock"])
+    .optional()
+    .transform((v) => v ?? "fireworks"),
+  INNGEST_DEV: boolFromEnv(true),
+  // Google/calendar OAuth is optional wiring — required only if any of its
+  // vars is present (partial config is a misconfiguration we want to catch).
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
+  GOOGLE_OAUTH_REDIRECT_URI: z.url().optional(),
+  OAUTH_STATE_SECRET: z.string().optional(),
+  // Recall webhooks — optional, but if you receive webhooks the secret is
+  // required (the routes fail-closed without it anyway).
+  RECALL_API_KEY: z.string().optional(),
+  RECALL_WEBHOOK_SECRET: z.string().optional(),
+  // Token-encryption key for account OAuth tokens at rest (finding A).
+  // Optional: absent → tokens stored as-is (dev), present → AES-256-GCM.
+  ACCOUNT_TOKEN_ENCRYPTION_KEY: z.string().optional(),
+  ACCOUNT_TOKEN_ENCRYPTION_KEY_FALLBACK: z.string().optional(),
+});
+
+type Toggles = z.infer<typeof togglesSchema>;
+
+/**
+ * Cross-field requirements: applied after parsing the toggles so we only demand
+ * a secret when the feature that needs it is actually enabled.
+ */
+function refine(env: NodeJS.ProcessEnv, toggles: Toggles, ctx: z.RefinementCtx) {
+  const require = (key: string, why: string) => {
+    if (!env[key]) {
+      ctx.addIssue({
+        code: "custom",
+        path: [key],
+        message: `${key} is required ${why}`,
+      });
+    }
+  };
+
+  if (toggles.MODEL_PROVIDER === "bedrock") {
+    require("BEDROCK_REGION", "when MODEL_PROVIDER=bedrock");
+    require("BEDROCK_MODEL_ID", "when MODEL_PROVIDER=bedrock");
+    require("AWS_ACCESS_KEY_ID", "when MODEL_PROVIDER=bedrock");
+    require("AWS_SECRET_ACCESS_KEY", "when MODEL_PROVIDER=bedrock");
+  } else {
+    require("FIREWORKS_API_KEY", "when MODEL_PROVIDER=fireworks (default)");
+  }
+
+  // Production Inngest (INNGEST_DEV=false) needs both keys or the app<->inngest
+  // handshake fails closed.
+  if (!toggles.INNGEST_DEV) {
+    require("INNGEST_SIGNING_KEY", "when INNGEST_DEV is off (production)");
+    require("INNGEST_EVENT_KEY", "when INNGEST_DEV is off (production)");
+  }
+
+  // Google OAuth: all-or-nothing. If any var is set, require the full set.
+  const googleVars = [
+    toggles.GOOGLE_CLIENT_ID,
+    toggles.GOOGLE_CLIENT_SECRET,
+    toggles.GOOGLE_OAUTH_REDIRECT_URI,
+    toggles.OAUTH_STATE_SECRET,
+  ];
+  if (googleVars.some(Boolean)) {
+    require("GOOGLE_CLIENT_ID", "when calendar OAuth is configured");
+    require("GOOGLE_CLIENT_SECRET", "when calendar OAuth is configured");
+    require("GOOGLE_OAUTH_REDIRECT_URI", "when calendar OAuth is configured");
+    require("OAUTH_STATE_SECRET", "when calendar OAuth is configured");
+  }
+
+  // Recall: if you set the API key you almost certainly want the webhook secret.
+  if (toggles.RECALL_API_KEY) {
+    require("RECALL_WEBHOOK_SECRET", "when RECALL_API_KEY is set");
+  }
+}
+
+const envSchema = baseSchema.and(
+  togglesSchema.superRefine((toggles, ctx) =>
+    refine(process.env, toggles, ctx),
+  ),
+);
+
+export type Env = z.infer<typeof envSchema>;
+
+/**
+ * Validates process.env against the schema. Throws a single aggregated error
+ * (all missing/invalid vars at once) instead of failing one at a time.
+ */
+export function validateEnv(): Env {
+  const result = envSchema.safeParse(process.env);
+  if (!result.success) {
+    const lines = result.error.issues.map(
+      (i) => `  - ${i.path.join(".") || "(root)"}: ${i.message}`,
+    );
+    throw new Error(
+      `Invalid environment configuration:\n${lines.join("\n")}\n\n` +
+        `Fix the vars above (see .env.example) and restart.`,
+    );
+  }
+  return result.data;
+}

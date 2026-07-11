@@ -106,10 +106,15 @@ const eslintConfig = [
                 ],
               },
             },
-            // server-only pode compor com server + shared
+            // server-only pode compor com server + shared. Exceção: `mastra` —
+            // APENAS pelo model provider (@/mastra/model). O provedor de LLM
+            // (Bedrock/Fireworks) e o embedder vivem em mastra/model, e a lógica
+            // server-side (summarize, dynamics-insight) precisa gerar texto/
+            // embeddings. É a única razão de server→mastra; não use para puxar
+            // agents/tools/workflows (esses só rodam via a camada mastra).
             {
               from: { type: "server" },
-              allow: { to: { type: ["server", "shared"] } },
+              allow: { to: { type: ["server", "shared", "mastra"] } },
             },
             // o slice "assistant" orquestra o chat: pode consumir outros slices (tool-UIs)
             {

@@ -114,7 +114,15 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
+      # NOTE (RLS hardening): meeting_records + user_calendars use FORCE ROW LEVEL
+      # SECURITY, so isolation holds even when the app connects as the table
+      # owner. For defense-in-depth the app SHOULD connect as the non-owner
+      # `app_user` role (see drizzle/0008 + docs/rls.md); until that role is
+      # provisioned with LOGIN in prod, `casper` is used and a boot guard warns.
       DATABASE_URL: postgres://casper:${POSTGRES_PASSWORD:-casper}@db:5432/casperagent
+      # LLM guardrails (prompt-injection block + PII redact) on the chat agent.
+      # Off by default (LLM cost/latency); turn on for untrusted-input prod.
+      ENABLE_LLM_GUARDRAILS: ${ENABLE_LLM_GUARDRAILS:-false}
       INNGEST_BASE_URL: http://inngest:8288
       INNGEST_DEV: "0"
       # Same keys as the inngest service — the SDK signs event sends + step

@@ -64,3 +64,48 @@ export async function withSystemScope<T>(fn: () => Promise<T>): Promise<T> {
     return scopeStore.run(tx, fn);
   });
 }
+
+/**
+ * Boot guard for RLS hardening. FORCE ROW LEVEL SECURITY makes the policies
+ * apply even to the table owner, so isolation holds regardless of the connecting
+ * role — but connecting as the OWNER (or a BYPASSRLS/SUPERUSER role) is a
+ * defense-in-depth weakness: a future migration that drops FORCE, or DDL run on
+ * this connection, would silently remove the protection. The correct deploy
+ * connects as the non-owner `app_user` (see drizzle/0008 + docs/rls.md).
+ *
+ * This checks the current role once at startup and logs a warning if it can
+ * bypass RLS or owns the tenant tables. Best-effort: never throws (a failed
+ * check must not take the app down). Call once on server boot.
+ */
+let rlsGuardChecked = false;
+export async function assertRlsHardening(): Promise<void> {
+  if (rlsGuardChecked) return;
+  rlsGuardChecked = true;
+  try {
+    const rows = (await db.execute(sql`
+      select
+        current_user as role,
+        (select rolbypassrls or rolsuper from pg_roles where rolname = current_user) as can_bypass,
+        pg_catalog.pg_get_userbyid(c.relowner) = current_user as owns_meeting_records
+      from pg_class c
+      where c.relname = 'meeting_records'
+      limit 1
+    `)) as unknown as Array<{
+      role: string;
+      can_bypass: boolean | null;
+      owns_meeting_records: boolean | null;
+    }>;
+    const r = rows[0];
+    if (r && (r.can_bypass || r.owns_meeting_records)) {
+      console.warn(
+        `[rls] app is connected as "${r.role}", which ${
+          r.can_bypass ? "can BYPASS RLS" : "OWNS the tenant tables"
+        }. FORCE ROW LEVEL SECURITY still isolates rows, but for ` +
+          `defense-in-depth connect as the non-owner "app_user" role ` +
+          `(see drizzle/0008_rls_multitenant.sql + docs/rls.md).`,
+      );
+    }
+  } catch {
+    // Diagnostic only — never block boot on the guard.
+  }
+}
