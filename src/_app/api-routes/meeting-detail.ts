@@ -43,7 +43,11 @@ export async function GET(
     talkShares: r.talkShares ?? [],
     dynamics: detail.dynamics,
     dynamicsInsight: detail.dynamicsInsight,
-    videoUrl: detail.videoUrl,
+    // Serve the recording through this origin (same-origin proxy) instead of the
+    // raw object-store/Recall URL: the clip button (mediabunny fetch) and the
+    // <video> player are then subject to `connect-src 'self'` and avoid the
+    // object store's missing CORS. The proxy re-resolves the raw URL server-side.
+    videoUrl: detail.videoUrl ? `/api/meetings/${detail.botId}/video` : null,
     transcript: detail.transcript,
     transcriptState: detail.transcriptState,
     durationSeconds: detail.durationSeconds,

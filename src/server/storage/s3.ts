@@ -55,6 +55,36 @@ function publicBase(): string {
   throw new Error("Storage not configured: S3_PUBLIC_URL or S3_ENDPOINT required.");
 }
 
+/**
+ * Internal base URL the *server* reaches the object store at (path-style,
+ * bucket included). In compose this is `http://minio:9000/<bucket>` — reachable
+ * over the internal network — while the persisted public URL is
+ * `http://localhost:9200/<bucket>`, which only the host/browser can resolve.
+ * Returns null when no endpoint is configured (real AWS S3: public URL is
+ * already server-reachable).
+ */
+function internalBase(): string | null {
+  const endpoint = env("S3_ENDPOINT");
+  if (!endpoint) return null;
+  return `${endpoint.replace(/\/$/, "")}/${bucket()}`;
+}
+
+/**
+ * Rewrites a persisted public object URL to one the server can fetch. A stored
+ * meeting `videoUrl` is `S3_PUBLIC_URL/...` (host-facing, e.g. localhost:9200);
+ * when the same-origin proxy fetches it from *inside* the container, that host
+ * is unreachable, so we swap the public base for the internal endpoint base.
+ * URLs that don't start with our public base (e.g. Recall's signed CDN URLs)
+ * pass through untouched.
+ */
+export function toServerReachableUrl(url: string): string {
+  const publicUrl = env("S3_PUBLIC_URL");
+  const internal = internalBase();
+  if (!publicUrl || !internal) return url;
+  const base = publicUrl.replace(/\/$/, "");
+  return url.startsWith(base) ? internal + url.slice(base.length) : url;
+}
+
 const EXT_BY_MIME: Record<string, string> = {
   "image/png": "png",
   "image/jpeg": "jpg",

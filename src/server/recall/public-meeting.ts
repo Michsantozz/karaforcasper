@@ -70,7 +70,10 @@ export async function getPublicMeeting(
     moments: record.moments ?? [],
     talkShares: record.talkShares ?? [],
     transcript,
-    videoUrl: record.videoUrl,
+    // Serve through the same-origin proxy (see meeting-video route): the shared
+    // player/clip fetch from 'self', satisfying the CSP and the object store's
+    // missing CORS. Keyed by the share token, which is the authorization.
+    videoUrl: record.videoUrl ? `/api/public/meetings/${token}/video` : null,
     durationSeconds: deriveDurationSeconds(transcript),
     createdAt: record.createdAt.toISOString(),
   };

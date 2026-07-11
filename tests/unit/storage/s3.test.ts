@@ -140,3 +140,51 @@ describe("uploadObject", () => {
     ).rejects.toThrow(/Storage not configured/);
   });
 });
+
+/**
+ * toServerReachableUrl — remaps a persisted PUBLIC object URL (host-facing, e.g.
+ * localhost:9200) to the INTERNAL endpoint (minio:9000) so the same-origin media
+ * proxy can fetch it from inside the container. URLs that don't share our public
+ * base (Recall's signed CDN URLs) must pass through untouched.
+ */
+describe("toServerReachableUrl", () => {
+  it("swaps the public base for the internal endpoint base", async () => {
+    const { toServerReachableUrl } = await import("@/server/storage/s3");
+    expect(
+      toServerReachableUrl(
+        "http://localhost:9200/casper-uploads/uploads/u/x.mp4",
+      ),
+    ).toBe("http://minio:9000/casper-uploads/uploads/u/x.mp4");
+  });
+
+  it("leaves a Recall signed URL (different origin) untouched", async () => {
+    const { toServerReachableUrl } = await import("@/server/storage/s3");
+    const recall = "https://recall-cdn.example.com/signed.mp4?token=abc";
+    expect(toServerReachableUrl(recall)).toBe(recall);
+  });
+
+  it("passes the URL through when no S3_ENDPOINT is set (real AWS S3)", async () => {
+    // Real AWS: the public URL is already server-reachable, no remap needed.
+    delete process.env.S3_ENDPOINT;
+    const { toServerReachableUrl } = await import("@/server/storage/s3");
+    const url = "http://localhost:9200/casper-uploads/uploads/u/x.mp4";
+    expect(toServerReachableUrl(url)).toBe(url);
+  });
+
+  it("passes the URL through when S3_PUBLIC_URL is unset", async () => {
+    delete process.env.S3_PUBLIC_URL;
+    const { toServerReachableUrl } = await import("@/server/storage/s3");
+    const url = "http://minio:9000/casper-uploads/uploads/u/x.mp4";
+    expect(toServerReachableUrl(url)).toBe(url);
+  });
+
+  it("tolerates a trailing slash on the public base", async () => {
+    process.env.S3_PUBLIC_URL = "http://localhost:9200/casper-uploads/";
+    const { toServerReachableUrl } = await import("@/server/storage/s3");
+    expect(
+      toServerReachableUrl(
+        "http://localhost:9200/casper-uploads/uploads/u/x.mp4",
+      ),
+    ).toBe("http://minio:9000/casper-uploads/uploads/u/x.mp4");
+  });
+});
