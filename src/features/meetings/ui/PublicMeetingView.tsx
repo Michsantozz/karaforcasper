@@ -80,15 +80,7 @@ export function PublicMeetingView({ token }: { token: string }) {
   }
 
   if (isLoading) {
-    return (
-      <CenteredState>
-        <span
-          aria-hidden
-          className="size-2 animate-pulse rounded-[1px] bg-(--thread-accent-primary)"
-        />
-        loading shared meeting…
-      </CenteredState>
-    );
+    return <PublicMeetingSkeleton />;
   }
 
   if (error || !data) {
@@ -499,6 +491,84 @@ function Panel({
       <div className="rounded-[5px] border bg-background px-3 py-2.5">
         {children}
       </div>
+    </div>
+  );
+}
+
+/* ── loading skeleton ─────────────────────────────────────────────── */
+
+/** Bloco base do skeleton (pulse + bg-muted), casando com o padrão do app. */
+function Bar({ className }: { className?: string }) {
+  return (
+    <span
+      aria-hidden
+      className={cn("block animate-pulse rounded bg-muted", className)}
+    />
+  );
+}
+
+/**
+ * Skeleton que espelha o layout real do PublicMeetingView (header + player +
+ * transcript à esquerda, painéis de IA à direita, footer). Evita o flash de
+ * "loading…" → conteúdo, mostrando a estrutura da página enquanto o fetch roda.
+ */
+function PublicMeetingSkeleton() {
+  return (
+    <div
+      aria-busy
+      aria-label="loading shared meeting"
+      className="mx-auto flex min-h-screen w-full max-w-5xl flex-col gap-3 bg-(--thread-frame-outer) p-4 font-sans text-foreground"
+    >
+      {/* header */}
+      <header className="flex shrink-0 flex-col gap-2 rounded-[8px] border bg-background px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-3">
+          <Bar className="size-8 shrink-0 rounded-[5px]" />
+          <div className="flex flex-col gap-1.5">
+            <Bar className="h-2.5 w-40" />
+            <Bar className="h-3.5 w-56" />
+          </div>
+        </div>
+        <div className="flex items-center gap-4">
+          <Bar className="h-3 w-20" />
+          <Bar className="h-3 w-14" />
+          <Bar className="h-3 w-16" />
+        </div>
+      </header>
+
+      <div className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row">
+        {/* LEFT — player + transcript */}
+        <section className="flex min-h-0 flex-[1.4] flex-col gap-1 rounded-[8px] bg-(--thread-frame-outer) p-1">
+          <Bar className="mx-3 my-2 h-2.5 w-40" />
+          <Bar className="aspect-video max-h-64 w-full rounded-[5px]" />
+          <div className="mt-1 space-y-4 px-3 py-3">
+            {[0, 1, 2, 3].map((i) => (
+              <div key={i} className="flex flex-col gap-1.5">
+                <Bar className="h-2.5 w-24" />
+                <Bar className="h-3 w-full" />
+                <Bar className="h-3 w-4/5" />
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* RIGHT — AI panels */}
+        <aside className="flex min-h-0 flex-1 flex-col gap-3">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="rounded-[8px] bg-(--thread-frame-outer) p-1">
+              <Bar className="mx-3 my-2 h-2.5 w-28" />
+              <div className="space-y-2 rounded-[5px] border bg-background px-3 py-2.5">
+                <Bar className="h-3 w-full" />
+                <Bar className="h-3 w-11/12" />
+                <Bar className="h-3 w-3/4" />
+              </div>
+            </div>
+          ))}
+        </aside>
+      </div>
+
+      <footer className="shrink-0 py-3 text-center font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+        shared via casper · read-only meeting minutes
+      </footer>
     </div>
   );
 }

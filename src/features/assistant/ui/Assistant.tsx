@@ -11,12 +11,9 @@ import {
   AssistantChatTransport,
 } from "@assistant-ui/react-ai-sdk";
 import { lastAssistantMessageIsCompleteWithToolCalls } from "ai";
-import {
-  CalendarPlusIcon,
-  CalendarCheckIcon,
-  CalendarXIcon,
-} from "lucide-react";
+import { PlusIcon, XIcon } from "lucide-react";
 import { toast } from "sonner";
+import { GoogleCalendarIcon } from "@/shared/ui/google-calendar-icon";
 import { Thread } from "@/shared/ui/assistant-ui/thread";
 import { ThreadList } from "@/shared/ui/assistant-ui/thread-list";
 import { cn } from "@/shared/lib/utils";
@@ -199,9 +196,9 @@ function CalendarBar() {
         <span
           aria-hidden
           className={cn(
-            "size-1.5 rounded-[1px]",
+            "size-1.5 rounded-full",
             connected
-              ? "bg-(--thread-accent-primary)"
+              ? "bg-emerald-500 shadow-[0_0_0_3px_theme(colors.emerald.500/0.15)]"
               : "animate-pulse bg-muted-foreground/50",
           )}
         />
@@ -211,27 +208,35 @@ function CalendarBar() {
       <div className="flex items-center gap-2">
         {connected ? (
           <>
-            <span className="flex items-center gap-1.5 rounded-[5px] border border-(--thread-accent-primary) bg-(--thread-accent-primary-soft) px-2.5 py-1 font-mono text-[11px] text-(--thread-accent-primary)">
-              <CalendarCheckIcon className="size-3.5" />
-              connected
-              {primaryEmail ? (
-                <span className="text-muted-foreground">· {primaryEmail}</span>
-              ) : null}
-              {calendar && calendar.count > 1 ? (
-                <span className="text-muted-foreground">
-                  +{calendar.count - 1}
-                </span>
-              ) : null}
+            <span className="flex items-center gap-2 rounded-full border border-border bg-muted/40 py-1 pl-1.5 pr-3 text-[12px] shadow-sm">
+              {/* Official Google Calendar mark, tucked in a white chip so the
+                  multicolor logo stays legible on any header background. */}
+              <span className="flex size-6 items-center justify-center rounded-full bg-white shadow-sm ring-1 ring-black/5">
+                <GoogleCalendarIcon size={15} aria-label="Google Calendar" />
+              </span>
+              <span className="flex items-center gap-1.5 leading-none">
+                <span className="font-medium text-foreground">Connected</span>
+                {primaryEmail ? (
+                  <span className="max-w-[220px] truncate text-muted-foreground">
+                    · {primaryEmail}
+                  </span>
+                ) : null}
+                {calendar && calendar.count > 1 ? (
+                  <span className="rounded-full bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+                    +{calendar.count - 1}
+                  </span>
+                ) : null}
+              </span>
             </span>
             <button
               type="button"
               onClick={disconnect}
               disabled={disconnecting}
               aria-label="Disconnect calendar"
-              className="flex items-center gap-1.5 rounded-[5px] border border-border bg-background px-2.5 py-1 font-mono text-[11px] uppercase tracking-wider text-muted-foreground transition-colors hover:border-(--thread-accent-secondary) hover:text-(--thread-accent-secondary) disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-[12px] text-muted-foreground transition-colors hover:border-destructive/40 hover:bg-destructive/5 hover:text-destructive disabled:opacity-50"
             >
-              <CalendarXIcon className="size-3.5" />
-              {disconnecting ? "disconnecting…" : "disconnect"}
+              <XIcon className="size-3.5" />
+              {disconnecting ? "Disconnecting…" : "Disconnect"}
             </button>
           </>
         ) : (
@@ -240,10 +245,16 @@ function CalendarBar() {
             onClick={() => {
               window.location.href = "/api/calendar/google/start";
             }}
-            className="flex items-center gap-1.5 rounded-[5px] border border-border bg-background px-2.5 py-1 font-mono text-[11px] uppercase tracking-wider text-muted-foreground transition-colors hover:border-(--thread-accent-primary) hover:bg-(--thread-accent-primary-soft) hover:text-(--thread-accent-primary)"
+            className="flex items-center gap-2 rounded-full border border-border bg-background py-1 pl-1.5 pr-3.5 text-[12px] font-medium text-foreground shadow-sm transition-colors hover:bg-muted/50"
           >
-            <CalendarPlusIcon className="size-3.5" />
-            connect calendar
+            {/* White chip keeps the brand logo readable on the button. */}
+            <span className="flex size-6 items-center justify-center rounded-full bg-white shadow-sm ring-1 ring-black/5">
+              <GoogleCalendarIcon size={15} aria-label="Google Calendar" />
+            </span>
+            <span className="flex items-center gap-1 leading-none">
+              <PlusIcon className="size-3.5 text-muted-foreground" />
+              Connect calendar
+            </span>
           </button>
         )}
       </div>
