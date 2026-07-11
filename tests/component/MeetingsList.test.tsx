@@ -49,9 +49,18 @@ vi.mock("@/features/meetings/model/queries", () => ({
 
 const reprocessMeeting = vi.fn();
 const cancelScheduledMeeting = vi.fn();
+const deleteMeeting = vi.fn();
+const scheduleMeetingBot = vi.fn();
 vi.mock("@/features/meetings/api/actions", () => ({
   reprocessMeeting: (...a: unknown[]) => reprocessMeeting(...a),
   cancelScheduledMeeting: (...a: unknown[]) => cancelScheduledMeeting(...a),
+  deleteMeeting: (...a: unknown[]) => deleteMeeting(...a),
+  scheduleMeetingBot: (...a: unknown[]) => scheduleMeetingBot(...a),
+}));
+
+// Toasts fire on delete/new-bot/recovery; stub sonner (no Toaster in jsdom).
+vi.mock("sonner", () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
 }));
 
 import { MeetingsList } from "@/features/meetings/ui/MeetingsList";
@@ -61,6 +70,7 @@ function meeting(over: Record<string, unknown> = {}) {
     botId: "bot-1",
     status: "done",
     meetingUrl: "https://meet.google.com/abc-defg",
+    title: null,
     summary: "Q3 roadmap sync locked scope. More text after.",
     participantCount: 3,
     createdAt: new Date().toISOString(),
@@ -221,6 +231,95 @@ describe("MeetingsList — recovery actions", () => {
     expect(
       screen.queryByRole("button", { name: /reprocess|cancel scheduled/i }),
     ).toBeNull();
+  });
+});
+
+describe("MeetingsList — owner title override", () => {
+  it("uses the owner title instead of the derived summary sentence", () => {
+    rows = [meeting({ title: "Board offsite" })];
+    render(<MeetingsList />);
+    expect(screen.getByText("Board offsite")).toBeInTheDocument();
+    // The summary-derived label must NOT win when a title is set.
+    expect(screen.queryByText("Q3 roadmap sync locked scope.")).toBeNull();
+  });
+});
+
+describe("MeetingsList — delete", () => {
+  it("every row has a delete button that opens a confirm dialog", async () => {
+    rows = [meeting()];
+    const user = userEvent.setup();
+    render(<MeetingsList />);
+
+    await user.click(screen.getByRole("button", { name: /delete meeting/i }));
+    // AlertDialog surfaces the confirm copy.
+    expect(screen.getByText(/delete this meeting\?/i)).toBeInTheDocument();
+  });
+
+  it("confirming calls deleteMeeting with the botId", async () => {
+    deleteMeeting.mockResolvedValue({ ok: true });
+    rows = [meeting({ botId: "del-1" })];
+    const user = userEvent.setup();
+    render(<MeetingsList />);
+
+    await user.click(screen.getByRole("button", { name: /delete meeting/i }));
+    // The dialog's action button (the destructive "Delete", not the icon).
+    await user.click(screen.getByRole("button", { name: /^delete$/i }));
+    expect(deleteMeeting).toHaveBeenCalledWith("del-1");
+  });
+
+  it("cancelling does NOT call deleteMeeting", async () => {
+    rows = [meeting()];
+    const user = userEvent.setup();
+    render(<MeetingsList />);
+
+    await user.click(screen.getByRole("button", { name: /delete meeting/i }));
+    await user.click(screen.getByRole("button", { name: /^cancel$/i }));
+    expect(deleteMeeting).not.toHaveBeenCalled();
+  });
+});
+
+describe("MeetingsList — new meeting (send a bot)", () => {
+  it("the header 'new' button opens the send-bot dialog", async () => {
+    rows = [];
+    const user = userEvent.setup();
+    render(<MeetingsList />);
+
+    await user.click(screen.getByRole("button", { name: /new meeting/i }));
+    expect(screen.getByText(/send a bot to a meeting/i)).toBeInTheDocument();
+  });
+
+  it("join now → calls scheduleMeetingBot with the URL and null joinAt", async () => {
+    scheduleMeetingBot.mockResolvedValue({
+      ok: true,
+      botId: "b",
+      scheduled: false,
+      reused: false,
+    });
+    rows = [];
+    const user = userEvent.setup();
+    render(<MeetingsList />);
+
+    await user.click(screen.getByRole("button", { name: /new meeting/i }));
+    await user.type(
+      screen.getByLabelText(/meeting url/i),
+      "https://meet.google.com/abc-defg",
+    );
+    // Default mode is "join now"; submit via the "Send bot" button.
+    await user.click(screen.getByRole("button", { name: /send bot/i }));
+
+    expect(scheduleMeetingBot).toHaveBeenCalledWith({
+      meetingUrl: "https://meet.google.com/abc-defg",
+      joinAt: null,
+    });
+  });
+
+  it("the submit button is disabled with an empty URL", async () => {
+    rows = [];
+    const user = userEvent.setup();
+    render(<MeetingsList />);
+
+    await user.click(screen.getByRole("button", { name: /new meeting/i }));
+    expect(screen.getByRole("button", { name: /send bot/i })).toBeDisabled();
   });
 });
 

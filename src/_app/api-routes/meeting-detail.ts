@@ -32,6 +32,7 @@ export async function GET(
     botId: detail.botId,
     status: r.status,
     meetingUrl: r.meetingUrl,
+    title: r.title,
     summary: r.summary,
     overview: r.overview,
     decisions: r.decisions ?? [],

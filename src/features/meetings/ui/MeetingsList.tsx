@@ -14,6 +14,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import {
   SearchIcon,
   CircleDotIcon,
@@ -23,8 +24,30 @@ import {
   AlertTriangleIcon,
   RotateCwIcon,
   XIcon,
+  Trash2Icon,
+  Loader2Icon,
+  PlusIcon,
+  VideoIcon,
 } from "lucide-react";
 import { cn } from "@/shared/lib/utils";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/shared/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/shared/ui/dialog";
 import {
   useMeetingsList,
   type MeetingListItem,
@@ -34,6 +57,8 @@ import {
 import {
   reprocessMeeting,
   cancelScheduledMeeting,
+  deleteMeeting,
+  scheduleMeetingBot,
 } from "@/features/meetings/api/actions";
 
 /** Debounces a value so we don't fire a server search on every keystroke. */
@@ -56,8 +81,10 @@ const STATUS_FILTERS: Array<{ value: MeetingsQuery["status"]; label: string }> =
 
 /* ── helpers ──────────────────────────────────────────────────────── */
 
-/** Readable title from the summary's first sentence, else the URL host. */
+/** Owner title if set, else the summary's first sentence, else the URL host. */
 function deriveTitle(m: MeetingListItem): string {
+  const t = m.title?.trim();
+  if (t) return t.length > 80 ? `${t.slice(0, 77)}…` : t;
   const s = m.summary?.trim();
   if (s) {
     const firstSentence = s.split(/(?<=[.!?])\s/)[0] ?? s;
@@ -161,16 +188,19 @@ export function MeetingsList() {
                 </span>
               </div>
             </div>
-            <label className="flex items-center gap-1.5 rounded-[6px] border bg-background px-2.5 py-1.5 transition-colors focus-within:border-(--thread-accent-primary) focus-within:ring-1 focus-within:ring-(--thread-accent-primary-soft)">
-              <SearchIcon className="size-3.5 shrink-0 text-muted-foreground" />
-              <input
-                value={rawQuery}
-                onChange={(e) => setRawQuery(e.target.value)}
-                placeholder="search meetings…"
-                aria-label="Search meetings"
-                className="w-32 bg-transparent font-mono text-[12px] outline-none placeholder:text-muted-foreground/70 sm:w-44"
-              />
-            </label>
+            <div className="flex items-center gap-2">
+              <label className="flex items-center gap-1.5 rounded-[6px] border bg-background px-2.5 py-1.5 transition-colors focus-within:border-(--thread-accent-primary) focus-within:ring-1 focus-within:ring-(--thread-accent-primary-soft)">
+                <SearchIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                <input
+                  value={rawQuery}
+                  onChange={(e) => setRawQuery(e.target.value)}
+                  placeholder="search meetings…"
+                  aria-label="Search meetings"
+                  className="w-32 bg-transparent font-mono text-[12px] outline-none placeholder:text-muted-foreground/70 sm:w-44"
+                />
+              </label>
+              <NewMeetingButton />
+            </div>
           </div>
 
           {/* status filter chips */}
@@ -291,6 +321,9 @@ function MeetingRow({ m, first }: { m: MeetingListItem; first: boolean }) {
       {/* recovery actions for failed / scheduled rows */}
       <RowAction m={m} />
 
+      {/* delete — available on every row */}
+      <DeleteAction m={m} title={title} />
+
       {m.participantCount > 0 && (
         <span className="shrink-0 rounded-[5px] border bg-background px-2 py-0.5 font-mono text-[10px] tabular-nums text-muted-foreground">
           {m.participantCount}
@@ -323,6 +356,15 @@ function RowAction({ m }: { m: MeetingListItem }) {
           : await cancelScheduledMeeting(m.botId);
       if (!res.ok) throw new Error(res.error);
     },
+    onSuccess: () =>
+      toast.success(
+        m.status === "failed" ? "Meeting requeued" : "Scheduled meeting cancelled",
+      ),
+    onError: (e) =>
+      toast.error(
+        m.status === "failed" ? "Could not reprocess" : "Could not cancel",
+        { description: e instanceof Error ? e.message : undefined },
+      ),
     // Refresh the list so the row reflects its new state (requeued/removed).
     onSettled: () => qc.invalidateQueries({ queryKey: ["meetings"] }),
   });
@@ -357,6 +399,221 @@ function RowAction({ m }: { m: MeetingListItem }) {
         className={cn("size-3.5", mutation.isPending && "animate-spin")}
       />
     </button>
+  );
+}
+
+/* ── new meeting (send a bot: now or scheduled) ───────────────────── */
+
+function NewMeetingButton() {
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [url, setUrl] = useState("");
+  const [mode, setMode] = useState<"now" | "schedule">("now");
+  const [joinAt, setJoinAt] = useState("");
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const res = await scheduleMeetingBot({
+        meetingUrl: url,
+        joinAt: mode === "schedule" ? joinAt : null,
+      });
+      if (!res.ok) throw new Error(res.error);
+      return res;
+    },
+    onSuccess: (res) => {
+      toast.success(res.scheduled ? "Bot scheduled" : "Bot joining now", {
+        description: res.reused ? "Reused an existing bot for this meeting." : undefined,
+      });
+      qc.invalidateQueries({ queryKey: ["meetings"] });
+      setOpen(false);
+      setUrl("");
+      setJoinAt("");
+      setMode("now");
+    },
+    onError: (e) =>
+      toast.error("Could not send bot", {
+        description: e instanceof Error ? e.message : undefined,
+      }),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        aria-label="New meeting"
+        className="flex items-center gap-1.5 rounded-[6px] border border-(--thread-accent-primary)/40 bg-(--thread-accent-primary-soft) px-2.5 py-1.5 font-mono text-[11px] uppercase tracking-wider text-(--thread-accent-primary) transition-colors hover:bg-(--thread-accent-primary-soft)/80"
+      >
+        <PlusIcon className="size-3.5" />
+        <span className="hidden sm:inline">new</span>
+      </button>
+
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <VideoIcon className="size-4 text-(--thread-accent-primary)" />
+            Send a bot to a meeting
+          </DialogTitle>
+          <DialogDescription>
+            Paste a Zoom / Google Meet / Teams link. The bot joins and records
+            automatically — join now, or schedule it ahead.
+          </DialogDescription>
+        </DialogHeader>
+
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            mutation.mutate();
+          }}
+          className="flex flex-col gap-3"
+        >
+          <input
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="https://meet.google.com/…"
+            aria-label="Meeting URL"
+            autoFocus
+            className="w-full rounded-[6px] border bg-background px-3 py-2 font-mono text-[13px] outline-none focus-visible:border-(--thread-accent-primary) focus-visible:ring-1 focus-visible:ring-(--thread-accent-primary-soft)"
+          />
+
+          {/* now vs schedule */}
+          <div className="flex gap-1.5">
+            {(["now", "schedule"] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => setMode(m)}
+                aria-pressed={mode === m}
+                className={cn(
+                  "flex-1 rounded-[5px] border px-2.5 py-1.5 font-mono text-[11px] uppercase tracking-wider transition-colors",
+                  mode === m
+                    ? "border-(--thread-accent-primary) bg-(--thread-accent-primary-soft) text-(--thread-accent-primary)"
+                    : "border-border bg-background text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {m === "now" ? "join now" : "schedule"}
+              </button>
+            ))}
+          </div>
+
+          {mode === "schedule" && (
+            <label className="flex flex-col gap-1">
+              <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                join at (must be &gt;10min ahead)
+              </span>
+              <input
+                type="datetime-local"
+                value={joinAt}
+                onChange={(e) => setJoinAt(e.target.value)}
+                aria-label="Join time"
+                className="w-full rounded-[6px] border bg-background px-3 py-2 font-mono text-[13px] outline-none focus-visible:border-(--thread-accent-primary)"
+              />
+            </label>
+          )}
+
+          <DialogFooter>
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              disabled={mutation.isPending}
+              className="rounded-[6px] border bg-background px-3 py-1.5 font-mono text-[11px] uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+            >
+              cancel
+            </button>
+            <button
+              type="submit"
+              aria-label="Send bot"
+              disabled={
+                mutation.isPending ||
+                !url.trim() ||
+                (mode === "schedule" && !joinAt)
+              }
+              className="flex items-center gap-1.5 rounded-[6px] border border-(--thread-accent-primary)/40 bg-(--thread-accent-primary-soft) px-3 py-1.5 font-mono text-[11px] uppercase tracking-wider text-(--thread-accent-primary) transition-colors hover:bg-(--thread-accent-primary-soft)/80 disabled:opacity-50"
+            >
+              {mutation.isPending && <Loader2Icon className="size-3.5 animate-spin" />}
+              {mode === "now" ? "join now" : "schedule"}
+            </button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ── delete (every row, confirm dialog) ───────────────────────────── */
+
+function DeleteAction({ m, title }: { m: MeetingListItem; title: string }) {
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const res = await deleteMeeting(m.botId);
+      if (!res.ok) throw new Error(res.error);
+    },
+    onSuccess: () => {
+      toast.success("Meeting deleted");
+      setOpen(false);
+    },
+    onError: (e) =>
+      toast.error("Could not delete meeting", {
+        description: e instanceof Error ? e.message : undefined,
+      }),
+    onSettled: () => qc.invalidateQueries({ queryKey: ["meetings"] }),
+  });
+
+  return (
+    <AlertDialog open={open} onOpenChange={setOpen}>
+      <button
+        type="button"
+        aria-label="Delete meeting"
+        title="Delete meeting"
+        // Stop the click from bubbling to the row's wrapping Link.
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setOpen(true);
+        }}
+        className="flex size-7 shrink-0 items-center justify-center rounded-[5px] border bg-background text-muted-foreground opacity-0 transition-colors hover:bg-muted/60 hover:text-(--thread-accent-secondary) focus-visible:opacity-100 group-hover:opacity-100"
+      >
+        <Trash2Icon className="size-3.5" />
+      </button>
+
+      <AlertDialogContent
+        // Keep clicks inside the dialog from reaching the row Link underneath.
+        onClick={(e) => e.stopPropagation()}
+      >
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete this meeting?</AlertDialogTitle>
+          <AlertDialogDescription>
+            “{title}” — its minutes, transcript and recording will be permanently
+            deleted. This cannot be undone.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={mutation.isPending}>
+            Cancel
+          </AlertDialogCancel>
+          <AlertDialogAction
+            // Don't auto-close: keep the dialog open until the delete resolves.
+            onClick={(e) => {
+              e.preventDefault();
+              mutation.mutate();
+            }}
+            disabled={mutation.isPending}
+            className="bg-(--thread-accent-secondary) text-white hover:bg-(--thread-accent-secondary)/90"
+          >
+            {mutation.isPending ? (
+              <span className="flex items-center gap-1.5">
+                <Loader2Icon className="size-3.5 animate-spin" />
+                deleting…
+              </span>
+            ) : (
+              "Delete"
+            )}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 

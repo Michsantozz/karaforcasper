@@ -6,13 +6,20 @@ import {
   requeueMeetingRecord,
   enableMeetingShare,
   disableMeetingShare,
+  deleteMeetingRecord,
+  updateMeetingRecord,
+  findMeetingRecord,
 } from "@/server/recall/meeting-repository";
 import { enrichMeeting } from "@/server/recall/enrich";
 import {
   findBotByBotId,
+  findBotByDedupKey,
+  saveBotMapping,
   deleteBotMapping,
+  defaultDedupKey,
 } from "@/server/recall/bot-repository";
-import { recallFetch } from "@/server/recall/client";
+import { deleteObjectByUrl } from "@/server/storage/s3";
+import { recallFetch, RecallAdhocPoolError } from "@/server/recall/client";
 import {
   generateBehaviorInsight,
   type BehaviorInsight,
@@ -90,6 +97,287 @@ export async function cancelScheduledMeeting(
   // Clear the mapping so it stops showing as scheduled (best-effort).
   if (bot?.dedupKey) await deleteBotMapping(bot.dedupKey);
   return { ok: true };
+}
+
+/** Result of sending a bot: the botId + whether it was scheduled or ad-hoc. */
+export type ScheduleResult =
+  | { ok: true; botId: string; scheduled: boolean; reused: boolean }
+  | { ok: false; error: string };
+
+/**
+ * Sends a Recall bot to a meeting URL from the UI — the direct (non-chat) path
+ * behind the "new meeting" dialog. Owner = the session user (never trusted from
+ * the client). Pass `joinAt` (ISO, >10min future) to schedule with a guaranteed
+ * join, or omit it to join now (ad-hoc). Deduplicates per tenant: a second send
+ * for the same meeting reuses the existing bot instead of double-booking.
+ *
+ * Mirrors scheduleRecallBotTool (the chat tool) so both entry points behave
+ * identically; the recording config is Recall's hands-off default (records on
+ * participant join, streaming transcript).
+ */
+export async function scheduleMeetingBot(input: {
+  meetingUrl: string;
+  joinAt?: string | null;
+}): Promise<ScheduleResult> {
+  let userId: string;
+  try {
+    userId = await requireUserId();
+  } catch {
+    return { ok: false, error: "unauthenticated" };
+  }
+
+  const meetingUrl = input.meetingUrl.trim();
+  if (!meetingUrl) return { ok: false, error: "meeting URL required" };
+  try {
+    // Validate shape early so a typo doesn't reach Recall as a 400.
+    new URL(meetingUrl);
+  } catch {
+    return { ok: false, error: "invalid meeting URL" };
+  }
+
+  const joinAt = input.joinAt?.trim() || undefined;
+  // Reject a join time in the past (Recall requires >10min in the future to
+  // guarantee a scheduled join; anything past is a mistake).
+  if (joinAt) {
+    const at = new Date(joinAt);
+    if (Number.isNaN(at.getTime())) {
+      return { ok: false, error: "invalid join time" };
+    }
+    if (at.getTime() <= Date.now()) {
+      return { ok: false, error: "join time must be in the future" };
+    }
+  }
+
+  const dedupKey = defaultDedupKey(userId, meetingUrl, joinAt);
+  const existing = await findBotByDedupKey(dedupKey);
+  if (existing) {
+    return {
+      ok: true,
+      botId: existing.botId,
+      scheduled: existing.joinAt != null,
+      reused: true,
+    };
+  }
+
+  let bot: { id: string };
+  try {
+    bot = await recallFetch<{ id: string }>({
+      method: "POST",
+      path: "v1/bot/",
+      body: {
+        meeting_url: meetingUrl,
+        ...(joinAt ? { join_at: joinAt } : {}),
+        recording_config: {
+          transcript: { provider: { recallai_streaming: {} } },
+          participant_events: {},
+          start_recording_on: "participant_join",
+        },
+        metadata: { dedup_key: dedupKey, user_id: userId },
+      },
+    });
+  } catch (err) {
+    if (err instanceof RecallAdhocPoolError) {
+      return {
+        ok: false,
+        error:
+          "Ad-hoc bot pool exhausted. Try again in ~30s, or schedule >10min ahead.",
+      };
+    }
+    const message = err instanceof Error ? err.message : "could not send bot";
+    return { ok: false, error: message };
+  }
+
+  await saveBotMapping({
+    dedupKey,
+    botId: bot.id,
+    meetingUrl,
+    joinAt: joinAt ? new Date(joinAt) : null,
+    metadata: { user_id: userId },
+  });
+
+  return { ok: true, botId: bot.id, scheduled: joinAt != null, reused: false };
+}
+
+/**
+ * Permanently deletes a meeting: removes the meeting_records row (RLS-scoped),
+ * reclaims the durable video from object storage, and best-effort clears the
+ * bot's local dedup mapping. Ownership-checked, so a client can never delete
+ * another tenant's meeting. Used by the "delete" control on the list row and
+ * the notebook header.
+ *
+ * Best-effort on side effects: a failed storage/mapping cleanup does NOT undo
+ * the record delete (the row is the source of truth; an orphaned object or a
+ * stale mapping is harmless and cheap to leave).
+ */
+export async function deleteMeeting(botId: string): Promise<ActionResult> {
+  let userId: string;
+  try {
+    userId = await requireUserId();
+  } catch {
+    return { ok: false, error: "unauthenticated" };
+  }
+  if (!(await isOwner(botId, userId))) {
+    return { ok: false, error: "not found or not accessible" };
+  }
+
+  // Delete the record under the caller's scope; the returned row carries the
+  // durable video URL so we can reclaim its storage after.
+  const deleted = await withUserScope(userId, () => deleteMeetingRecord(botId));
+
+  // Reclaim the durable video (best-effort; foreign/Recall URLs are ignored).
+  if (deleted?.videoUrl) await deleteObjectByUrl(deleted.videoUrl);
+
+  // Clear the local dedup mapping so a re-scheduled bot for the same meeting
+  // isn't deduped against a bot the user just deleted (best-effort).
+  const bot = await findBotByBotId(botId);
+  if (bot?.dedupKey) await deleteBotMapping(bot.dedupKey);
+
+  return { ok: true };
+}
+
+/* ── owner edits (correcting the LLM output) ──────────────────────────── */
+
+/** A hand-edited action item. `owner` is optional (unassigned = null). */
+export type ActionItemEdit = { task: string; owner: string | null };
+
+/**
+ * Sets the meeting's owner-editable display title. Empty clears it (falls back
+ * to the auto-derived label). Ownership-checked + RLS-scoped.
+ */
+export async function updateMeetingTitle(
+  botId: string,
+  title: string,
+): Promise<ActionResult> {
+  let userId: string;
+  try {
+    userId = await requireUserId();
+  } catch {
+    return { ok: false, error: "unauthenticated" };
+  }
+  if (!(await isOwner(botId, userId))) {
+    return { ok: false, error: "not found or not accessible" };
+  }
+
+  const updated = await withUserScope(userId, () =>
+    updateMeetingRecord(botId, { title: title.trim() || null }),
+  );
+  if (!updated) return { ok: false, error: "not found or not accessible" };
+  return { ok: true };
+}
+
+/**
+ * Overwrites the meeting's summary + overview with the owner's edit. Empty
+ * strings clear the field (stored as null). Ownership-checked + RLS-scoped.
+ * Used by the inline edit on the notebook's summary panel.
+ */
+export async function updateMeetingSummary(
+  botId: string,
+  summary: string,
+  overview: string,
+): Promise<ActionResult> {
+  let userId: string;
+  try {
+    userId = await requireUserId();
+  } catch {
+    return { ok: false, error: "unauthenticated" };
+  }
+  if (!(await isOwner(botId, userId))) {
+    return { ok: false, error: "not found or not accessible" };
+  }
+
+  const updated = await withUserScope(userId, () =>
+    updateMeetingRecord(botId, {
+      summary: summary.trim() || null,
+      overview: overview.trim() || null,
+    }),
+  );
+  if (!updated) return { ok: false, error: "not found or not accessible" };
+  return { ok: true };
+}
+
+/**
+ * Replaces the meeting's action-item list with the owner's edited set (add,
+ * edit, remove, (re)assign owners). Blank tasks are dropped; owners are trimmed
+ * to null when empty. Ownership-checked + RLS-scoped.
+ */
+export async function updateMeetingActionItems(
+  botId: string,
+  items: ActionItemEdit[],
+): Promise<ActionResult> {
+  let userId: string;
+  try {
+    userId = await requireUserId();
+  } catch {
+    return { ok: false, error: "unauthenticated" };
+  }
+  if (!(await isOwner(botId, userId))) {
+    return { ok: false, error: "not found or not accessible" };
+  }
+
+  const cleaned = items
+    .map((i) => ({ task: i.task.trim(), owner: i.owner?.trim() || null }))
+    .filter((i) => i.task.length > 0);
+
+  const updated = await withUserScope(userId, () =>
+    updateMeetingRecord(botId, { actionItems: cleaned }),
+  );
+  if (!updated) return { ok: false, error: "not found or not accessible" };
+  return { ok: true };
+}
+
+/**
+ * Renames a speaker across the whole meeting: the word-level transcript, the
+ * talk-share list, and the team-dynamics participants. Done server-side so the
+ * client never has to round-trip the full transcript — it just passes the old
+ * and new labels. No-op (still ok) if the old name doesn't appear. Ownership-
+ * checked + RLS-scoped.
+ */
+export async function renameMeetingSpeaker(
+  botId: string,
+  from: string,
+  to: string,
+): Promise<ActionResult> {
+  let userId: string;
+  try {
+    userId = await requireUserId();
+  } catch {
+    return { ok: false, error: "unauthenticated" };
+  }
+  if (!(await isOwner(botId, userId))) {
+    return { ok: false, error: "not found or not accessible" };
+  }
+  const next = to.trim();
+  if (!next) return { ok: false, error: "name required" };
+
+  return withUserScope(userId, async () => {
+    const record = await findMeetingRecord(botId);
+    if (!record) return { ok: false, error: "not found or not accessible" };
+
+    // Rewrite the label everywhere it's persisted. Each field is null for
+    // legacy rows / meetings without timestamps — left untouched when absent.
+    const transcriptStruct = record.transcriptStruct?.map((u) =>
+      u.speaker === from ? { ...u, speaker: next } : u,
+    );
+    const talkShares = record.talkShares?.map((s) =>
+      s.name === from ? { ...s, name: next } : s,
+    );
+    const dynamics = record.dynamics
+      ? {
+          ...record.dynamics,
+          participants: record.dynamics.participants.map((p) =>
+            p.name === from ? { ...p, name: next } : p,
+          ),
+        }
+      : record.dynamics;
+
+    const updated = await updateMeetingRecord(botId, {
+      ...(transcriptStruct ? { transcriptStruct } : {}),
+      ...(talkShares ? { talkShares } : {}),
+      ...(dynamics ? { dynamics } : {}),
+    });
+    if (!updated) return { ok: false, error: "not found or not accessible" };
+    return { ok: true };
+  });
 }
 
 /** Result of a share toggle: the token (null once revoked) so the UI builds the link. */

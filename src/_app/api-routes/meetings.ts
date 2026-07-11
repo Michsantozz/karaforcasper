@@ -69,6 +69,7 @@ export async function GET(req: Request) {
       botId: b.botId,
       status: "scheduled" as const,
       meetingUrl: b.meetingUrl,
+      title: null,
       summary: null,
       participantCount: 0,
       durationSeconds: null,

@@ -27,6 +27,8 @@ export interface MeetingListItem {
   botId: string;
   status: MeetingStatus;
   meetingUrl: string | null;
+  /** Owner-set display title; null falls back to the derived label. */
+  title: string | null;
   summary: string | null;
   participantCount: number;
   /** Meeting length in seconds; null for scheduled/processing rows. */
@@ -179,6 +181,8 @@ export interface MeetingDetailResponse {
   botId: string;
   status: string;
   meetingUrl: string | null;
+  /** Owner-set display title; null falls back to the summary-derived label. */
+  title: string | null;
   summary: string | null;
   overview: string | null;
   decisions: string[];

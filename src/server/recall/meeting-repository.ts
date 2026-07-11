@@ -30,7 +30,7 @@ export function isMeetingStatus(s: string): s is MeetingRecordStatus {
 /** One row of the meetings list (index). Only the columns the list renders. */
 export type MeetingListItem = Pick<
   MeetingRecordRow,
-  "botId" | "status" | "meetingUrl" | "summary" | "createdAt" | "updatedAt"
+  "botId" | "status" | "meetingUrl" | "title" | "summary" | "createdAt" | "updatedAt"
 > & { participantCount: number; durationSeconds: number | null };
 
 /**
@@ -73,6 +73,7 @@ export async function listMeetingRecordsForUser(
       botId: meetingRecords.botId,
       status: meetingRecords.status,
       meetingUrl: meetingRecords.meetingUrl,
+      title: meetingRecords.title,
       summary: meetingRecords.summary,
       talkShares: meetingRecords.talkShares,
       moments: meetingRecords.moments,
@@ -172,6 +173,7 @@ export async function listMeetingRecordsPage(
     const pattern = `%${q.replace(/[%_]/g, (c) => `\\${c}`)}%`;
     conds.push(
       or(
+        ilike(meetingRecords.title, pattern),
         ilike(meetingRecords.summary, pattern),
         ilike(meetingRecords.overview, pattern),
         ilike(meetingRecords.transcript, pattern),
@@ -188,6 +190,7 @@ export async function listMeetingRecordsPage(
       botId: meetingRecords.botId,
       status: meetingRecords.status,
       meetingUrl: meetingRecords.meetingUrl,
+      title: meetingRecords.title,
       summary: meetingRecords.summary,
       talkShares: meetingRecords.talkShares,
       moments: meetingRecords.moments,
@@ -346,6 +349,62 @@ export async function disableMeetingShare(botId: string): Promise<void> {
     .update(meetingRecords)
     .set({ shareToken: null, shareCreatedAt: null, updatedAt: new Date() })
     .where(eq(meetingRecords.botId, botId));
+}
+
+/* ── owner edits / delete ─────────────────────────────────────────────── */
+
+/**
+ * Fields the OWNER may edit by hand, correcting the LLM's output. Everything
+ * here is a nullable/optional column already on meeting_records; the caller
+ * passes only the keys it wants changed (a patch). RLS-scoped: MUST run under
+ * withUserScope so a non-owner update hits 0 rows.
+ */
+export type MeetingEditablePatch = Partial<
+  Pick<
+    NewMeetingRecordRow,
+    | "title"
+    | "summary"
+    | "overview"
+    | "actionItems"
+    | "transcriptStruct"
+    | "talkShares"
+    | "dynamics"
+  >
+>;
+
+/**
+ * Applies an owner edit to the persisted minutes. Returns the updated row, or
+ * null if the meeting doesn't exist / isn't the caller's (RLS filtered it out).
+ * Bumps updatedAt. Does NOT touch status/enrichment fields.
+ */
+export async function updateMeetingRecord(
+  botId: string,
+  patch: MeetingEditablePatch,
+): Promise<MeetingRecordRow | null> {
+  const rows = await scopedDb()
+    .update(meetingRecords)
+    .set({ ...patch, updatedAt: new Date() })
+    .where(eq(meetingRecords.botId, botId))
+    .returning();
+  return rows[0] ?? null;
+}
+
+/**
+ * Permanently deletes a meeting record. Returns the deleted row (so the caller
+ * can reclaim the durable video from object storage), or null if nothing was
+ * deleted (unknown botId / not the caller's under RLS).
+ *
+ * RLS-scoped: MUST run under withUserScope — scopedDb() filters to the caller,
+ * so a non-owner delete hits 0 rows and returns null.
+ */
+export async function deleteMeetingRecord(
+  botId: string,
+): Promise<MeetingRecordRow | null> {
+  const rows = await scopedDb()
+    .delete(meetingRecords)
+    .where(eq(meetingRecords.botId, botId))
+    .returning();
+  return rows[0] ?? null;
 }
 
 /**

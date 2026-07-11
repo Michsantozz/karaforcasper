@@ -156,6 +156,12 @@ export const meetingRecords = pgTable(
     userId: text("user_id"),
     /** Meeting URL (denormalized for display). */
     meetingUrl: text("meeting_url"),
+    /**
+     * Owner-editable display title. Null until the owner sets one — the UI then
+     * derives a title from the summary's first sentence or the URL host. Lets
+     * the user override the auto-derived label with a real name.
+     */
+    title: text("title"),
     /** Enrichment state. */
     status: meetingRecordStatusEnum("status").notNull().default("pending"),
     /** Number of enrichment attempts (for diagnostics/backoff). */

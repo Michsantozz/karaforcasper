@@ -17,6 +17,9 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import {
   FileTextIcon,
   SparklesIcon,
@@ -28,8 +31,13 @@ import {
   Share2Icon,
   LinkIcon,
   CopyIcon,
+  DownloadIcon,
   Loader2Icon,
   CheckIcon,
+  XIcon,
+  PencilIcon,
+  PlusIcon,
+  Trash2Icon,
   ZapIcon,
   MessageCircleQuestionIcon,
   ShieldAlertIcon,
@@ -47,18 +55,36 @@ import {
 } from "lucide-react";
 import { cn } from "@/shared/lib/utils";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/shared/ui/alert-dialog";
+import {
   useMeetingDetail,
   HttpError,
   type MeetingDetailResponse,
   type MeetingMoment,
   type MeetingSoundbite,
+  type MeetingActionItem,
   type MeetingDynamics,
   type MeetingHealthInsight,
 } from "@/features/meetings/model/queries";
 import { useClip, type ClipState } from "@/features/meetings/model/useClip";
 import { useTensionAnalysis } from "@/features/meetings/model/useTensionAnalysis";
 import { useScreenIntelligence } from "@/features/meetings/model/useScreenIntelligence";
-import { setMeetingShare } from "@/features/meetings/api/actions";
+import {
+  setMeetingShare,
+  deleteMeeting,
+  updateMeetingTitle,
+  updateMeetingSummary,
+  updateMeetingActionItems,
+  renameMeetingSpeaker,
+} from "@/features/meetings/api/actions";
 import type {
   ScreenshareSpan,
   ScreenCapture,
@@ -190,9 +216,14 @@ export function MeetingDetail({ botId }: { botId: string }) {
               />
               notebook · recall.ai
             </span>
-            <h1 className="max-w-md truncate text-sm font-semibold tracking-tight">
-              {data.summary?.split(/(?<=[.!?])\s/)[0] ?? "Meeting notebook"}
-            </h1>
+            <TitleControl
+              botId={botId}
+              title={data.title}
+              fallback={
+                data.summary?.split(/(?<=[.!?])\s/)[0] ?? "Meeting notebook"
+              }
+              onEdited={refetch}
+            />
           </div>
         </div>
         <div className="flex items-center gap-4 font-mono text-[11px] text-muted-foreground">
@@ -203,7 +234,9 @@ export function MeetingDetail({ botId }: { botId: string }) {
           {speakers.length > 0 && (
             <Meta icon={UsersIcon} v={`${speakers.length} speakers`} />
           )}
+          <ExportControl data={data} />
           <ShareControl botId={botId} initialToken={data.shareToken} />
+          <DeleteControl botId={botId} />
         </div>
       </header>
 
@@ -213,23 +246,13 @@ export function MeetingDetail({ botId }: { botId: string }) {
         <section className="flex min-h-0 flex-[1.4] flex-col gap-1 rounded-[8px] bg-(--thread-frame-outer) p-1">
           <PanelLabel icon={FileTextIcon}>meeting / transcript</PanelLabel>
 
-          {/* speaker legend */}
+          {/* speaker legend — each name is renamable by the owner */}
           {speakers.length > 0 && (
-            <div className="flex flex-wrap items-center gap-3 border-b border-dashed border-border px-3 py-2">
-              {speakers.map((name, i) => (
-                <span
-                  key={name}
-                  className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground"
-                >
-                  <span
-                    aria-hidden
-                    className="size-2 rounded-[1px]"
-                    style={{ background: speakerColor(i) }}
-                  />
-                  {name}
-                </span>
-              ))}
-            </div>
+            <SpeakerLegend
+              botId={botId}
+              speakers={speakers}
+              onRenamed={refetch}
+            />
           )}
 
           <VideoPanel
@@ -251,7 +274,7 @@ export function MeetingDetail({ botId }: { botId: string }) {
 
         {/* RIGHT — AI panels */}
         <aside className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
-          <NotesPanels data={data} onSeek={seek} clip={clip} />
+          <NotesPanels data={data} onSeek={seek} clip={clip} onEdited={refetch} />
         </aside>
       </div>
     </Shell>
@@ -506,6 +529,651 @@ function ShareControl({
   );
 }
 
+/* ── export control (download minutes + transcript as markdown) ───── */
+
+/** Assembles the meeting minutes + transcript into a portable markdown doc. */
+function buildMarkdown(data: MeetingDetailResponse): string {
+  const title =
+    data.title?.trim() ||
+    data.summary?.split(/(?<=[.!?])\s/)[0] ||
+    "Meeting notebook";
+  const lines: string[] = [`# ${title}`, ""];
+  lines.push(`_${new Date(data.createdAt).toLocaleString()}_`, "");
+
+  if (data.summary) lines.push("## Summary", "", data.summary, "");
+  if (data.overview) lines.push(data.overview, "");
+
+  if (data.decisions.length) {
+    lines.push("## Decisions", "");
+    for (const d of data.decisions) lines.push(`- ${d}`);
+    lines.push("");
+  }
+  if (data.actionItems.length) {
+    lines.push("## Action items", "");
+    for (const a of data.actionItems) {
+      lines.push(`- [ ] ${a.task}${a.owner ? ` — **${a.owner}**` : ""}`);
+    }
+    lines.push("");
+  }
+  if (data.sections.length) {
+    lines.push("## Sections", "");
+    for (const s of data.sections) {
+      lines.push(`### ${s.startSeconds != null ? `[${fmt(s.startSeconds)}] ` : ""}${s.title}`);
+      for (const b of s.bullets) lines.push(`- ${b}`);
+      lines.push("");
+    }
+  }
+  if (data.topics.length) {
+    lines.push("## Keywords", "", data.topics.join(", "), "");
+  }
+  if (data.transcript.length) {
+    lines.push("## Transcript", "");
+    for (const u of data.transcript) {
+      const text = u.words.map((w) => w.text).join(" ").trim();
+      const at = u.start != null ? ` [${fmt(u.start)}]` : "";
+      lines.push(`**${u.speaker}**${at}: ${text}`, "");
+    }
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Downloads the whole meeting (minutes + transcript) as a markdown file, and
+ * offers a copy-to-clipboard. Pure client-side — no backend round-trip.
+ */
+function ExportControl({ data }: { data: MeetingDetailResponse }) {
+  const [copied, setCopied] = useState(false);
+
+  function download() {
+    const md = buildMarkdown(data);
+    const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${slug(
+      data.title || data.summary?.split(/(?<=[.!?])\s/)[0] || "meeting",
+    )}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success("Meeting exported");
+  }
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(buildMarkdown(data));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+      toast.success("Copied to clipboard");
+    } catch {
+      toast.error("Could not copy");
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-1">
+      <button
+        type="button"
+        onClick={download}
+        aria-label="Export meeting as markdown"
+        title="Download as markdown"
+        className="flex items-center gap-1.5 rounded-[5px] border bg-background px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+      >
+        <DownloadIcon className="size-3.5" />
+        export
+      </button>
+      <button
+        type="button"
+        onClick={copy}
+        aria-label="Copy meeting to clipboard"
+        title="Copy as markdown"
+        className="flex size-6 items-center justify-center rounded-[5px] border bg-background text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+      >
+        {copied ? (
+          <CheckIcon className="size-3.5 text-(--thread-accent-primary)" />
+        ) : (
+          <CopyIcon className="size-3.5" />
+        )}
+      </button>
+    </div>
+  );
+}
+
+/* ── delete control (notebook header) ─────────────────────────────── */
+
+/**
+ * Owner-only Delete control in the notebook header. Confirms via AlertDialog,
+ * deletes the meeting (record + durable video) through the deleteMeeting Server
+ * Action, then routes back to the list and invalidates the cached index.
+ */
+function DeleteControl({ botId }: { botId: string }) {
+  const router = useRouter();
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const res = await deleteMeeting(botId);
+      if (!res.ok) throw new Error(res.error);
+    },
+    onSuccess: () => {
+      toast.success("Meeting deleted");
+      qc.invalidateQueries({ queryKey: ["meetings"] });
+      router.push("/meetings");
+    },
+    onError: (e) =>
+      toast.error("Could not delete meeting", {
+        description: e instanceof Error ? e.message : undefined,
+      }),
+  });
+
+  return (
+    <AlertDialog open={open} onOpenChange={setOpen}>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        aria-label="Delete meeting"
+        className="flex items-center gap-1.5 rounded-[5px] border bg-background px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground transition-colors hover:bg-muted/60 hover:text-(--thread-accent-secondary)"
+      >
+        <Trash2Icon className="size-3.5" />
+        delete
+      </button>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete this meeting?</AlertDialogTitle>
+          <AlertDialogDescription>
+            The minutes, transcript and recording will be permanently deleted.
+            This cannot be undone.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={mutation.isPending}>
+            Cancel
+          </AlertDialogCancel>
+          <AlertDialogAction
+            onClick={(e) => {
+              e.preventDefault();
+              mutation.mutate();
+            }}
+            disabled={mutation.isPending}
+            className="bg-(--thread-accent-secondary) text-white hover:bg-(--thread-accent-secondary)/90"
+          >
+            {mutation.isPending ? (
+              <span className="flex items-center gap-1.5">
+                <Loader2Icon className="size-3.5 animate-spin" />
+                deleting…
+              </span>
+            ) : (
+              "Delete"
+            )}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+/* ── editable notebook title ───────────────────────────────────────── */
+
+/**
+ * Notebook title (header h1) with inline rename. Shows the owner title if set,
+ * else the auto-derived fallback (summary/host). Clicking the pencil turns it
+ * into an input; Enter/blur persists via updateMeetingTitle and refetches.
+ * Escape cancels.
+ */
+function TitleControl({
+  botId,
+  title,
+  fallback,
+  onEdited,
+}: {
+  botId: string;
+  title: string | null;
+  fallback: string;
+  onEdited: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(title ?? "");
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const res = await updateMeetingTitle(botId, draft);
+      if (!res.ok) throw new Error(res.error);
+    },
+    onSuccess: () => {
+      toast.success("Title updated");
+      setEditing(false);
+      onEdited();
+    },
+    onError: (e) =>
+      toast.error("Could not save title", {
+        description: e instanceof Error ? e.message : undefined,
+      }),
+  });
+
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => mutation.mutate()}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            mutation.mutate();
+          } else if (e.key === "Escape") {
+            setEditing(false);
+          }
+        }}
+        disabled={mutation.isPending}
+        placeholder={fallback}
+        aria-label="Meeting title"
+        className="max-w-md rounded-[4px] border bg-background px-1.5 py-0.5 text-sm font-semibold tracking-tight outline-none focus-visible:border-(--thread-accent-primary)"
+      />
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        setDraft(title ?? "");
+        setEditing(true);
+      }}
+      aria-label="Rename meeting"
+      title="Rename meeting"
+      className="group/title flex max-w-md items-center gap-1.5"
+    >
+      <span className="truncate text-sm font-semibold tracking-tight">
+        {title?.trim() || fallback}
+      </span>
+      <PencilIcon className="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/title:opacity-70" />
+    </button>
+  );
+}
+
+/* ── editable summary panel ───────────────────────────────────────── */
+
+/**
+ * Summary + overview panel with an owner inline edit. Shows the generated text;
+ * the pencil swaps to two textareas. Persists via updateMeetingSummary and
+ * refetches. When empty (no summary AND not editing) the panel is hidden.
+ */
+function SummaryPanel({
+  botId,
+  summary,
+  overview,
+  onEdited,
+}: {
+  botId: string;
+  summary: string | null;
+  overview: string | null;
+  onEdited: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draftSummary, setDraftSummary] = useState(summary ?? "");
+  const [draftOverview, setDraftOverview] = useState(overview ?? "");
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const res = await updateMeetingSummary(botId, draftSummary, draftOverview);
+      if (!res.ok) throw new Error(res.error);
+    },
+    onSuccess: () => {
+      toast.success("Summary updated");
+      setEditing(false);
+      onEdited();
+    },
+    onError: (e) =>
+      toast.error("Could not save summary", {
+        description: e instanceof Error ? e.message : undefined,
+      }),
+  });
+
+  function startEdit() {
+    setDraftSummary(summary ?? "");
+    setDraftOverview(overview ?? "");
+    setEditing(true);
+  }
+
+  if (!summary && !editing) {
+    return (
+      <Panel icon={SparklesIcon} label="ai / summary" action={<EditButton onClick={startEdit} label="Add summary" icon={PlusIcon} />}>
+        <p className="text-sm italic text-muted-foreground">No summary yet.</p>
+      </Panel>
+    );
+  }
+
+  return (
+    <Panel
+      icon={SparklesIcon}
+      label="ai / summary"
+      tone={editing ? "default" : "success"}
+      action={
+        editing ? undefined : <EditButton onClick={startEdit} label="Edit summary" />
+      }
+    >
+      {editing ? (
+        <div className="flex flex-col gap-2">
+          <textarea
+            value={draftSummary}
+            onChange={(e) => setDraftSummary(e.target.value)}
+            rows={3}
+            placeholder="Executive summary…"
+            aria-label="Summary"
+            className="w-full resize-y rounded-[5px] border bg-background px-2 py-1.5 text-sm outline-none focus-visible:border-(--thread-accent-primary) focus-visible:ring-1 focus-visible:ring-(--thread-accent-primary-soft)"
+          />
+          <textarea
+            value={draftOverview}
+            onChange={(e) => setDraftOverview(e.target.value)}
+            rows={3}
+            placeholder="Longer overview (optional)…"
+            aria-label="Overview"
+            className="w-full resize-y rounded-[5px] border bg-background px-2 py-1.5 text-sm text-muted-foreground outline-none focus-visible:border-(--thread-accent-primary) focus-visible:ring-1 focus-visible:ring-(--thread-accent-primary-soft)"
+          />
+          <EditFooter
+            busy={mutation.isPending}
+            onSave={() => mutation.mutate()}
+            onCancel={() => setEditing(false)}
+          />
+        </div>
+      ) : (
+        <>
+          <p className="text-sm leading-relaxed">{summary}</p>
+          {overview && (
+            <p className="mt-2 border-t border-dashed border-border pt-2 text-sm leading-relaxed text-muted-foreground">
+              {overview}
+            </p>
+          )}
+        </>
+      )}
+    </Panel>
+  );
+}
+
+/* ── editable action items panel ──────────────────────────────────── */
+
+/**
+ * Action-items panel with full owner editing: add, edit task, (re)assign owner,
+ * remove. The generated list is the initial draft; Save persists the whole set
+ * via updateMeetingActionItems (blank tasks are dropped server-side). Hidden
+ * when empty and not editing.
+ */
+function ActionItemsPanel({
+  botId,
+  items,
+  onEdited,
+}: {
+  botId: string;
+  items: MeetingActionItem[];
+  onEdited: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<MeetingActionItem[]>(items);
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const res = await updateMeetingActionItems(botId, draft);
+      if (!res.ok) throw new Error(res.error);
+    },
+    onSuccess: () => {
+      toast.success("Action items updated");
+      setEditing(false);
+      onEdited();
+    },
+    onError: (e) =>
+      toast.error("Could not save action items", {
+        description: e instanceof Error ? e.message : undefined,
+      }),
+  });
+
+  function startEdit() {
+    setDraft(items.length ? items : [{ task: "", owner: null }]);
+    setEditing(true);
+  }
+  function setItem(i: number, patch: Partial<MeetingActionItem>) {
+    setDraft((d) => d.map((it, j) => (j === i ? { ...it, ...patch } : it)));
+  }
+  function addItem() {
+    setDraft((d) => [...d, { task: "", owner: null }]);
+  }
+  function removeItem(i: number) {
+    setDraft((d) => d.filter((_, j) => j !== i));
+  }
+
+  if (items.length === 0 && !editing) {
+    return (
+      <Panel
+        icon={ListChecksIcon}
+        label="ai / action items"
+        action={<EditButton onClick={startEdit} label="Add action item" icon={PlusIcon} />}
+      >
+        <p className="text-sm italic text-muted-foreground">No action items.</p>
+      </Panel>
+    );
+  }
+
+  return (
+    <Panel
+      icon={ListChecksIcon}
+      label="ai / action items"
+      action={
+        editing ? undefined : <EditButton onClick={startEdit} label="Edit action items" />
+      }
+    >
+      {editing ? (
+        <div className="flex flex-col gap-2">
+          {draft.map((it, i) => (
+            <div key={i} className="flex items-center gap-1.5">
+              <input
+                value={it.task}
+                onChange={(e) => setItem(i, { task: e.target.value })}
+                placeholder="Task…"
+                aria-label={`Task ${i + 1}`}
+                className="min-w-0 flex-1 rounded-[5px] border bg-background px-2 py-1 text-sm outline-none focus-visible:border-(--thread-accent-primary)"
+              />
+              <input
+                value={it.owner ?? ""}
+                onChange={(e) => setItem(i, { owner: e.target.value || null })}
+                placeholder="Owner"
+                aria-label={`Owner ${i + 1}`}
+                className="w-20 shrink-0 rounded-[5px] border bg-background px-2 py-1 font-mono text-[11px] outline-none focus-visible:border-(--thread-accent-primary)"
+              />
+              <button
+                type="button"
+                onClick={() => removeItem(i)}
+                aria-label="Remove action item"
+                className="flex size-6 shrink-0 items-center justify-center rounded-[5px] text-muted-foreground transition-colors hover:text-(--thread-accent-secondary)"
+              >
+                <XIcon className="size-3.5" />
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={addItem}
+            className="flex items-center gap-1.5 self-start rounded-[5px] border border-dashed bg-background px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <PlusIcon className="size-3" />
+            add item
+          </button>
+          <EditFooter
+            busy={mutation.isPending}
+            onSave={() => mutation.mutate()}
+            onCancel={() => setEditing(false)}
+          />
+        </div>
+      ) : (
+        <ul className="flex flex-col gap-1.5">
+          {items.map((a, i) => (
+            <li
+              key={i}
+              className="flex items-start justify-between gap-3 rounded-[5px] border bg-background px-2.5 py-1.5"
+            >
+              <span className="min-w-0 flex-1 text-sm">{a.task}</span>
+              {a.owner && (
+                <span className="shrink-0 rounded-[4px] bg-(--thread-accent-primary-soft) px-1.5 py-0.5 font-mono text-[10px] text-(--thread-accent-primary)">
+                  {a.owner}
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </Panel>
+  );
+}
+
+/* ── edit primitives (pencil trigger + save/cancel footer) ────────── */
+
+function EditButton({
+  onClick,
+  label,
+  icon: Icon = PencilIcon,
+}: {
+  onClick: () => void;
+  label: string;
+  icon?: LucideIcon;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className="flex size-6 items-center justify-center rounded-[5px] text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+    >
+      <Icon className="size-3.5" />
+    </button>
+  );
+}
+
+function EditFooter({
+  busy,
+  onSave,
+  onCancel,
+}: {
+  busy: boolean;
+  onSave: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-end gap-1.5 pt-1">
+      <button
+        type="button"
+        onClick={onCancel}
+        disabled={busy}
+        className="rounded-[5px] border bg-background px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+      >
+        cancel
+      </button>
+      <button
+        type="button"
+        onClick={onSave}
+        disabled={busy}
+        className="flex items-center gap-1.5 rounded-[5px] border border-(--thread-accent-primary)/40 bg-(--thread-accent-primary-soft) px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider text-(--thread-accent-primary) transition-colors hover:bg-(--thread-accent-primary-soft)/80 disabled:opacity-50"
+      >
+        {busy && <Loader2Icon className="size-3 animate-spin" />}
+        save
+      </button>
+    </div>
+  );
+}
+
+/* ── speaker legend (renamable) ───────────────────────────────────── */
+
+/**
+ * Speaker legend with inline rename. Clicking a name (or its pencil) turns it
+ * into an input; Enter/blur persists via renameMeetingSpeaker, which rewrites
+ * the label across the transcript, talk-shares and dynamics server-side, then
+ * refetches. Escape cancels.
+ */
+function SpeakerLegend({
+  botId,
+  speakers,
+  onRenamed,
+}: {
+  botId: string;
+  speakers: string[];
+  onRenamed: () => void;
+}) {
+  const [editing, setEditing] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const mutation = useMutation({
+    mutationFn: async ({ from, to }: { from: string; to: string }) => {
+      const res = await renameMeetingSpeaker(botId, from, to);
+      if (!res.ok) throw new Error(res.error);
+    },
+    onSuccess: () => {
+      toast.success("Speaker renamed");
+      setEditing(null);
+      onRenamed();
+    },
+    onError: (e) =>
+      toast.error("Could not rename speaker", {
+        description: e instanceof Error ? e.message : undefined,
+      }),
+  });
+
+  function commit(from: string) {
+    const to = draft.trim();
+    if (!to || to === from) {
+      setEditing(null);
+      return;
+    }
+    mutation.mutate({ from, to });
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-3 border-b border-dashed border-border px-3 py-2">
+      {speakers.map((name, i) => {
+        const isEditing = editing === name;
+        return (
+          <span
+            key={name}
+            className="group/spk flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground"
+          >
+            <span
+              aria-hidden
+              className="size-2 rounded-[1px]"
+              style={{ background: speakerColor(i) }}
+            />
+            {isEditing ? (
+              <input
+                autoFocus
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onBlur={() => commit(name)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    commit(name);
+                  } else if (e.key === "Escape") {
+                    setEditing(null);
+                  }
+                }}
+                disabled={mutation.isPending}
+                aria-label={`Rename ${name}`}
+                className="w-24 rounded-[3px] border bg-background px-1 py-0.5 font-mono text-[10px] uppercase tracking-wider outline-none focus-visible:border-(--thread-accent-primary)"
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setDraft(name);
+                  setEditing(name);
+                }}
+                aria-label={`Rename ${name}`}
+                title={`Rename ${name}`}
+                className="flex items-center gap-1 hover:text-foreground"
+              >
+                {name}
+                <PencilIcon className="size-2.5 opacity-0 transition-opacity group-hover/spk:opacity-60" />
+              </button>
+            )}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 /* ── video (real mp4) ─────────────────────────────────────────────── */
 
 function VideoPanel({
@@ -678,10 +1346,13 @@ function NotesPanels({
   data,
   onSeek,
   clip,
+  onEdited,
 }: {
   data: MeetingDetailResponse;
   onSeek: (s: number | null) => void;
   clip: ReturnType<typeof useClip>;
+  /** Refetches the meeting detail after an owner edit persists. */
+  onEdited: () => void;
 }) {
   const sortedShares = useMemo(
     () => [...data.talkShares].sort((a, b) => b.share - a.share),
@@ -692,16 +1363,12 @@ function NotesPanels({
 
   return (
     <>
-      {data.summary && (
-        <Panel icon={SparklesIcon} label="ai / summary" tone="success">
-          <p className="text-sm leading-relaxed">{data.summary}</p>
-          {data.overview && (
-            <p className="mt-2 border-t border-dashed border-border pt-2 text-sm leading-relaxed text-muted-foreground">
-              {data.overview}
-            </p>
-          )}
-        </Panel>
-      )}
+      <SummaryPanel
+        botId={data.botId}
+        summary={data.summary}
+        overview={data.overview}
+        onEdited={onEdited}
+      />
 
       {data.moments.length > 0 && (
         <Panel icon={BookmarkIcon} label="ai / key moments">
@@ -820,25 +1487,11 @@ function NotesPanels({
         </Panel>
       )}
 
-      {data.actionItems.length > 0 && (
-        <Panel icon={ListChecksIcon} label="ai / action items">
-          <ul className="flex flex-col gap-1.5">
-            {data.actionItems.map((a, i) => (
-              <li
-                key={i}
-                className="flex items-start justify-between gap-3 rounded-[5px] border bg-background px-2.5 py-1.5"
-              >
-                <span className="min-w-0 flex-1 text-sm">{a.task}</span>
-                {a.owner && (
-                  <span className="shrink-0 rounded-[4px] bg-(--thread-accent-primary-soft) px-1.5 py-0.5 font-mono text-[10px] text-(--thread-accent-primary)">
-                    {a.owner}
-                  </span>
-                )}
-              </li>
-            ))}
-          </ul>
-        </Panel>
-      )}
+      <ActionItemsPanel
+        botId={data.botId}
+        items={data.actionItems}
+        onEdited={onEdited}
+      />
 
       {data.topics.length > 0 && (
         <Panel icon={HashIcon} label="ai / keywords">
@@ -1437,11 +2090,14 @@ function Panel({
   icon: Icon,
   label,
   tone = "default",
+  action,
   children,
 }: {
   icon: LucideIcon;
   label: string;
   tone?: "default" | "success";
+  /** Optional control on the right of the header (e.g. an edit pencil). */
+  action?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
@@ -1451,15 +2107,18 @@ function Panel({
           <Icon className="size-3.5" />
           {label}
         </span>
-        {tone === "success" && (
-          <span className="flex items-center gap-1 font-mono text-[10px] text-(--thread-accent-primary)">
-            <span
-              aria-hidden
-              className="size-1.5 animate-pulse rounded-[1px] bg-(--thread-accent-primary)"
-            />
-            generated
-          </span>
-        )}
+        <span className="flex items-center gap-1.5">
+          {tone === "success" && (
+            <span className="flex items-center gap-1 font-mono text-[10px] text-(--thread-accent-primary)">
+              <span
+                aria-hidden
+                className="size-1.5 animate-pulse rounded-[1px] bg-(--thread-accent-primary)"
+              />
+              generated
+            </span>
+          )}
+          {action}
+        </span>
       </div>
       <div className="rounded-[5px] border bg-background p-3">{children}</div>
     </div>

@@ -1,6 +1,10 @@
 import "server-only";
 import { Buffer } from "node:buffer";
-import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import {
+  DeleteObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from "@aws-sdk/client-s3";
 import { v4 as uuidv4 } from "uuid";
 
 /**
@@ -127,4 +131,41 @@ export async function uploadObject(input: {
     }),
   );
   return { url: `${publicBase()}/${key}`, key, contentType: input.contentType };
+}
+
+/**
+ * Deletes a stored object by its persisted public URL. Best-effort: used when a
+ * meeting is deleted, to reclaim the durable video/attachment bytes. Returns
+ * true if the delete was issued, false if the URL isn't one of ours (foreign
+ * host, e.g. a Recall signed URL) or storage isn't configured. Never throws —
+ * storage failures must not block the record delete.
+ */
+export async function deleteObjectByUrl(url: string): Promise<boolean> {
+  const key = keyFromPublicUrl(url);
+  if (!key) return false;
+  try {
+    await getClient().send(
+      new DeleteObjectCommand({ Bucket: bucket(), Key: key }),
+    );
+    return true;
+  } catch (err) {
+    console.error(`[s3] delete failed for ${url}: ${err}`);
+    return false;
+  }
+}
+
+/**
+ * Extracts the object key from a persisted public URL (`<publicBase>/<key>`).
+ * Returns null when the URL doesn't live under our public base — a foreign host
+ * (Recall's signed CDN URL) must never be handed to a DeleteObject on our bucket.
+ */
+function keyFromPublicUrl(url: string): string | null {
+  let base: string;
+  try {
+    base = publicBase();
+  } catch {
+    return null;
+  }
+  const prefix = `${base}/`;
+  return url.startsWith(prefix) ? url.slice(prefix.length) : null;
 }
