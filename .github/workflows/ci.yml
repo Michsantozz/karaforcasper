@@ -10,11 +10,17 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Least-privilege: o GITHUB_TOKEN só lê o repo. Qualquer scope não listado vira
+# `none`. CI não publica nada — não precisa de write. (security-hardening docs)
+permissions:
+  contents: read
+
 jobs:
   # Gate de qualidade: typecheck + lint (boundary rules) + testes que rodam
   # sem serviços externos. integration/e2e ficam de fora (precisam DB/APIs reais).
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 20 # backstop: sem isto um job travado roda até 6h (default)
     steps:
       - uses: actions/checkout@v4
 
@@ -31,6 +37,21 @@ jobs:
       - run: pnpm lint
       - run: pnpm test:unit
       - run: pnpm test:component
+
+      # Valida o build de produção (RSC/bundler/boundaries) — o typecheck sozinho
+      # não pega erros de bundling. Cacheia .next/cache entre runs pra acelerar.
+      - uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.next/cache
+          key: next-${{ github.sha }}
+          restore-keys: next-
+      - run: pnpm build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+          # Build exige a chave (mesma lógica do Dockerfile). Placeholder de CI:
+          # o build só valida o bundle, não roda Server Actions reais.
+          NEXT_SERVER_ACTIONS_ENCRYPTION_KEY: ci-placeholder-not-a-real-secret
+          GIT_HASH: ${{ github.sha }}
 
   # Valida que a imagem de produção builda (standalone, multi-stage). Não publica.
   docker:
