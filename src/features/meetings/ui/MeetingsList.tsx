@@ -13,6 +13,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   SearchIcon,
   CircleDotIcon,
@@ -20,6 +21,8 @@ import {
   CalendarIcon,
   ClockIcon,
   AlertTriangleIcon,
+  RotateCwIcon,
+  XIcon,
 } from "lucide-react";
 import { cn } from "@/shared/lib/utils";
 import {
@@ -28,6 +31,10 @@ import {
   type MeetingStatus,
   type MeetingsQuery,
 } from "@/features/meetings/model/queries";
+import {
+  reprocessMeeting,
+  cancelScheduledMeeting,
+} from "@/features/meetings/api/actions";
 
 /** Debounces a value so we don't fire a server search on every keystroke. */
 function useDebounced<T>(value: T, ms: number): T {
@@ -253,6 +260,9 @@ function MeetingRow({ m, first }: { m: MeetingListItem; first: boolean }) {
         </div>
       </div>
 
+      {/* recovery actions for failed / scheduled rows */}
+      <RowAction m={m} />
+
       {m.participantCount > 0 && (
         <span className="shrink-0 rounded-[5px] border bg-background px-2 py-0.5 font-mono text-[10px] tabular-nums text-muted-foreground">
           {m.participantCount}
@@ -270,6 +280,55 @@ function MeetingRow({ m, first }: { m: MeetingListItem; first: boolean }) {
     >
       {inner}
     </Link>
+  );
+}
+
+/* ── recovery actions (failed → reprocess, scheduled → cancel) ─────── */
+
+function RowAction({ m }: { m: MeetingListItem }) {
+  const qc = useQueryClient();
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const res =
+        m.status === "failed"
+          ? await reprocessMeeting(m.botId)
+          : await cancelScheduledMeeting(m.botId);
+      if (!res.ok) throw new Error(res.error);
+    },
+    // Refresh the list so the row reflects its new state (requeued/removed).
+    onSettled: () => qc.invalidateQueries({ queryKey: ["meetings"] }),
+  });
+
+  if (m.status !== "failed" && m.status !== "scheduled") return null;
+
+  const isFailed = m.status === "failed";
+  const Icon = isFailed ? RotateCwIcon : XIcon;
+  const label = isFailed ? "Reprocess meeting" : "Cancel scheduled meeting";
+
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={mutation.isError ? `Failed — ${mutation.error?.message}` : label}
+      disabled={mutation.isPending}
+      // Stop the click from bubbling to a wrapping Link (there is none for these
+      // statuses today, but keep it robust if that changes).
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        mutation.mutate();
+      }}
+      className={cn(
+        "flex size-7 shrink-0 items-center justify-center rounded-[5px] border bg-background transition-colors hover:bg-muted/60 disabled:opacity-50",
+        mutation.isError
+          ? "text-(--thread-accent-secondary)"
+          : "text-muted-foreground hover:text-foreground",
+      )}
+    >
+      <Icon
+        className={cn("size-3.5", mutation.isPending && "animate-spin")}
+      />
+    </button>
   );
 }
 

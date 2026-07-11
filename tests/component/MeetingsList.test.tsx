@@ -1,6 +1,19 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, within, waitFor } from "@testing-library/react";
+import {
+  render as rtlRender,
+  screen,
+  within,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { makeQueryWrapper } from "../helpers/query-wrapper";
+
+// RowAction uses useMutation/useQueryClient, so the list needs a QueryClient in
+// context. Render through a fresh wrapper per test (no cross-test cache bleed).
+function render(ui: React.ReactElement) {
+  const { wrapper: Wrapper, queryClient } = makeQueryWrapper();
+  return { ...rtlRender(ui, { wrapper: Wrapper }), queryClient };
+}
 
 /**
  * MeetingsList — dense meetings index. Contract:
@@ -32,6 +45,13 @@ vi.mock("@/features/meetings/model/queries", () => ({
       isFetchingNextPage: false,
     };
   },
+}));
+
+const reprocessMeeting = vi.fn();
+const cancelScheduledMeeting = vi.fn();
+vi.mock("@/features/meetings/api/actions", () => ({
+  reprocessMeeting: (...a: unknown[]) => reprocessMeeting(...a),
+  cancelScheduledMeeting: (...a: unknown[]) => cancelScheduledMeeting(...a),
 }));
 
 import { MeetingsList } from "@/features/meetings/ui/MeetingsList";
@@ -158,6 +178,49 @@ describe("MeetingsList — status filter", () => {
     expect(lastFilters).toHaveBeenLastCalledWith(
       expect.objectContaining({ status: "failed" }),
     );
+  });
+});
+
+describe("MeetingsList — recovery actions", () => {
+  it("failed row shows a reprocess button that calls reprocessMeeting", async () => {
+    reprocessMeeting.mockResolvedValue({ ok: true });
+    rows = [meeting({ botId: "bad", status: "failed" })];
+    const user = userEvent.setup();
+    render(<MeetingsList />);
+
+    await user.click(
+      screen.getByRole("button", { name: /reprocess meeting/i }),
+    );
+    expect(reprocessMeeting).toHaveBeenCalledWith("bad");
+  });
+
+  it("scheduled row shows a cancel button that calls cancelScheduledMeeting", async () => {
+    cancelScheduledMeeting.mockResolvedValue({ ok: true });
+    const future = new Date(Date.now() + 3_600_000).toISOString();
+    rows = [
+      meeting({
+        botId: "sch",
+        status: "scheduled",
+        summary: null,
+        joinAt: future,
+        createdAt: future,
+      }),
+    ];
+    const user = userEvent.setup();
+    render(<MeetingsList />);
+
+    await user.click(
+      screen.getByRole("button", { name: /cancel scheduled meeting/i }),
+    );
+    expect(cancelScheduledMeeting).toHaveBeenCalledWith("sch");
+  });
+
+  it("done/processing rows have no recovery button", () => {
+    rows = [meeting({ status: "done" })];
+    render(<MeetingsList />);
+    expect(
+      screen.queryByRole("button", { name: /reprocess|cancel scheduled/i }),
+    ).toBeNull();
   });
 });
 

@@ -17,6 +17,18 @@ const eslintConfig = [
         { type: "app", pattern: "src/app/**/*" },
         { type: "mastra", pattern: "src/mastra/**/*" },
         { type: "server", pattern: "src/server/**/*" },
+        // O `api/` de um slice são as Server Actions ("use server"): a PONTE
+        // que a UI cliente chama para mutar. É a única parte do slice que pode
+        // tocar server/*. Declarado ANTES de "feature" (first-match ganha) e com
+        // partialMatch:false para ancorar o caminho ao root — assim distingue
+        // `features/*/api` de `features/*` (que casaria por sufixo). Captura o
+        // family p/ escopar a política ao próprio slice.
+        {
+          type: "feature-api",
+          pattern: "src/features/*/api",
+          partialMatch: false,
+          capture: ["family"],
+        },
         // captura o nome do slice (multisig, wallet, ...) em "family"
         { type: "feature", pattern: "src/features/*/**/*", capture: ["family"] },
         { type: "shared", pattern: "src/shared/**/*" },
@@ -53,18 +65,25 @@ const eslintConfig = [
               from: { type: "feature", captured: { family: "assistant" } },
               allow: { to: { type: ["shared", "feature"] } },
             },
-            // wallet mostra contexto da tx multisig durante o fluxo de assinatura
-            {
-              from: { type: "feature", captured: { family: "wallet" } },
-              allow: {
-                to: { type: "feature", captured: { family: "multisig" } },
-              },
-            },
             // auth é cross-cutting e roda server-side (config do better-auth): pode
             // tocar server para enviar e-mail de verificação/reset/magic-link.
             {
               from: { type: "feature", captured: { family: "auth" } },
               allow: { to: { type: ["shared", "server"] } },
+            },
+            // Server Actions (o `api/` do slice) são a ponte de mutação: podem
+            // tocar server + shared + auth (sessão) + o próprio slice. A UI do
+            // slice continua SEM acesso a server — só o api/ atravessa.
+            {
+              from: { type: "feature-api" },
+              allow: {
+                to: [
+                  { type: ["server", "shared"] },
+                  { type: "feature", captured: { family: "auth" } },
+                  { type: "feature-api", captured: { family: "{{ from.captured.family }}" } },
+                  { type: "feature", captured: { family: "{{ from.captured.family }}" } },
+                ],
+              },
             },
             // demais slices: shared + auth (transversal, sessão) + o próprio slice
             {
@@ -74,6 +93,7 @@ const eslintConfig = [
                   { type: "shared" },
                   { type: "feature", captured: { family: "auth" } },
                   { type: "feature", captured: { family: "{{ from.captured.family }}" } },
+                  { type: "feature-api", captured: { family: "{{ from.captured.family }}" } },
                 ],
               },
             },
