@@ -41,6 +41,8 @@ import {
   MicOffIcon,
   RadioIcon,
   FlameIcon,
+  MonitorIcon,
+  ImageIcon,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/shared/lib/utils";
@@ -55,7 +57,13 @@ import {
 } from "@/features/meetings/model/queries";
 import { useClip, type ClipState } from "@/features/meetings/model/useClip";
 import { useTensionAnalysis } from "@/features/meetings/model/useTensionAnalysis";
+import { useScreenIntelligence } from "@/features/meetings/model/useScreenIntelligence";
 import { setMeetingShare } from "@/features/meetings/api/actions";
+import type {
+  ScreenshareSpan,
+  ScreenCapture,
+  TranscriptUtterance,
+} from "@/features/meetings/model/queries";
 
 /* ── helpers ──────────────────────────────────────────────────────── */
 
@@ -857,6 +865,17 @@ function NotesPanels({
         />
       )}
 
+      {!!data.screenshareSpans?.length && canClip && data.videoUrl && (
+        <ScreensPanel
+          botId={data.botId}
+          videoUrl={data.videoUrl}
+          spans={data.screenshareSpans}
+          transcript={data.transcript}
+          tensionMoments={data.dynamics?.moments ?? []}
+          onSeek={onSeek}
+        />
+      )}
+
       {sortedShares.length > 0 && (
         <Panel icon={UsersIcon} label="ai / talk time">
           <div className="flex flex-col gap-2">
@@ -1110,6 +1129,144 @@ function DynamicsPanel({
                         {behave.read}
                       </span>
                     </div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
+/** Icon per capture trigger — why this screen was grabbed. */
+const SCREEN_TRIGGER_ICON: Record<ScreenCapture["trigger"], LucideIcon> = {
+  "screen-start": MonitorIcon,
+  "screen-change": ImageIcon,
+  deixis: HashIcon,
+  tension: FlameIcon,
+};
+
+function ScreensPanel({
+  botId,
+  videoUrl,
+  spans,
+  transcript,
+  tensionMoments,
+  onSeek,
+}: {
+  botId: string;
+  videoUrl: string;
+  spans: ScreenshareSpan[];
+  transcript: TranscriptUtterance[];
+  tensionMoments: Array<{ atSeconds: number }>;
+  onSeek: (s: number | null) => void;
+}) {
+  const screens = useScreenIntelligence();
+  const insight =
+    screens.state.status === "done" ? screens.state.insight : null;
+  const busy =
+    screens.state.status === "capturing" || screens.state.status === "reading";
+
+  // Total shared time, for the header stat.
+  const sharedSeconds = spans.reduce(
+    (a, s) => a + (s.end != null ? s.end - s.start : 0),
+    0,
+  );
+
+  return (
+    <Panel icon={MonitorIcon} label="ai / screens" tone="success">
+      <div className="flex flex-col gap-3">
+        {/* headline + run control */}
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-sm font-semibold leading-snug">
+              {insight?.headline ?? "Screen sharing detected"}
+            </p>
+            <p className="mt-0.5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+              {spans.length} share{spans.length === 1 ? "" : "s"}
+              {sharedSeconds > 0 && ` · ${Math.round(sharedSeconds)}s`}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() =>
+              screens.run({
+                botId,
+                videoUrl,
+                spans,
+                transcript,
+                tensionMoments,
+              })
+            }
+            disabled={busy}
+            className="flex shrink-0 items-center gap-1.5 rounded-[4px] border bg-background px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground transition-colors hover:bg-muted/40 disabled:opacity-60"
+          >
+            {screens.state.status === "capturing" ? (
+              <>
+                <Loader2Icon className="size-3 animate-spin" />
+                {Math.round(screens.state.progress * 100)}%
+              </>
+            ) : screens.state.status === "reading" ? (
+              <>
+                <Loader2Icon className="size-3 animate-spin" />
+                reading
+              </>
+            ) : (
+              <>
+                <ImageIcon className="size-3" />
+                {insight ? "re-analyze" : "analyze screens"}
+              </>
+            )}
+          </button>
+        </div>
+
+        {screens.state.status === "error" && (
+          <p className="font-mono text-[10px] text-(--thread-accent-secondary)">
+            {screens.state.message}
+          </p>
+        )}
+
+        {screens.state.status === "done" && !insight && (
+          <p className="font-mono text-[10px] text-muted-foreground">
+            No readable screens found.
+          </p>
+        )}
+
+        {/* captured screens — jump to the moment in the player */}
+        {insight && insight.captures.length > 0 && (
+          <div className="flex flex-col gap-1.5 border-t border-dashed border-border pt-2">
+            {insight.captures.map((c, i) => {
+              const Icon = SCREEN_TRIGGER_ICON[c.trigger];
+              return (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => onSeek(c.atSeconds)}
+                  className="flex flex-col gap-1 rounded-[5px] border bg-background px-2.5 py-1.5 text-left transition-colors hover:bg-muted/40"
+                >
+                  <div className="flex w-full items-center gap-2.5">
+                    <Icon className="size-3.5 shrink-0 text-(--thread-accent-primary)" />
+                    <span className="min-w-0 flex-1 truncate text-sm">
+                      {c.title}
+                    </span>
+                    <span className="shrink-0 rounded-[3px] bg-muted px-1 py-px font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
+                      {c.kind}
+                    </span>
+                    <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
+                      {fmt(c.atSeconds)}
+                    </span>
+                  </div>
+                  {c.details && (
+                    <span className="whitespace-pre-line pl-6 text-[11px] leading-snug text-muted-foreground">
+                      {c.details}
+                    </span>
+                  )}
+                  {c.discussed && (
+                    <span className="pl-6 font-mono text-[9px] uppercase tracking-wider text-(--thread-accent-primary)">
+                      discussed on call
+                    </span>
                   )}
                 </button>
               );

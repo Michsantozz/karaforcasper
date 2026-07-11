@@ -10,6 +10,7 @@ import {
   requeueMeetingRecord,
 } from "@/server/recall/meeting-repository";
 import { captureMeetingMedia } from "@/server/recall/media";
+import { fetchScreenshareSpans } from "@/server/recall/screenshare";
 import { computeMeetingDynamics } from "@/server/recall/dynamics";
 import { generateMeetingHealthInsight } from "@/server/recall/dynamics-insight";
 import { botOwnerUserId, findBotByBotId } from "@/server/recall/bot-repository";
@@ -104,6 +105,10 @@ export async function enrichMeeting(botId: string): Promise<EnrichResult> {
     // db transaction (network/upload); nulls if not ready or storage is off.
     const media = await captureMeetingMedia(botId, ownerUserId);
 
+    // Screen-share timeline (when the shared screen was on) — drives Screen
+    // Intelligence's frame capture. Best-effort ([] if no share / not ready).
+    const screenshareSpans = await fetchScreenshareSpans(botId);
+
     // Team-dynamics / meeting-health metrics from the word-level transcript
     // (pure timestamp math, no LLM/audio). Null when timestamps are missing.
     const dynamics = computeMeetingDynamics(media.transcriptStruct);
@@ -130,6 +135,7 @@ export async function enrichMeeting(botId: string): Promise<EnrichResult> {
         talkShares: summary.talkShares ?? [],
         transcriptStruct: media.transcriptStruct,
         videoUrl: media.videoUrl,
+        screenshareSpans: screenshareSpans.length ? screenshareSpans : null,
         dynamics,
         dynamicsInsight,
       });

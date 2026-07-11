@@ -47,6 +47,8 @@ export interface MeetingDetail {
   dynamics: MeetingDynamics | null;
   /** LLM meeting-health insight. Only when persisted at enrichment (no on-read fallback). */
   dynamicsInsight: MeetingHealthInsight | null;
+  /** Screen-share windows (seconds). Drives Screen Intelligence. [] if none. */
+  screenshareSpans: Array<{ start: number; end: number | null }>;
 }
 
 /**
@@ -110,6 +112,7 @@ export async function getMeetingDetail(botId: string): Promise<MeetingDetail> {
       // fall back to computing it on the fly from the stored transcript.
       dynamics: record?.dynamics ?? computeMeetingDynamics(persistedTranscript),
       dynamicsInsight: record?.dynamicsInsight ?? null,
+      screenshareSpans: record?.screenshareSpans ?? [],
     };
   }
 
@@ -167,6 +170,7 @@ export async function getMeetingDetail(botId: string): Promise<MeetingDetail> {
     durationSeconds: deriveDurationSeconds(transcript),
     dynamics: record?.dynamics ?? computeMeetingDynamics(transcript),
     dynamicsInsight: record?.dynamicsInsight ?? null,
+    screenshareSpans: record?.screenshareSpans ?? [],
   };
 }
 

@@ -265,6 +265,15 @@ export const meetingRecords = pgTable(
      */
     videoUrl: text("video_url"),
     /**
+     * Screen-share timeline — [start, end] windows (seconds from recording start)
+     * where the shared screen was on, parsed from Recall's participant_events.
+     * Drives Screen Intelligence: frames are only captured inside these spans.
+     * Null for legacy rows / meetings with no screen share.
+     */
+    screenshareSpans: jsonb("screenshare_spans").$type<
+      Array<{ start: number; end: number | null }>
+    >(),
+    /**
      * Public share token (unguessable). When non-null, the meeting is reachable
      * read-only at /share/[token] WITHOUT auth (it bypasses RLS via the public
      * repository). Clearing it (set null) revokes the link. Unique so the public

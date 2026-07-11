@@ -120,6 +120,13 @@
       "when": 1783748495613,
       "tag": "0016_material_wendigo",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1783804641495,
+      "tag": "0017_lean_black_bird",
+      "breakpoints": true
     }
   ]
 }

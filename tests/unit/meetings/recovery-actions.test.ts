@@ -22,6 +22,8 @@ const findBotByBotId = vi.fn();
 const deleteBotMapping = vi.fn();
 const recallFetch = vi.fn();
 const generateBehaviorInsight = vi.fn();
+const generateScreenInsight = vi.fn();
+const getMeetingDetail = vi.fn();
 const withUserScope = vi.fn((_u: string, fn: () => unknown) => fn());
 
 vi.mock("@/features/auth/model/session", () => ({
@@ -48,6 +50,12 @@ vi.mock("@/server/recall/client", () => ({
 vi.mock("@/server/recall/behavior-insight", () => ({
   generateBehaviorInsight: (...a: unknown[]) => generateBehaviorInsight(...a),
 }));
+vi.mock("@/server/recall/screen-insight", () => ({
+  generateScreenInsight: (...a: unknown[]) => generateScreenInsight(...a),
+}));
+vi.mock("@/server/recall/meeting-detail", () => ({
+  getMeetingDetail: (...a: unknown[]) => getMeetingDetail(...a),
+}));
 vi.mock("@/shared/db/rls", () => ({
   withUserScope: (u: string, fn: () => unknown) => withUserScope(u, fn),
 }));
@@ -68,6 +76,8 @@ beforeEach(() => {
     summary: "s",
     moments: [],
   });
+  generateScreenInsight.mockResolvedValue({ headline: "h", captures: [] });
+  getMeetingDetail.mockResolvedValue({ transcript: [] });
 });
 
 describe("reprocessMeeting", () => {
@@ -268,5 +278,80 @@ describe("analyzeMeetingBehavior — client-triggered behavioral read", () => {
     const res = await analyzeMeetingBehavior("bot-1", moments, metrics);
 
     expect(res).toEqual({ ok: false, error: "model down" });
+  });
+});
+
+describe("analyzeMeetingScreens — vision over shared-screen frames", () => {
+  const frames = [
+    { url: "https://store/a.jpg", atSeconds: 120, trigger: "screen-start" as const },
+  ];
+
+  it("unauthenticated → rejected, no transcript read, no vision", async () => {
+    requireUserId.mockRejectedValue(new Error("no session"));
+    const { analyzeMeetingScreens } = await load();
+
+    const res = await analyzeMeetingScreens("bot-1", frames);
+
+    expect(res).toEqual({ ok: false, error: "unauthenticated" });
+    expect(assertBotOwner).not.toHaveBeenCalled();
+    expect(getMeetingDetail).not.toHaveBeenCalled();
+    expect(generateScreenInsight).not.toHaveBeenCalled();
+  });
+
+  it("non-owner → refused, no vision (no cross-tenant analysis)", async () => {
+    assertBotOwner.mockRejectedValue(new Error("not accessible"));
+    const { analyzeMeetingScreens } = await load();
+
+    const res = await analyzeMeetingScreens("someone-elses", frames);
+
+    expect(res).toEqual({ ok: false, error: "not found or not accessible" });
+    expect(generateScreenInsight).not.toHaveBeenCalled();
+  });
+
+  it("no frames → ok with null, no vision call", async () => {
+    const { analyzeMeetingScreens } = await load();
+
+    const res = await analyzeMeetingScreens("bot-1", []);
+
+    expect(res).toEqual({ ok: true, insight: null });
+    expect(generateScreenInsight).not.toHaveBeenCalled();
+  });
+
+  it("owner → builds excerpts under user scope and runs vision", async () => {
+    getMeetingDetail.mockResolvedValue({
+      transcript: [
+        {
+          speaker: "Ana",
+          words: [
+            { text: "olha", start: 118 },
+            { text: "esse", start: 119 },
+            { text: "número", start: 120 },
+          ],
+        },
+        // Far from the frame → must NOT be in the excerpt.
+        { speaker: "João", words: [{ text: "tchau", start: 500 }] },
+      ],
+    });
+    const insight = { headline: "1 screen", captures: [] };
+    generateScreenInsight.mockResolvedValue(insight);
+    const { analyzeMeetingScreens } = await load();
+
+    const res = await analyzeMeetingScreens("bot-1", frames);
+
+    expect(res).toEqual({ ok: true, insight });
+    expect(withUserScope).toHaveBeenCalledWith("u1", expect.any(Function));
+    // The frame passed to vision carries the grounding excerpt near atSeconds 120.
+    const passed = generateScreenInsight.mock.calls[0][0];
+    expect(passed[0].excerpt).toContain("olha");
+    expect(passed[0].excerpt).not.toContain("tchau");
+  });
+
+  it("vision throws → surfaces the error, never propagates", async () => {
+    generateScreenInsight.mockRejectedValue(new Error("vision down"));
+    const { analyzeMeetingScreens } = await load();
+
+    const res = await analyzeMeetingScreens("bot-1", frames);
+
+    expect(res).toEqual({ ok: false, error: "vision down" });
   });
 });

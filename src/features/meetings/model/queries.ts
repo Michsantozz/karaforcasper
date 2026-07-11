@@ -145,6 +145,36 @@ export interface BehaviorInsight {
   moments: BehaviorMoment[];
 }
 
+/** A window (seconds) where the screen was shared (mirrors server screenshare.ts). */
+export interface ScreenshareSpan {
+  start: number;
+  end: number | null;
+}
+
+/** Vision read of one captured screen frame (mirrors server screen-insight.ts). */
+export interface ScreenCapture {
+  /** Second the frame was captured at (jump-to in the player). */
+  atSeconds: number;
+  /** Why this frame was captured: share start, screen change, deixis, tension. */
+  trigger: "screen-start" | "screen-change" | "deixis" | "tension";
+  /** What kind of screen it is. */
+  kind: "slide" | "document" | "code" | "dashboard" | "spreadsheet" | "other";
+  /** One-line title of what's on screen. */
+  title: string;
+  /** Literal data read off the screen (numbers, bullets, errors) — never invented. */
+  details: string;
+  /** True when the transcript around this moment discussed what's on screen. */
+  discussed: boolean;
+}
+
+/** Vision insight over the shared screens (mirrors server screen-insight.ts). */
+export interface ScreenInsight {
+  /** One-line read of what was shown across the meeting. */
+  headline: string;
+  /** Per-frame reads, most significant first. */
+  captures: ScreenCapture[];
+}
+
 export interface MeetingDetailResponse {
   botId: string;
   status: string;
@@ -162,6 +192,8 @@ export interface MeetingDetailResponse {
   dynamics: MeetingDynamics | null;
   /** LLM meeting-health insight. Null if not generated. */
   dynamicsInsight: MeetingHealthInsight | null;
+  /** Screen-share windows (seconds). Drives Screen Intelligence. [] if none. */
+  screenshareSpans: ScreenshareSpan[];
   videoUrl: string | null;
   transcript: TranscriptUtterance[];
   transcriptState: "ready" | "processing" | "none";

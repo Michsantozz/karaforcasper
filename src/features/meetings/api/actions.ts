@@ -19,6 +19,12 @@ import {
   type BehaviorMomentInput,
   type BehaviorMetricsInput,
 } from "@/server/recall/behavior-insight";
+import {
+  generateScreenInsight,
+  type ScreenInsight,
+  type ScreenFrameInput,
+} from "@/server/recall/screen-insight";
+import { getMeetingDetail } from "@/server/recall/meeting-detail";
 import { withUserScope } from "@/shared/db/rls";
 
 /**
@@ -149,6 +155,79 @@ export async function analyzeMeetingBehavior(
 
   try {
     const insight = await generateBehaviorInsight(moments, metrics);
+    return { ok: true, insight };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "analysis failed";
+    return { ok: false, error: message };
+  }
+}
+
+/** One captured frame the client uploaded, ready for vision analysis. */
+export type ScreenFrameArg = {
+  url: string;
+  atSeconds: number;
+  trigger: ScreenFrameInput["trigger"];
+};
+
+/** Result of a screen-analysis run: the vision insight (null when unreadable). */
+export type ScreenResult =
+  | { ok: true; insight: ScreenInsight | null }
+  | { ok: false; error: string };
+
+/** Seconds of transcript on each side of a frame to give the vision model. */
+const SCREEN_EXCERPT_WINDOW = 15;
+
+/**
+ * Reads the content of shared-screen frames with the vision model. The client
+ * captures + uploads frames in-browser (mediabunny → /api/upload) and passes
+ * their URLs here; this fetches the meeting's transcript under the caller's scope
+ * to build a grounding excerpt per frame, then runs vision. Ownership-checked so
+ * a client can never analyze another tenant's meeting. Best-effort: a null
+ * insight (unreadable frames / model failure) is still `ok`. Used by the
+ * notebook's "analyze screens" flow.
+ */
+export async function analyzeMeetingScreens(
+  botId: string,
+  frames: ScreenFrameArg[],
+): Promise<ScreenResult> {
+  let userId: string;
+  try {
+    userId = await requireUserId();
+  } catch {
+    return { ok: false, error: "unauthenticated" };
+  }
+  if (!(await isOwner(botId, userId))) {
+    return { ok: false, error: "not found or not accessible" };
+  }
+  if (frames.length === 0) return { ok: true, insight: null };
+
+  try {
+    // Transcript read under the caller's scope (meeting_records is RLS-scoped),
+    // to build a grounding excerpt around each frame's moment.
+    const detail = await withUserScope(userId, () => getMeetingDetail(botId));
+    const lines = detail.transcript
+      .map((u) => ({
+        start: u.words.find((w) => w.start != null)?.start ?? null,
+        text: `${u.speaker}: ${u.words.map((w) => w.text).join(" ")}`.trim(),
+      }))
+      .filter((l): l is { start: number; text: string } => l.start != null);
+
+    const excerptAround = (at: number): string =>
+      lines
+        .filter(
+          (l) => l.start >= at - SCREEN_EXCERPT_WINDOW && l.start <= at + SCREEN_EXCERPT_WINDOW,
+        )
+        .map((l) => l.text)
+        .join("\n");
+
+    const frameInputs: ScreenFrameInput[] = frames.map((f) => ({
+      url: f.url,
+      atSeconds: f.atSeconds,
+      trigger: f.trigger,
+      excerpt: excerptAround(f.atSeconds),
+    }));
+
+    const insight = await generateScreenInsight(frameInputs);
     return { ok: true, insight };
   } catch (err) {
     const message = err instanceof Error ? err.message : "analysis failed";

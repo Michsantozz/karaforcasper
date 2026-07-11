@@ -43,6 +43,7 @@ export async function GET(
     talkShares: r.talkShares ?? [],
     dynamics: detail.dynamics,
     dynamicsInsight: detail.dynamicsInsight,
+    screenshareSpans: detail.screenshareSpans,
     // Serve the recording through this origin (same-origin proxy) instead of the
     // raw object-store/Recall URL: the clip button (mediabunny fetch) and the
     // <video> player are then subject to `connect-src 'self'` and avoid the
