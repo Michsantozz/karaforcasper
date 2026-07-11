@@ -13,10 +13,14 @@ Casper records your Zoom/Meet/Teams calls, turns them into actionable minutes, a
 
 **Meetings, end to end**
 - **Schedule from chat** — "book a meeting Thursday 2pm" creates the Google Calendar event, the Meet link, and the recording bot in one shot (free-slot picker included).
-- **Send & control bots** on any Zoom/Meet/Teams call — record, pause, screenshare, chat, mp3/image output, live.
+- **Auto-record a whole calendar** — flip it on once and every future event with a meeting link gets a bot automatically (deduped, self-healing) — no per-meeting booking.
+- **Send & control bots** on any Zoom/Meet/Teams call — send a bot, start/stop recording, remove it, all from chat.
 - **Automatic minutes** — when the transcript lands, a webhook generates summary, decisions, action items, topics, and soundbites, then notifies you. No coming back to ask.
-- **Meeting notebook** — synced player, karaoke transcript, decisions, moments, and one-click shareable clips.
+- **Meeting notebook** — synced player, karaoke transcript, decisions, moments, and one-click clips.
 - **Ask across every meeting** — "what did we decide about pricing?" searches your whole history and cites the source.
+- **Attach screenshots & PDFs to chat** — drop an image or PDF into the assistant and the vision model reasons over it (allowlisted, size-capped, rate-limited).
+- **Share read-only, revocably** — publish a whole meeting (player, searchable karaoke transcript, decisions, talk-time) to anyone via an unguessable link, and revoke it anytime. No account needed on the other end.
+- **Self-serve recovery** — the meetings list has server-side search, status filters, and infinite scroll; retry a failed enrichment or cancel a scheduled bot yourself, no support ticket.
 
 **Team dynamics 🧠 — the differentiator**
 - **Meeting-health dashboard** — talk-time per person, interruptions (who cut off whom), silences, monologues, and a participation **balance** score. Pure timestamp math: deterministic, no LLM, always on.
@@ -33,7 +37,9 @@ Just ask: *"how did the team interact?"*, *"is anyone going quiet?"*, *"was ther
 ## 🚀 Why it stands out
 
 - **Behavior, not just content.** Others summarize *what* was said. Casper reads *how the team worked* — the layer Gong sells to sales teams, brought to everyday internal meetings.
-- **Real product, not a demo.** Live deployment, multi-tenant by construction (Postgres RLS + ownership checks), Svix-signed fail-closed webhooks, durable retry workflows.
+- **Not one prompt — a supervised agent network.** A Casper supervisor routes per-meeting questions to a **Minutes** specialist and cross-meeting history/trends questions to a **Search** specialist, each with its own scoped toolset.
+- **Remembers you.** A durable per-user profile (timezone, default duration, recording prefs) persists across every conversation, plus **semantic recall** over past chats (Fireworks embeddings → pgvector) — not a rolling last-N window.
+- **Real product, not a demo.** Live deployment, multi-tenant by construction (Postgres RLS + ownership checks), Svix-signed fail-closed webhooks, and bounded app-level retries backed by **two independent recovery crons** (reconcile stuck rows + backfill missing ones).
 - **Runs on AMD.** Chat, embeddings, and the meeting-health insight all default to **Fireworks AI** (AMD hardware).
 
 ---
@@ -105,10 +111,11 @@ Unit tests are hermetic (external services mocked). Live/E2E flows are opt-in (`
 
 ## 🛡️ Security
 
-- Every route is auth-gated; user ids come from the session, never the request body.
+- **Passwordless magic-link sign-in** (email) — no password to leak; every route is auth-gated and user ids come from the session, never the request body.
 - Meetings, threads, and uploads are per-user via Postgres **RLS** (`withUserScope`) + ownership checks (`assertBotOwner`) — cross-tenant reads 404, never leak. A boot guard warns if the DB role can bypass RLS.
 - Webhooks are Svix-signed (HMAC-SHA256, timing-safe, anti-replay) and **fail-closed**.
-- Uploads are MIME-allowlisted and size-capped; a forged `meetingBotId` is silently ignored.
+- Uploads are MIME-allowlisted, size-capped, and rate-limited (DB-backed, shared across replicas); in chat, a forged `meetingBotId` is silently dropped unless you own the bot.
+- A **per-user 24h cost ceiling** caps spend before generation and a token limiter caps each response — runaway cost can't happen.
 - Optional LLM guardrails (`ENABLE_LLM_GUARDRAILS=true`) block prompt injection and redact PII on the chat agent.
 
 ---
@@ -116,3 +123,74 @@ Unit tests are hermetic (external services mocked). Live/E2E flows are opt-in (`
 ## 🧩 Architecture
 
 Feature-based, colocated with the App Router, with layer boundaries **enforced by ESLint** (`eslint-plugin-boundaries`): `app/` routes only, business logic in `features/<domain>/`, server-only code in `server/`, generic UI/DB/utils in `shared/`. Full rules in `CLAUDE.md`.
+
+Solid arrows are requests; dashed arrows are the responses flowing back.
+
+### 🔄 Enrichment — after a meeting
+
+```mermaid
+sequenceDiagram
+    participant R as Recall.ai
+    participant API as app/api/webhooks/recall/bot
+    participant M as mastra (enrich workflow)
+    participant S as server/
+    participant F as Fireworks (glm-5p2)
+    participant DB as Postgres
+    participant U as User
+
+    R->>API: transcript.done (Svix-signed)
+    API->>M: trigger meeting-enrich
+    M->>S: fetch transcript + audio
+    S-->>M: word-level transcript
+    Note over M: minutes + team-dynamics metrics
+    M->>F: one insight call
+    F-->>M: manager-facing read
+    M->>DB: persist (idempotent, retry)
+    DB-->>M: ok
+    M->>U: notify (bell + email)
+```
+
+### 💬 Chat — ask across meetings
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant API as app/api/chat
+    participant M as mastra (agent + tools)
+    participant S as server/
+    participant DB as Postgres (RLS)
+
+    U->>API: "what did we decide about pricing?"
+    API->>M: run agent
+    M->>S: recall.tool query
+    S->>DB: withUserScope read
+    DB-->>S: rows (tenant-scoped)
+    S-->>M: meeting data
+    M-->>API: cited answer (stream)
+    API-->>U: response + sources
+```
+
+### 📅 Schedule — book from chat
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant M as mastra (calendar + recall tools)
+    participant S as server/
+    participant G as Google Calendar
+    participant R as Recall.ai
+
+    U->>M: "book a meeting Thursday 2pm"
+    M->>S: free-slot picker
+    S->>G: query availability
+    G-->>S: open slots
+    S-->>U: pick a slot
+    U->>M: confirm slot
+    M->>S: create event + bot
+    S->>G: create event + Meet link
+    S->>R: schedule recording bot
+    R-->>M: bot id
+    M-->>U: confirmed ✅
+```
+
+**Layer rules behind these flows:** unidirectional `app → features/mastra → server/shared` (never the reverse). `shared/` is a leaf. `server/` is server-only — feature UI never imports it; only `app/api/*`, Server Actions, and `mastra/` reach it, and it alone talks to Recall.ai, Postgres, and S3. `mastra/` also fires Inngest crons (backfill · reconcile) that loop back to rescue lost webhooks.
