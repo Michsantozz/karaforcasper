@@ -2,8 +2,7 @@ import "server-only";
 import { recallFetch } from "@/server/recall/client";
 import { listCalendarEvents, type CalendarEvent } from "@/server/recall/calendars";
 import { listAutoRecordCalendars } from "@/server/recall/calendar-repository";
-import { hasBalanceForMinutes } from "@/server/casper/billing";
-import { withSystemScope, withUserScope } from "@/shared/db/rls";
+import { withSystemScope } from "@/shared/db/rls";
 
 /**
  * Auto-scheduling of bots per calendar (opt-in).
@@ -20,20 +19,16 @@ import { withSystemScope, withUserScope } from "@/shared/db/rls";
 /** Look-ahead window to schedule (min). Events beyond this are left for later. */
 const HORIZON_MINUTES = Number(process.env.AUTO_SCHEDULE_HORIZON_MINUTES ?? 60);
 
-/** Duration estimate for the balance gate (actual cost is measured later). */
-const ESTIMATED_MINUTES = Number(process.env.BILLING_ESTIMATED_MINUTES ?? 30);
-
 export interface AutoScheduleResult {
   calendarId: string;
   scheduled: number;
-  skippedNoBalance: number;
   skippedNoUrl: number;
 }
 
 /**
  * Schedules bots for the upcoming events (with meeting_url) of ONE calendar.
- * Takes the owner for the balance gate and the deduplication_key. Doesn't open
- * a db scope around the REST call/gate: each one handles its own.
+ * Takes the owner for the deduplication_key. Doesn't open a db scope around
+ * the REST call.
  */
 export async function autoScheduleForCalendar(input: {
   calendarId: string;
@@ -50,7 +45,6 @@ export async function autoScheduleForCalendar(input: {
   });
 
   let scheduled = 0;
-  let skippedNoBalance = 0;
   let skippedNoUrl = 0;
 
   for (const event of results as CalendarEvent[]) {
@@ -61,15 +55,6 @@ export async function autoScheduleForCalendar(input: {
     // Already has a bot scheduled on this event? Recall dedups by key, but we
     // avoid the call when the event itself already reports bots.
     if ((event.bots?.length ?? 0) > 0) continue;
-
-    // Balance gate per owner (tenant read, under user scope).
-    const ok = await withUserScope(input.userId, () =>
-      hasBalanceForMinutes(input.userId, ESTIMATED_MINUTES),
-    );
-    if (!ok) {
-      skippedNoBalance++;
-      continue;
-    }
 
     await recallFetch({
       method: "POST",
@@ -87,7 +72,6 @@ export async function autoScheduleForCalendar(input: {
   return {
     calendarId: input.calendarId,
     scheduled,
-    skippedNoBalance,
     skippedNoUrl,
   };
 }

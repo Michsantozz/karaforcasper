@@ -17,11 +17,9 @@ import {
   CheckIcon,
   ListChecksIcon,
   UsersIcon,
-  ShieldCheckIcon,
-  CoinsIcon,
   type LucideIcon,
 } from "lucide-react";
-import { makeAssistantToolUI, useThreadRuntime } from "@assistant-ui/react";
+import { makeAssistantToolUI } from "@assistant-ui/react";
 import { cn } from "@/shared/lib/utils";
 
 /**
@@ -29,7 +27,7 @@ import { cn } from "@/shared/lib/utils";
  * tool-calls. Each one maps a local tool (create_calendar_event, bots,
  * recording, calendar) to a card with what the user needs to see.
  *
- * Registered in MeetingAssistant's AssistantRuntimeProvider. Without
+ * Registered in the Assistant's AssistantRuntimeProvider. Without
  * registration, the tool falls back to ToolFallback (JSON). With
  * registration, the user only sees the essentials.
  */
@@ -144,7 +142,7 @@ export const SendBotToolUI = makeAssistantToolUI<
         <Row k="meeting" v={shortMeetUrl(args.meetingUrl)} />
         {args.joinAt ? <Row k="joins at" v={fmtTime(args.joinAt)} /> : null}
         <Row k="bot" v={shortId(result.botId)} />
-        <Row k="recording" v="awaiting command" />
+        <Row k="recording" v="auto on join" />
       </ToolCard>
     );
   },
@@ -427,40 +425,11 @@ type SummaryResult = {
   topics?: string[];
 };
 
-/** Light heuristic: does the line look like a payment (has an amount + CSPR)? */
-function looksLikePayment(text: string): boolean {
-  return /\b\d[\d.,]*\s*(cspr|casper)\b/i.test(text);
-}
-
 /**
- * Minutes card — now ACTIONABLE. Besides showing the summary/decisions/tasks,
- * it offers the next on-chain steps at the exact moment of highest intent
- * (right after the minutes): "Notarize minutes" (immutable proof) and, on
- * decisions/tasks that look like a payment, "Pay via multisig". The buttons
- * push a natural-language instruction to the agent (thread.append) — the
- * agent already has the notarize_meeting and prepare_multisig_payment tools;
- * here we just trigger the intent at the right context.
+ * Minutes card — shows the summary/decisions/action items/topics from a
+ * meeting's transcript.
  */
 function SummaryCard({ result }: { result: SummaryResult }) {
-  const thread = useThreadRuntime();
-
-  function ask(message: string) {
-    thread.append({ role: "user", content: [{ type: "text", text: message }] });
-  }
-
-  const notarize = () =>
-    ask(
-      `Notarize this meeting's minutes (botId ${result.botId}) on-chain with notarize_meeting. ` +
-        `Use the summary and decisions from these minutes as the record. When done, tell me the meetingHash, the transactionHash, and the explorerUrl.`,
-    );
-
-  const payViaMultisig = (item: string) =>
-    ask(
-      `Based on this meeting decision: "${item}". ` +
-        `Prepare a multisig payment with prepare_multisig_payment. ` +
-        `Ask me for the destination address, the exact amount in CSPR, and the signers' public keys before building it.`,
-    );
-
   return (
     <ToolCard icon={ListChecksIcon} label="meeting summary" tone="success">
       <p className="text-sm leading-relaxed text-foreground/90">
@@ -475,19 +444,10 @@ function SummaryCard({ result }: { result: SummaryResult }) {
             {result.decisions.map((d, i) => (
               <li
                 key={i}
-                className="flex items-start justify-between gap-3 rounded-[5px] border bg-background px-2.5 py-1.5"
+                className="flex items-start gap-2 rounded-[5px] border bg-background px-2.5 py-1.5 text-sm"
               >
-                <span className="flex min-w-0 flex-1 gap-2 text-sm">
-                  <CheckIcon className="mt-0.5 size-3.5 shrink-0 text-(--thread-accent-primary)" />
-                  <span className="min-w-0">{d}</span>
-                </span>
-                {looksLikePayment(d) ? (
-                  <ActionButton
-                    icon={CoinsIcon}
-                    label="Pay via multisig"
-                    onClick={() => payViaMultisig(d)}
-                  />
-                ) : null}
+                <CheckIcon className="mt-0.5 size-3.5 shrink-0 text-(--thread-accent-primary)" />
+                <span className="min-w-0">{d}</span>
               </li>
             ))}
           </ul>
@@ -505,20 +465,11 @@ function SummaryCard({ result }: { result: SummaryResult }) {
                 className="flex items-start justify-between gap-3 rounded-[5px] border bg-background px-2.5 py-1.5"
               >
                 <span className="min-w-0 flex-1 text-sm">{a.task}</span>
-                <span className="flex shrink-0 items-center gap-1.5">
-                  {looksLikePayment(a.task) ? (
-                    <ActionButton
-                      icon={CoinsIcon}
-                      label="Pay via multisig"
-                      onClick={() => payViaMultisig(a.task)}
-                    />
-                  ) : null}
-                  {a.owner ? (
-                    <span className="rounded-[4px] bg-(--thread-accent-primary-soft) px-1.5 py-0.5 font-mono text-[10px] text-(--thread-accent-primary)">
-                      {a.owner}
-                    </span>
-                  ) : null}
-                </span>
+                {a.owner ? (
+                  <span className="shrink-0 rounded-[4px] bg-(--thread-accent-primary-soft) px-1.5 py-0.5 font-mono text-[10px] text-(--thread-accent-primary)">
+                    {a.owner}
+                  </span>
+                ) : null}
               </li>
             ))}
           </ul>
@@ -540,17 +491,6 @@ function SummaryCard({ result }: { result: SummaryResult }) {
           </div>
         </>
       ) : null}
-
-      {/* Main CTA: seal the whole minutes on-chain (immutable proof). */}
-      <Dashed />
-      <button
-        type="button"
-        onClick={notarize}
-        className="inline-flex items-center justify-center gap-2 rounded-[6px] bg-(--thread-accent-primary) px-3 py-2 font-mono text-sm text-background transition-colors hover:opacity-90"
-      >
-        <ShieldCheckIcon className="size-3.5" />
-        Notarize minutes on-chain
-      </button>
     </ToolCard>
   );
 }
@@ -575,28 +515,6 @@ export const SummarizeToolUI = makeAssistantToolUI<
     return <SummaryCard result={result} />;
   },
 });
-
-/** Compact action button reused across the minutes' rows. */
-function ActionButton({
-  icon: Icon,
-  label,
-  onClick,
-}: {
-  icon: LucideIcon;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="inline-flex shrink-0 items-center gap-1 rounded-[4px] border border-(--thread-accent-primary)/40 bg-(--thread-accent-primary-soft) px-1.5 py-0.5 font-mono text-[10px] text-(--thread-accent-primary) transition-colors hover:bg-(--thread-accent-primary) hover:text-background"
-    >
-      <Icon className="size-3" />
-      {label}
-    </button>
-  );
-}
 
 /* ── get_participants ──────────────────────────────────────────────── */
 
@@ -696,7 +614,7 @@ export function MeetingToolUIs() {
   );
 }
 
-/* ── visual primitives (mirror CasperToolUI) ────────────────────── */
+/* ── visual primitives ───────────────────────────────────────────── */
 
 type Tone = "default" | "success" | "caution" | "risk";
 

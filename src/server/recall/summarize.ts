@@ -57,6 +57,11 @@ export type MeetingSummary = {
     kind: "topic" | "action" | "question" | "objection";
     atSeconds: number | null;
   }>;
+  soundbites?: Array<{
+    label: string;
+    startSeconds: number;
+    endSeconds: number;
+  }>;
   talkShares?: Array<{ name: string; share: number }>;
   /** Recorded duration in minutes (from the largest timestamp) — billing basis. */
   durationMinutes?: number;
@@ -195,6 +200,23 @@ const meetingNotesSchema = z.object({
       }),
     )
     .describe("3-6 key moments. Empty if none relevant."),
+  soundbites: z
+    .array(
+      z.object({
+        label: z.string().describe("Short caption for the highlight clip."),
+        startSeconds: z
+          .number()
+          .describe("Second the clip starts (a few seconds before the key line)."),
+        endSeconds: z
+          .number()
+          .describe("Second the clip ends. Must be greater than startSeconds."),
+      }),
+    )
+    .describe(
+      "0-4 short, share-worthy highlight clips (soundbites) — a punchy quote, " +
+        "a decision, or a key exchange. Each 8-30s. Use ONLY timestamps present " +
+        "in the transcript; endSeconds must be > startSeconds. Empty if none stand out.",
+    ),
 });
 
 /**
@@ -237,8 +259,31 @@ export async function summarizeMeeting(
     topics: object.topics,
     sections: object.sections,
     moments: object.moments,
+    soundbites: sanitizeSoundbites(object.soundbites, durationMinutes * 60),
     talkShares,
     durationMinutes,
     transcriptText: text,
   };
+}
+
+/**
+ * Keeps only soundbites with a valid, in-bounds range: end > start, both >= 0,
+ * within the recording, and length between 3s and 90s. The LLM occasionally
+ * hallucinates a reversed or out-of-range window; dropping them here keeps the
+ * clip button honest.
+ */
+function sanitizeSoundbites(
+  raw: Array<{ label: string; startSeconds: number; endSeconds: number }>,
+  durationSeconds: number,
+): Array<{ label: string; startSeconds: number; endSeconds: number }> {
+  const cap = durationSeconds > 0 ? durationSeconds : Infinity;
+  return (raw ?? []).filter((s) => {
+    const len = s.endSeconds - s.startSeconds;
+    return (
+      s.startSeconds >= 0 &&
+      s.endSeconds <= cap &&
+      len >= 3 &&
+      len <= 90
+    );
+  });
 }
