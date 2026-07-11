@@ -139,10 +139,10 @@ export function MeetingsList() {
   const filtering = Boolean(q) || Boolean(status);
 
   return (
-    <main className="flex h-dvh w-full justify-center overflow-hidden bg-(--thread-frame-outer) font-sans text-foreground">
-      <div className="flex min-h-0 w-full max-w-2xl flex-col">
-        {/* ── header ── */}
-        <header className="flex shrink-0 flex-col gap-3 px-4 py-4 sm:px-5">
+    <main className="flex h-dvh w-full justify-start overflow-hidden bg-(--thread-frame-outer) font-sans text-foreground">
+      <div className="flex min-h-0 w-full max-w-2xl flex-col px-2 sm:px-6 lg:px-10">
+        {/* ── header (sticky so filters stay reachable while the list scrolls) ── */}
+        <header className="sticky top-0 z-10 flex shrink-0 flex-col gap-3 border-b border-border/60 bg-(--thread-frame-outer)/80 px-4 py-4 backdrop-blur-sm sm:px-5">
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-2.5">
               <span className="flex size-7 items-center justify-center rounded-[6px] border bg-background font-mono text-xs font-semibold text-(--thread-accent-primary)">
@@ -161,8 +161,8 @@ export function MeetingsList() {
                 </span>
               </div>
             </div>
-            <label className="flex items-center gap-1.5 rounded-[6px] border bg-background px-2.5 py-1.5">
-              <SearchIcon className="size-3.5 text-muted-foreground" />
+            <label className="flex items-center gap-1.5 rounded-[6px] border bg-background px-2.5 py-1.5 transition-colors focus-within:border-(--thread-accent-primary) focus-within:ring-1 focus-within:ring-(--thread-accent-primary-soft)">
+              <SearchIcon className="size-3.5 shrink-0 text-muted-foreground" />
               <input
                 value={rawQuery}
                 onChange={(e) => setRawQuery(e.target.value)}
@@ -184,10 +184,10 @@ export function MeetingsList() {
                   onClick={() => setStatus(f.value)}
                   aria-pressed={active}
                   className={cn(
-                    "rounded-[5px] border px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider transition-colors",
+                    "rounded-[5px] border px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-(--thread-accent-primary)",
                     active
                       ? "border-(--thread-accent-primary) bg-(--thread-accent-primary-soft) text-(--thread-accent-primary)"
-                      : "bg-background text-muted-foreground hover:text-foreground",
+                      : "border-border bg-background text-muted-foreground hover:border-border hover:bg-muted/50 hover:text-foreground",
                   )}
                 >
                   {f.label}
@@ -198,8 +198,8 @@ export function MeetingsList() {
         </header>
 
         {/* ── list (dense rows) ── */}
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-6 sm:px-5">
-          <div className="overflow-hidden rounded-[8px] border bg-background">
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-6 pt-4 sm:px-5">
+          <div className="overflow-hidden rounded-[8px] border bg-background shadow-sm">
             {error ? (
               <EmptyState
                 icon={AlertTriangleIcon}
@@ -248,7 +248,7 @@ function MeetingRow({ m, first }: { m: MeetingListItem; first: boolean }) {
   const inner = (
     <div
       className={cn(
-        "flex items-center gap-3 px-4 py-3 transition-colors",
+        "group flex items-center gap-3 px-4 py-3 transition-colors duration-150",
         !first && "border-t border-border",
         clickable && "cursor-pointer hover:bg-muted/40",
       )}
@@ -256,7 +256,14 @@ function MeetingRow({ m, first }: { m: MeetingListItem; first: boolean }) {
       <StatusDot status={m.status} />
 
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="truncate text-sm font-medium">{title}</span>
+        <span
+          className={cn(
+            "truncate text-sm font-medium transition-colors",
+            clickable && "group-hover:text-(--thread-accent-primary)",
+          )}
+        >
+          {title}
+        </span>
         <div className="flex items-center gap-2 font-mono text-[10px] text-muted-foreground">
           <span className="tabular-nums">{fmtWhen(m.createdAt)}</span>
           {duration && (
