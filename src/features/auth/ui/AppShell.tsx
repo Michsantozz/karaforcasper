@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   MessageSquareIcon,
   VideoIcon,
@@ -225,6 +225,8 @@ function ThemeToggle({ withLabel = false }: { withLabel?: boolean }) {
 
 function UserButton({ withLabel = false }: { withLabel?: boolean }) {
   const { data: session, isPending } = useSession();
+  const router = useRouter();
+  const [signingOut, setSigningOut] = useState(false);
 
   if (isPending) {
     return (
@@ -257,13 +259,27 @@ function UserButton({ withLabel = false }: { withLabel?: boolean }) {
     .charAt(0)
     .toUpperCase();
 
+  const onSignOut = async () => {
+    if (signingOut) return;
+    setSigningOut(true);
+    try {
+      await signOut();
+    } finally {
+      // Land on the public root and re-fetch session so the shell
+      // re-renders as signed-out instead of falling back to Google sign-in.
+      router.replace("/");
+      router.refresh();
+    }
+  };
+
   const button = (
     <button
       type="button"
-      onClick={() => signOut()}
+      onClick={onSignOut}
+      disabled={signingOut}
       aria-label="Sign out"
       title={session.user.email ?? "Sign out"}
-      className="group relative flex size-9 items-center justify-center rounded-full"
+      className="group relative flex size-9 items-center justify-center rounded-full disabled:opacity-60"
     >
       <span className="flex size-7 items-center justify-center rounded-full border bg-background font-mono text-xs text-foreground group-hover:opacity-0">
         {initial}
