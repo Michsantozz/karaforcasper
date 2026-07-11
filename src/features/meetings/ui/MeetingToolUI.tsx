@@ -32,12 +32,16 @@ import { cn } from "@/shared/lib/utils";
  * registration, the user only sees the essentials.
  */
 
-function shortId(id: string) {
+function shortId(id: string | undefined | null) {
+  if (!id) return "—";
   return id.length > 12 ? `${id.slice(0, 6)}…${id.slice(-4)}` : id;
 }
 
 /** Shortens a meeting URL to readable "host/id", without truncating mid-string. */
-function shortMeetUrl(url: string): string {
+function shortMeetUrl(url: string | undefined | null): string {
+  // Tool args stream in incrementally: during status="running" the field may
+  // not have arrived yet, so guard the undefined case before touching it.
+  if (!url) return "—";
   try {
     const u = new URL(url);
     const id = u.pathname.replace(/^\/+/, "").split("/")[0] || "";
