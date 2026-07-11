@@ -8,7 +8,7 @@ import { cn } from "@/shared/lib/utils";
 import { signIn, authClient } from "@/features/auth/model/auth-client";
 
 /**
- * Home sign-in screen. The chat (LLM + on-chain tools) requires sign in;
+ * Home sign-in screen. The chat (LLM + meeting tools) requires sign in;
  * without a session the user sees this. Three sign-in methods (Tier 1):
  *  - Google (social OAuth)
  *  - Magic link (passwordless email, via Resend)
@@ -48,8 +48,8 @@ export function LoginScreen() {
         </span>
         <h1 className="font-semibold text-2xl tracking-tight">Casper Agent</h1>
         <p className="max-w-sm text-sm text-muted-foreground">
-          Autonomous agent on the Casper Network: payments, multisig, minutes
-          notarization and more. Sign in to talk to the agent.
+          Your AI meeting assistant: schedule, record, transcribe, and
+          summarize your meetings. Sign in to talk to the agent.
         </p>
       </div>
 

@@ -6,7 +6,6 @@ import { usePathname } from "next/navigation";
 import {
   MessageSquareIcon,
   VideoIcon,
-  PenLineIcon,
   SunIcon,
   MoonIcon,
   LogOutIcon,
@@ -29,7 +28,7 @@ type NavItem = {
   href: string;
   label: string;
   icon: LucideIcon;
-  /** Matches child routes (e.g. /multisig/[id]) for the active state. */
+  /** Matches child routes (e.g. /meetings/[botId]) for the active state. */
   match: (path: string) => boolean;
 };
 
@@ -44,21 +43,16 @@ const NAV: NavItem[] = [
     href: "/meetings",
     label: "Meetings",
     icon: VideoIcon,
+    // The index and every meeting notebook (/meetings/[botId]) light up here.
     match: (p) => p.startsWith("/meetings"),
-  },
-  {
-    href: "/multisig",
-    label: "Signatures",
-    icon: PenLineIcon,
-    match: (p) => p.startsWith("/multisig") || p.startsWith("/sign"),
   },
 ];
 
 /**
  * Global navigation shell for the authenticated screens. Before, each page
  * was an island with no way to discover the others; now there's a fixed rail
- * on the left (desktop) and a floating menu (mobile) linking Chat ⇆ Meetings
- * ⇆ Multisig, plus a theme toggle and sign-out action. It's self-contained
+ * on the left (desktop) and a floating menu (mobile) linking Chat ⇆ Meetings,
+ * plus a theme toggle and sign-out action. It's self-contained
  * (position: fixed) and doesn't wrap the content — pages just add
  * `md:pl-14` so they don't sit under the rail.
  */

@@ -1,7 +1,7 @@
 import { Inngest } from "inngest";
 import { init } from "@mastra/inngest";
 
-// Inngest client — orchestrates the agent's autonomous loop.
+// Inngest client — orchestrates the meeting workflows' scheduled crons.
 // In dev: points to the local inngest-cli (pnpm dev:inngest).
 export const inngest = new Inngest({
   id: "casperagent",

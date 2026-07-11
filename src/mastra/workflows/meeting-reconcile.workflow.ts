@@ -36,6 +36,10 @@ export const meetingReconcileWorkflow = createWorkflow({
     stillPending: z.number(),
   }),
   cron: "*/5 * * * *",
+  // Serializes runs: reconcile sweeps every stuck row and can outlast the 5-min
+  // tick. concurrency:1 makes Inngest queue the next tick instead of running two
+  // sweeps in parallel (which would double-claim the same records).
+  concurrency: { limit: 1 },
 }).then(reconcile);
 
 meetingReconcileWorkflow.commit();

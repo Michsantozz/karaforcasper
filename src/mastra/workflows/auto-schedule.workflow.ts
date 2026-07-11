@@ -33,6 +33,9 @@ export const autoScheduleWorkflow = createWorkflow({
     scheduled: z.number(),
   }),
   cron: "*/10 * * * *",
+  // Serializes runs: a slow scan must never overlap the next tick (10 min is
+  // shorter than a full scan under load). Inngest queues the next run instead.
+  concurrency: { limit: 1 },
 }).then(scan);
 
 autoScheduleWorkflow.commit();

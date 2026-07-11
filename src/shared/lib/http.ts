@@ -9,20 +9,6 @@ import { z } from "zod";
  */
 
 /**
- * Casper public key. Two curves, DIFFERENT LENGTHS:
- *  - ED25519:   01 + 64 hex (32 bytes) = 66 hex
- *  - SECP256K1: 02 + 66 hex (33 bytes) = 68 hex
- */
-export const publicKeyHexSchema = z
-  .string()
-  .regex(/^(?:01[0-9a-f]{64}|02[0-9a-f]{66})$/i, "invalid public key");
-
-/** Signature: 128 hex (raw) or 130 (with tag). */
-export const signatureHexSchema = z
-  .string()
-  .regex(/^(01|02)?[0-9a-f]{128}$/i, "invalid signature");
-
-/**
  * CSRF protection: on mutating requests, requires the Origin header (when
  * present) to match the request's host. Blocks cross-site POSTs. Same-origin
  * requests from the app itself (fetch) always pass.

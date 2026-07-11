@@ -4,8 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   MessageSquareIcon,
-  VideoIcon,
-  UsersIcon,
+  CalendarIcon,
   SparklesIcon,
   type LucideIcon,
 } from "lucide-react";
@@ -35,30 +34,23 @@ const FEATURES: Feature[] = [
   {
     icon: MessageSquareIcon,
     title: "Talk to the agent",
-    desc: "Check balances, make transfers, and analyze on-chain trades on Casper — all through conversation.",
+    desc: "Schedule meetings, send a recording bot, and turn transcripts into summaries, decisions, and action items — all through conversation.",
     href: "/",
     cta: "Open chat",
   },
   {
-    icon: VideoIcon,
-    title: "Meeting agent",
-    desc: "Send bots to meetings, record, transcribe, and connect your calendar to schedule per event.",
-    href: "/meetings",
-    cta: "Go to meetings",
-  },
-  {
-    icon: UsersIcon,
-    title: "Multisig & signatures",
-    desc: "Create distributed signature requests, track quorum, and broadcast.",
-    href: "/multisig",
-    cta: "Open multisig",
+    icon: CalendarIcon,
+    title: "Meetings & recordings",
+    desc: "Connect your calendar, auto-record, and review the minutes, transcript, and participants of every meeting.",
+    href: "/",
+    cta: "Open chat",
   },
 ];
 
 /**
  * First-use experience. Before, signing in led straight into a bare chat,
  * with no context on what the product does. Shows once (localStorage flag)
- * a summary of the three areas with shortcuts. Self-contained: only fires
+ * a summary of the areas with shortcuts. Self-contained: only fires
  * for an active session and disappears once seen or dismissed.
  */
 export function OnboardingDialog() {
@@ -97,7 +89,7 @@ export function OnboardingDialog() {
           </span>
           <DialogTitle>Welcome to Casper Agent</DialogTitle>
           <DialogDescription>
-            An autonomous agent on the Casper Network. Here&apos;s what you can do:
+            Your AI meeting assistant. Here&apos;s what you can do:
           </DialogDescription>
         </DialogHeader>
 
