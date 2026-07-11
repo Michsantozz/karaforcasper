@@ -1,6 +1,6 @@
 # CasperAgent
 
-Autonomous AI agent on Casper Testnet. Next.js (App Router + RSC) + Mastra (agents/tools/workflows) + Casper blockchain + Recall.ai (meetings/calendar).
+AI meeting assistant. Next.js (App Router + RSC) + Mastra (agents/tools/workflows) + Recall.ai (meetings/calendar) + Inngest (scheduled workflows).
 
 Package manager: **pnpm** (enforced — `only-allow pnpm` in preinstall).
 
@@ -31,20 +31,20 @@ This project uses a **feature-based architecture colocated with the App Router**
 |-------|----------------|-----------------|
 | `app/` | Routing only (pages + route handlers). Thin shells that delegate. | `features`, `mastra`, `server`, `shared` |
 | `features/<domain>/` | Business logic per domain. Each slice: `ui/` `model/` `api/` + `index.ts` (public API). | `shared`, `auth` (cross-cutting), its own slice |
-| `mastra/` | The agent: `agents/` `tools/` `workflows/`. Runs server-side. | `mastra`, `server`, `shared`, `auth` |
-| `server/` | **server-only** (blockchain, keys, RPC): `casper/` `recall/`. Hard boundary — never imported by client UI. | `server`, `shared` |
+| `mastra/` | The agent: `agents/` `tools/` `workflows/`. Runs server-side. | `mastra`, `server`, `shared`, `auth`, `inngest` |
+| `server/` | **server-only** (Recall.ai, calendar, storage): `recall/` `storage/`. Hard boundary — never imported by client UI. | `server`, `shared` |
 | `shared/` | Generic, no business logic: `ui/` (shadcn + assistant-ui), `lib/` (http, utils), `db/`. Leaf layer. | `shared` only |
+| `inngest/` | Infra: the Inngest client + cron-aware workflow builders. | `inngest` only |
 
 ## Current feature slices
 
-`multisig` · `wallet` · `meetings` · `signature` · `notifications` · `auth` · `assistant`
+`meetings` · `notifications` · `auth` · `assistant`
 
 ## Import rules (the core — enforced by lint)
 
 1. **Unidirectional flow**: `app` → `features`/`mastra` → `server`/`shared`. Never the reverse.
 2. **Slices don't cross each other** by default. Exceptions already configured in `eslint.config.mjs`:
    - `assistant` (chat orchestrator) may import any slice.
-   - `wallet` may import `multisig` (shows tx context during the signing flow).
    - `auth` is cross-cutting (session) — any feature may import it.
 3. **`shared/` is a leaf**: depends only on `shared/`. Never imports `features` or `server`.
 4. **`server/` is server-only**: files carry `import "server-only"`. Feature UI **never** imports `server/`. Only `app/api/*`, Server Actions, and `mastra/` touch `server/`.
@@ -64,7 +64,8 @@ This project uses a **feature-based architecture colocated with the App Router**
 ## Where new code goes
 
 - **New chat tool-UI** → `features/<owning-domain>/ui/`. Generic/cross-domain? → `features/assistant/ui/`.
-- **New blockchain logic (server)** → `server/casper/`. Recall/calendar → `server/recall/`.
+- **New server-side integration logic** → `server/recall/` (Recall.ai/calendar) or `server/storage/` (durable media).
+- **New scheduled workflow** → `mastra/workflows/` using the cron-aware `createWorkflow`/`createStep` from `@/inngest/client`.
 - **New data hook (TanStack Query, client)** → `features/<domain>/model/`.
 - **New mutation** → Server Action in `features/<domain>/api/actions.ts` (preferred), or a route handler in `app/api/` for webhooks/external callers.
 - **New reusable UI primitive (no business logic)** → `shared/ui/`.
@@ -80,5 +81,4 @@ Do not bypass the rule with a deep import. Either (a) move the code to the corre
 ## General conventions
 
 - Commits/PRs/branch names: **English** (repo convention).
-- Keep `server-only` on every `server/` file that must not reach the client bundle.
-- Do not re-serialize a Casper deploy/tx after `setSignature` (node rejects with -32016).
+- Keep `server-only` on every `server/` file that must not reach the client bundle (including barrels that re-export server-only modules).

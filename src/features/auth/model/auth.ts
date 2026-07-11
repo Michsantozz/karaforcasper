@@ -1,3 +1,4 @@
+import "server-only";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { nextCookies } from "better-auth/next-js";
@@ -36,6 +37,7 @@ const requireEmailVerification =
 const trustedOrigins = [
   process.env.BETTER_AUTH_URL,
   process.env.NEXT_PUBLIC_APP_URL,
+  "https://casper.careglyph.com",
   "http://localhost:3000",
   "http://localhost:3009",
 ].filter((v): v is string => Boolean(v));

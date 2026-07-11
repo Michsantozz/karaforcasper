@@ -1,5 +1,5 @@
 import "server-only";
-import { requireEnv } from "@/mastra/env";
+import { requireEnv } from "@/shared/lib/env";
 
 /**
  * Google OAuth 2.0 (authorization code flow, server-side).

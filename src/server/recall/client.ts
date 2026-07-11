@@ -1,5 +1,5 @@
 import "server-only";
-import { requireEnv } from "@/mastra/env";
+import { requireEnv } from "@/shared/lib/env";
 
 /**
  * Minimal REST client for the Recall.ai API.

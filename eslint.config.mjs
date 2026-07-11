@@ -15,8 +15,18 @@ const eslintConfig = [
       "boundaries/include": ["src/**/*"],
       "boundaries/elements": [
         { type: "app", pattern: "src/app/**/*" },
+        // Camadas FSD-Next: a pasta `app/` do Next é só roteamento (shells finas
+        // que re-exportam). A lógica real das páginas mora em `_pages/` e a das
+        // route handlers em `_app/api-routes/`. Prefixo `_` evita colisão com as
+        // pastas reservadas do Next (app/pages) — convenção oficial do FSD.
+        { type: "next-page", pattern: "src/_pages/**/*", capture: ["slice"] },
+        { type: "next-api", pattern: "src/_app/**/*" },
         { type: "mastra", pattern: "src/mastra/**/*" },
         { type: "server", pattern: "src/server/**/*" },
+        // Infra: cliente Inngest + builders de workflow cron-aware. Camada folha
+        // (só depende de libs externas). Consumida por mastra/workflows e pela
+        // route handler do inngest (_app/api-routes/inngest).
+        { type: "infra", pattern: "src/inngest/**/*" },
         // O `api/` de um slice são as Server Actions ("use server"): a PONTE
         // que a UI cliente chama para mutar. É a única parte do slice que pode
         // tocar server/*. Declarado ANTES de "feature" (first-match ganha) e com
@@ -40,17 +50,58 @@ const eslintConfig = [
         {
           default: "disallow",
           policies: [
-            // app (rotas + route handlers) pode puxar tudo abaixo
+            // app (Next) = só roteamento: re-exporta as camadas FSD e, durante
+            // a migração, pode ainda puxar direto de features/mastra/server.
             {
               from: { type: "app" },
-              allow: { to: { type: ["feature", "mastra", "server", "shared"] } },
+              allow: {
+                to: {
+                  type: [
+                    "next-page",
+                    "next-api",
+                    "feature",
+                    "feature-api",
+                    "mastra",
+                    "server",
+                    "shared",
+                  ],
+                },
+              },
             },
-            // mastra (server-side) pode puxar lógica de negócio server + shared + sessão (auth)
+            // _pages (lógica das páginas): compõe UI de slices + shared.
+            {
+              from: { type: "next-page" },
+              allow: {
+                to: [
+                  { type: ["feature", "feature-api", "shared"] },
+                  { type: "next-page", captured: { slice: "{{ from.captured.slice }}" } },
+                ],
+              },
+            },
+            // _app/api-routes (lógica das route handlers): a ponte HTTP, pode
+            // tocar toda a stack server-side + slices, igual a rota antiga fazia.
+            {
+              from: { type: "next-api" },
+              allow: {
+                to: {
+                  type: [
+                    "feature",
+                    "feature-api",
+                    "mastra",
+                    "server",
+                    "shared",
+                    "infra",
+                    "next-api",
+                  ],
+                },
+              },
+            },
+            // mastra (server-side) pode puxar lógica de negócio server + shared + infra (inngest) + sessão (auth)
             {
               from: { type: "mastra" },
               allow: {
                 to: [
-                  { type: ["mastra", "server", "shared"] },
+                  { type: ["mastra", "server", "shared", "infra"] },
                   { type: "feature", captured: { family: "auth" } },
                 ],
               },
@@ -101,6 +152,12 @@ const eslintConfig = [
             {
               from: { type: "shared" },
               allow: { to: { type: "shared" } },
+            },
+            // inngest é folha de infra: só libs externas, nada do próprio src
+            // além de si mesmo.
+            {
+              from: { type: "infra" },
+              allow: { to: { type: "infra" } },
             },
           ],
         },
