@@ -4,6 +4,7 @@ import type { JSONSchema7 } from "ai";
 import { NextResponse } from "next/server";
 import { getSession } from "@/features/auth/model/session";
 import { isBotOwner } from "@/server/recall/ownership";
+import { checkRateLimit, rateLimitedResponse } from "@/shared/lib/rate-limit";
 
 /** A v6 UIMessage as it arrives from the transport (only what we read/build). */
 type UIMessageLike = {
@@ -70,6 +71,16 @@ export async function POST(req: Request) {
   if (!session?.user?.id) {
     return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
   }
+
+  // Per-user rate limit: each turn hits the LLM (real $ on Bedrock/Fireworks).
+  // Auth alone doesn't bound cost — a logged-in user could loop the endpoint and
+  // burn the budget. 20 requests / 60s is generous for a human, hostile to a script.
+  const rl = await checkRateLimit({
+    key: `chat:${session.user.id}`,
+    window: 60,
+    max: 20,
+  });
+  if (!rl.ok) return rateLimitedResponse(rl.retryAfter);
 
   const params = await req.json();
   // The transport injects `tools` (JSON Schema) and — for multi-thread chat —

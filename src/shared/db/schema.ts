@@ -243,3 +243,27 @@ export const meetingRecords = pgTable(
 
 export type MeetingRecordRow = typeof meetingRecords.$inferSelect;
 export type NewMeetingRecordRow = typeof meetingRecords.$inferInsert;
+
+/**
+ * App-level rate limiting (fixed-window counter) for expensive routes NOT
+ * covered by better-auth's own limiter — which only intercepts /api/auth/*.
+ *
+ * One row per bucket key (e.g. `chat:${userId}`). `count` is the hits in the
+ * current window; `windowStart` marks when the window opened. The check helper
+ * (shared/lib/rate-limit.ts) resets the window atomically when it has elapsed.
+ * Persistent + shared across replicas (matches better-auth's storage=database),
+ * so limits hold behind a multi-instance deploy — an in-memory Map would count
+ * per-process and reset on every deploy.
+ */
+export const rateLimitApp = pgTable("rate_limit_app", {
+  /** Bucket key: `${route}:${userId}` (or `${route}:ip:${ip}` for anon). PK. */
+  key: text("key").primaryKey(),
+  /** Hits recorded in the current window. */
+  count: integer("count").notNull().default(0),
+  /** When the current window opened (epoch millis). */
+  windowStart: timestamp("window_start", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export type RateLimitAppRow = typeof rateLimitApp.$inferSelect;

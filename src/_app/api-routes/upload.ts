@@ -2,6 +2,7 @@ import { Buffer } from "node:buffer";
 import { NextResponse } from "next/server";
 import { getSession } from "@/features/auth/model/session";
 import { uploadObject } from "@/server/storage/s3";
+import { checkRateLimit, rateLimitedResponse } from "@/shared/lib/rate-limit";
 
 // Image formats the vision model (Fireworks kimi) accepts, plus PDF for docs.
 const ALLOWED = new Set([
@@ -26,6 +27,15 @@ export async function POST(req: Request) {
   if (!session?.user?.id) {
     return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
   }
+
+  // Per-user rate limit: uploads cost storage and each one can be up to 10 MB.
+  // 30 / 60s bounds abuse without getting in the way of a normal chat session.
+  const rl = await checkRateLimit({
+    key: `upload:${session.user.id}`,
+    window: 60,
+    max: 30,
+  });
+  if (!rl.ok) return rateLimitedResponse(rl.retryAfter);
 
   const form = await req.formData();
   const file = form.get("file");
