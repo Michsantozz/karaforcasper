@@ -1,210 +1,118 @@
-# Casper Agent
+# 🎙️ Casper Agent
 
-**Casper Agent is an AI meeting assistant that schedules recording bots, captures your calls, and turns them into actionable minutes — all through chat.**
+**The AI meeting assistant that reads the room — not just the transcript.**
 
-Teams lose meeting outcomes across scattered notes and chats. Casper Agent brings the whole loop into one conversational assistant: it sends recording bots to Zoom/Meet/Teams calls, transcribes and summarizes them, pushes the minutes to you when they're ready, and answers questions across your entire meeting history.
+Casper records your Zoom/Meet/Teams calls, turns them into actionable minutes, and — the part most note-takers skip — measures *how your team actually interacted*: who dominated, who went quiet, where the tension was, and how that shifts across meetings. All through chat.
 
-Built for the **Casper Agentic Buildathon 2026**, the project demonstrates an autonomous AI agent connected to real meeting infrastructure (Recall.ai), a connected calendar (Google/Outlook), and durable background workflows.
+- 🌐 **Live app:** https://casper.careglyph.com
+- 💻 **Repo:** https://github.com/Michsantozz/karaforcasper
 
-## Demo
+---
 
-- App: https://casper.careglyph.com
-- Repo: https://github.com/Michsantozz/karaforcasper
+## ✨ What it does
 
-## What It Does
+**Meetings, end to end**
+- **Schedule from chat** — "book a meeting Thursday 2pm" creates the Google Calendar event, the Meet link, and the recording bot in one shot (free-slot picker included).
+- **Send & control bots** on any Zoom/Meet/Teams call — record, pause, screenshare, chat, mp3/image output, live.
+- **Automatic minutes** — when the transcript lands, a webhook generates summary, decisions, action items, topics, and soundbites, then notifies you. No coming back to ask.
+- **Meeting notebook** — synced player, karaoke transcript, decisions, moments, and one-click shareable clips.
+- **Ask across every meeting** — "what did we decide about pricing?" searches your whole history and cites the source.
 
-- **Send a bot to any meeting**: schedule a recording bot for a Zoom/Google Meet/Teams call — now or in the future — and control it live (start/stop/pause recording, screenshare, chat, audio/video output).
-- **Schedule from chat**: "schedule a meeting Thursday at 2pm" creates the Google Calendar event, generates the Meet link, and attaches the recording bot in one shot. A calendar picker in the chat only offers free slots.
-- **Automatic minutes ("push")**: when the transcript is ready, a webhook fires the minutes generation (summary + decisions + action items + topics + participants), and the bot owner gets an in-app notification linking to the notebook — no need to come back and ask.
-- **Meeting notebook**: a player/karaoke view syncing the recording, timestamped transcript, decisions, action items, moments, and soundbites.
-- **Cross-meeting search**: ask about your meeting history without naming a bot — `list_my_meetings` and `search_my_meetings` find past meetings by keyword/topic and cite which meeting the answer came from.
-- **Multimodal chat**: attach images/PDFs; the vision model reads them inline.
-- **Multi-thread chat**: a sidebar of persistent conversations, each backed by the agent's own memory.
-- **Multi-tenant & secure**: every meeting, thread, and upload is scoped to the authenticated user (Postgres RLS + ownership checks). Webhooks are Svix-signed and fail-closed.
+**Team dynamics 🧠 — the differentiator**
+- **Meeting-health dashboard** — talk-time per person, interruptions (who cut off whom), silences, monologues, and a participation **balance** score. Pure timestamp math: deterministic, no LLM, always on.
+- **AI insight** — one Fireworks call turns the metrics into a manager-facing read ("one voice dominated; little pushback from the rest") and labels each moment with what happened + an emotional tone.
+- **Acoustic tension detection** — on demand, Casper decodes the audio in your browser (WebCodecs, no upload) to tell *real* tension (loud, agitated overlap) from a casual "yeah, yeah". Tense moments get a 🔥.
+- **Trends over time** (`/meetings/trends`) — who's fading out or taking over the room, rising friction, whether the team is getting more or less balanced — with signals the agent raises tactfully: *"Marina dropped from 22% to 4% over 6 meetings."*
 
-## How It Works
+Just ask: *"how did the team interact?"*, *"is anyone going quiet?"*, *"was there tension?"*
 
-The agent is a single Mastra agent (`assistantAgent`) exposing meeting and calendar tools over an assistant-ui chat. Reads come from the Recall.ai MCP (read-only) and REST; writes (create/schedule/control bots) go through app tools with per-user deduplication in Postgres.
+> **🔒 Honest scope.** Dynamics metrics and trends are deterministic math over transcript timestamps — reliable whenever word-level timing is present (Recall provides it). The AI *insight* (verified live against Fireworks `glm-5p2`) and *acoustic tension* pass are additive layers on top; neither is required for the core dashboard.
 
-### 1. Schedule a meeting with a recording bot (most common flow)
+---
 
-1. The agent calls `pick_date` — a calendar with clickable free slots renders in the chat.
-2. It calls `create_calendar_event` with the chosen time, `withMeet=true`, `sendBot=true`.
-3. Google Calendar event + Meet link + recording bot are created in one call.
+## 🚀 Why it stands out
 
-### 2. After the meeting (automatic minutes)
+- **Behavior, not just content.** Others summarize *what* was said. Casper reads *how the team worked* — the layer Gong sells to sales teams, brought to everyday internal meetings.
+- **Real product, not a demo.** Live deployment, multi-tenant by construction (Postgres RLS + ownership checks), Svix-signed fail-closed webhooks, durable retry workflows.
+- **Runs on AMD.** Chat, embeddings, and the meeting-health insight all default to **Fireworks AI** (AMD hardware).
 
-1. Recall fires the `transcript.done` webhook (Svix-verified) to `/api/webhooks/recall/bot`.
-2. The record is enqueued (idempotent) and enrichment runs: `summarizeMeeting` produces summary, decisions, action items, topics, participants, soundbites.
-3. The minutes persist to `meeting_records`; the owner gets an in-app notification.
-4. A reconcile cron (Inngest) reprocesses anything that failed — the webhook never has to redeliver.
+---
 
-### 3. During a live meeting
-
-Control the bot from chat: `start/stop/pause/resume_recording`, `send_chat_message`, `start/stop_screenshare`, `output_audio` (mp3 alerts), `output_video` (image), `remove_bot`.
-
-### 4. Cross-meeting questions
-
-"What did we decide about X?" → `search_my_meetings` returns matching meetings + transcript snippets, scoped to the user's own records only.
-
-## Tech Stack
+## 🏗️ Tech stack
 
 | Layer | Technology |
 |---|---|
-| App | Next.js 16, React 19, App Router + RSC |
-| Agent framework | Mastra (agents, tools, workflows) |
-| LLM | Fireworks AI (default, vision-capable) or AWS Bedrock |
-| Meeting infrastructure | Recall.ai (REST + MCP), Google Calendar OAuth |
-| Chat UI | assistant-ui, Tailwind / shadcn-style components |
-| Auth | better-auth |
-| Database | Postgres, Drizzle ORM (RLS multi-tenant) |
-| Background workflows | Inngest (crons, reconcile loop) |
-| Object storage | S3 / MinIO (chat image + file attachments) |
-| Email | Resend (transactional "minutes ready") |
+| App | Next.js 16, React 19 (App Router + RSC) |
+| Agent | Mastra (agents, tools, workflows) |
+| LLM | **Fireworks AI** (default — chat, embeddings, insight; on AMD) · AWS Bedrock fallback |
+| Team dynamics | Deterministic timestamp analysis + Fireworks insight + browser audio (WebCodecs) |
+| Meetings | Recall.ai (REST + MCP), Google Calendar OAuth |
+| Data | Postgres + Drizzle (multi-tenant RLS) |
+| Workflows | Inngest (crons, reconcile loop) |
+| Storage / Email | S3 / MinIO · Resend |
 
-## Project Structure
+---
 
-```txt
-src/
-├── app/                   # Next.js routes and route handlers (thin shells)
-├── features/
-│   ├── assistant/         # Main AI chat UI + thread store
-│   ├── auth/              # Session and app shell
-│   ├── meetings/          # Recall/calendar UI, meeting notebook, clips
-│   └── notifications/     # In-app notification bell
-├── mastra/
-│   ├── agents/            # assistantAgent (the meeting assistant)
-│   ├── tools/             # recall, calendar tools
-│   └── workflows/         # auto-schedule, meeting-reconcile
-├── server/
-│   ├── recall/            # Recall.ai, calendar, OAuth, meeting records
-│   └── storage/           # S3 upload
-└── shared/                # DB (schema, RLS), UI primitives, utils
-```
+## ⚙️ How it works
 
-## Key Files
+**Schedule** → agent renders a free-slot picker, then creates the Calendar event + Meet link + bot in one call.
 
-- `src/mastra/agents/assistant.agent.ts` — the meeting assistant, its tools and instructions.
-- `src/mastra/tools/recall.tool.ts` — send/control bots, transcript, summarize, cross-meeting search.
-- `src/mastra/tools/calendar.tool.ts` — list events, schedule bots, create meetings, free-slot lookup.
-- `src/server/recall/summarize.ts` — turns a transcript into structured minutes.
-- `src/server/recall/enrich.ts` — durable enrichment run after a meeting.
-- `src/app/api/webhooks/recall/bot/route.ts` — Svix-verified webhook that triggers the minutes push.
-- `src/app/api/chat/route.ts` — chat entrypoint (auth + ownership + memory binding).
-- `src/features/assistant/model/threads.ts` — per-user chat thread store (Mastra memory).
+**After the meeting** → Recall fires a Svix-verified `transcript.done` webhook → enrichment runs (idempotent, with retry): minutes **+** team-dynamics metrics **+** one Fireworks insight call, all persisted → you get a notification. A reconcile cron rescues anything that failed.
 
-## Local Setup
+**Anytime** → ask the agent across your whole meeting history or about how a team is trending; reads are scoped to you and never leak across tenants.
 
-### 1. Install
+---
+
+## 📦 Setup
+
+Requires **Node ≥ 24** and **pnpm**.
 
 ```bash
 pnpm install
-```
-
-Requires **Node >= 24** and **pnpm** (enforced via `only-allow pnpm`).
-
-### 2. Environment
-
-```bash
-cp .env.example .env.local
-```
-
-Required groups (see `.env.example` for the full annotated list):
-
-- **Database**: `DATABASE_URL` (Postgres — better-auth + Mastra memory + Drizzle).
-- **Auth**: `BETTER_AUTH_URL`, `NEXT_PUBLIC_APP_URL`.
-- **LLM**: `MODEL_PROVIDER` (`fireworks` default | `bedrock`). For Fireworks: `FIREWORKS_API_KEY`, `FIREWORKS_MODEL_ID`. For Bedrock: `BEDROCK_REGION`, `BEDROCK_MODEL_ID`, AWS credentials.
-- **Meetings**: `RECALL_API_KEY`, `RECALL_REGION`, `RECALL_WEBHOOK_SECRET` (Svix `whsec_...`).
-- **Calendar OAuth**: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URI`, `OAUTH_STATE_SECRET`.
-- **Object storage** (chat attachments): `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_PUBLIC_URL` (MinIO defaults ship in docker-compose).
-- **Multi-instance**: `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY` (stable across replicas).
-- **Email** (optional): `RESEND_API_KEY`, `EMAIL_FROM` — without it, email is a no-op (in-app bell only).
-
-### 3. Database
-
-```bash
+cp .env.example .env.local   # fill the required groups (see the annotated file)
 pnpm db:migrate
+pnpm dev                     # app
+pnpm dev:inngest             # autonomous workflows (separate terminal)
 ```
 
-### 4. Recall webhooks
+**Required env** (grouped in `.env.example`): `DATABASE_URL` · auth (`BETTER_AUTH_URL`, `NEXT_PUBLIC_APP_URL`) · LLM (`MODEL_PROVIDER=fireworks`, `FIREWORKS_API_KEY`, `FIREWORKS_MODEL_ID`) · Recall (`RECALL_API_KEY`, `RECALL_WEBHOOK_SECRET`) · Google OAuth · S3/MinIO · `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY`. Email (`RESEND_API_KEY`) is optional — without it the in-app bell still works.
 
-Configure two endpoints in the Recall dashboard (same Svix secret):
+**Recall webhooks** (Recall dashboard, same Svix secret): calendar → `{APP_URL}/api/webhooks/recall` · bot → `{APP_URL}/api/webhooks/recall/bot` (subscribe to `transcript.done`).
 
-- Calendar events → `{APP_URL}/api/webhooks/recall`
-- Bot / transcript → `{APP_URL}/api/webhooks/recall/bot` (subscribe to `transcript.done` — this is what generates the minutes and notifies the owner)
-
-### 5. Run
+**Full self-host stack** (Postgres + MinIO + Inngest + app):
 
 ```bash
-pnpm dev
-```
-
-The autonomous workflows need the Inngest dev server:
-
-```bash
-pnpm dev:inngest   # inngest-cli dev -u http://localhost:3000/api/inngest
-```
-
-Production-style local run:
-
-```bash
-pnpm build
-pnpm start
-```
-
-Or the full self-host stack (Postgres + MinIO + Inngest + app):
-
-```bash
-cp .env.example .env   # fill the [SECRET] values
+cp .env.example .env   # fill [SECRET] values
 docker compose up -d --build
 ```
 
-## Commands
+---
+
+## 🧪 Commands
 
 ```bash
-pnpm dev                 # local dev server
-pnpm dev:inngest         # Inngest dev server (autonomous workflows)
-pnpm build               # production build
-pnpm start               # run the built app
-pnpm typecheck           # TypeScript check
-pnpm lint                # ESLint (includes architecture boundary rules)
-pnpm test                # Vitest
-pnpm test:unit           # unit tests
-pnpm test:component      # component tests
-pnpm test:e2e            # Playwright tests
+pnpm dev / dev:inngest   # dev server / workflows
+pnpm build / start       # production
+pnpm typecheck           # tsc --noEmit
+pnpm lint                # ESLint (+ architecture boundary rules)
+pnpm test                # Vitest (unit hermetic; integration/e2e opt-in)
 pnpm db:migrate          # Drizzle migrations
-pnpm db:studio           # Drizzle Studio
 ```
 
-## Tests
+Unit tests are hermetic (external services mocked). Live/E2E flows are opt-in (`RUN_LIVE_E2E=1`) and consume real API credits.
 
-Most tests are hermetic by default (mocked Recall/Bedrock/DB). Live external flows and E2E are opt-in.
+---
 
-```bash
-pnpm test:unit
-pnpm test:component
-pnpm test:integration
-RUN_LIVE_E2E=1 pnpm test:e2e:live
-```
+## 🛡️ Security
 
-Live tests consume external API credits (Recall, LLM).
+- Every route is auth-gated; user ids come from the session, never the request body.
+- Meetings, threads, and uploads are per-user via Postgres **RLS** (`withUserScope`) + ownership checks (`assertBotOwner`) — cross-tenant reads 404, never leak. A boot guard warns if the DB role can bypass RLS.
+- Webhooks are Svix-signed (HMAC-SHA256, timing-safe, anti-replay) and **fail-closed**.
+- Uploads are MIME-allowlisted and size-capped; a forged `meetingBotId` is silently ignored.
+- Optional LLM guardrails (`ENABLE_LLM_GUARDRAILS=true`) block prompt injection and redact PII on the chat agent.
 
-## Security Notes
+---
 
-- Every route is auth-gated; user ids come from the session, never from the request body.
-- Meetings, chat threads, and uploads are scoped per user via Postgres RLS (`withUserScope`) and explicit ownership checks (`assertBotOwner`) — cross-tenant reads 404, they never leak.
-- Webhooks are Svix-signed (HMAC-SHA256, timing-safe, anti-replay) and **fail-closed**: no secret configured → 500, invalid signature → 401.
-- Chat `meetingBotId` is honored only if the caller owns the bot; a forged id is silently ignored.
-- Uploads are MIME-allowlisted, size-capped (10 MB), and stored under a user-namespaced key.
-- `.env*` and `*.pem` are gitignored; production deployments should use a secret manager.
+## 🧩 Architecture
 
-## Architecture
-
-The codebase uses a **feature-based architecture colocated with the App Router**, with layer boundaries enforced by ESLint (`eslint-plugin-boundaries`). `app/` owns routing only; business logic lives in `features/<domain>/`; server-only code (Recall, storage) lives in `server/`; generic UI/DB/utils in `shared/`. See `CLAUDE.md` for the full boundary rules.
-
-## Buildathon Fit
-
-- **AI Agent**: one assistant plans and calls tools across meetings and calendar, with persistent memory.
-- **Autonomy**: durable Inngest workflows schedule bots and reconcile minutes without a human in the loop.
-- **Real infrastructure**: live Recall.ai bots on real Zoom/Meet/Teams calls, real Google Calendar OAuth.
-- **Multimodal**: image/PDF attachments read by a vision model in chat.
+Feature-based, colocated with the App Router, with layer boundaries **enforced by ESLint** (`eslint-plugin-boundaries`): `app/` routes only, business logic in `features/<domain>/`, server-only code in `server/`, generic UI/DB/utils in `shared/`. Full rules in `CLAUDE.md`.
