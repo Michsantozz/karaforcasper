@@ -7,6 +7,7 @@ import {
 import { getSession } from "@/features/auth/model/session";
 import { serverError } from "@/shared/lib/api-error";
 import { withUserScope } from "@/shared/db/rls";
+import { checkRateLimit, rateLimitedResponse } from "@/shared/lib/rate-limit";
 
 /**
  * Lists events from the authenticated user's connected calendars.
@@ -23,6 +24,15 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
   }
   const userId = session.user.id;
+
+  // Fans out to the Recall API per calendar (external cost) — throttle to keep
+  // a logged-in caller from hammering the upstream. 30/60s is ample for the UI.
+  const rl = await checkRateLimit({
+    key: `calendar-events:${userId}`,
+    window: 60,
+    max: 30,
+  });
+  if (!rl.ok) return rateLimitedResponse(rl.retryAfter);
 
   const url = new URL(req.url);
   const calendarId = url.searchParams.get("calendar_id");

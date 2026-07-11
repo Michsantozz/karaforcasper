@@ -3,6 +3,7 @@ import { getSession } from "@/features/auth/model/session";
 import { listDynamicsForUser } from "@/server/recall/meeting-repository";
 import { computeTeamTrends } from "@/server/recall/dynamics-trends";
 import { withUserScope } from "@/shared/db/rls";
+import { checkRateLimit, rateLimitedResponse } from "@/shared/lib/rate-limit";
 
 /**
  * Longitudinal team-health trends for the /meetings/trends page. Aggregates the
@@ -17,6 +18,14 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
   }
   const userId = session.user.id;
+
+  // Aggregation over up to 200 snapshots is unbounded per-request cost — throttle.
+  const rl = await checkRateLimit({
+    key: `team-trends:${userId}`,
+    window: 60,
+    max: 60,
+  });
+  if (!rl.ok) return rateLimitedResponse(rl.retryAfter);
 
   const url = new URL(req.url);
   const rawLimit = Number(url.searchParams.get("limit"));

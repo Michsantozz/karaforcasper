@@ -6,6 +6,7 @@ import {
 } from "@/server/recall/meeting-repository";
 import { listUpcomingBotsForUser } from "@/server/recall/bot-repository";
 import { withUserScope } from "@/shared/db/rls";
+import { checkRateLimit, rateLimitedResponse } from "@/shared/lib/rate-limit";
 
 /**
  * Meetings index (list) for the /meetings page. Server-side searched + paginated,
@@ -31,6 +32,15 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
   }
   const userId = session.user.id;
+
+  // Search + pagination + upcoming-bots merge is real DB work — throttle the
+  // caller. 60/60s is generous for the list UI's polling.
+  const rl = await checkRateLimit({
+    key: `meetings:${userId}`,
+    window: 60,
+    max: 60,
+  });
+  if (!rl.ok) return rateLimitedResponse(rl.retryAfter);
 
   const url = new URL(req.url);
   const q = url.searchParams.get("q")?.trim() || undefined;

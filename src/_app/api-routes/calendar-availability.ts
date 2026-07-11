@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { getDayAvailability } from "@/server/recall/availability";
 import { getSession } from "@/features/auth/model/session";
 import { serverError } from "@/shared/lib/api-error";
+import { DEFAULT_TIME_ZONE } from "@/shared/lib/config";
+import { checkRateLimit, rateLimitedResponse } from "@/shared/lib/rate-limit";
 
 /**
  * Availability for a single DAY for the authenticated user — the business-hours
@@ -19,9 +21,17 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
   }
 
+  // Calls out to Recall (getDayAvailability) per request — throttle the caller.
+  const rl = await checkRateLimit({
+    key: `calendar-availability:${session.user.id}`,
+    window: 60,
+    max: 30,
+  });
+  if (!rl.ok) return rateLimitedResponse(rl.retryAfter);
+
   const url = new URL(req.url);
   const dateIso = url.searchParams.get("date");
-  const timeZone = url.searchParams.get("tz") || "America/Sao_Paulo";
+  const timeZone = url.searchParams.get("tz") || DEFAULT_TIME_ZONE;
 
   if (!dateIso || !DATE_RE.test(dateIso)) {
     return NextResponse.json(
