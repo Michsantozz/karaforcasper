@@ -9,6 +9,7 @@ import {
   emailResetPassword,
   emailMagicLink,
 } from "@/server/email";
+import { encryptToken } from "@/server/crypto/token-cipher";
 
 /**
  * better-auth configuration (app identity/session).
@@ -42,9 +43,45 @@ const trustedOrigins = [
   "http://localhost:3009",
 ].filter((v): v is string => Boolean(v));
 
+// Encrypts the token columns of an account record in place (only the fields
+// that are present). `account` here is better-auth's partial write payload, so
+// we accept a loose shape and touch only accessToken/refreshToken.
+function encryptAccountTokens<
+  T extends { accessToken?: string | null; refreshToken?: string | null },
+>(account: T): T {
+  const next = { ...account };
+  if (account.accessToken) next.accessToken = encryptToken(account.accessToken);
+  if (account.refreshToken)
+    next.refreshToken = encryptToken(account.refreshToken);
+  return next;
+}
+
 export const auth = betterAuth({
   database: drizzleAdapter(db, { provider: "pg" }),
   trustedOrigins,
+  // Encrypt third-party OAuth tokens at rest (finding A). better-auth stores
+  // account.accessToken/refreshToken in plaintext by default; a DB dump would
+  // leak every user's Google tokens. These hooks wrap them with AES-256-GCM
+  // before persisting (create + refresh/update). No read hook is needed: the
+  // app never reads these columns back — the calendar refresh_token flows
+  // straight from the OAuth exchange to Recall, not through this table. If a
+  // future code path DOES need the plaintext, use decryptToken() on read.
+  // encryptToken is a no-op passthrough when ACCOUNT_TOKEN_ENCRYPTION_KEY is
+  // unset (dev) and idempotent on already-encrypted values.
+  databaseHooks: {
+    account: {
+      create: {
+        async before(account) {
+          return { data: encryptAccountTokens(account) };
+        },
+      },
+      update: {
+        async before(account) {
+          return { data: encryptAccountTokens(account) };
+        },
+      },
+    },
+  },
   // Signed cookie cache — avoids a DB read on every getSession() (RSC/routes/
   // tools all call it). Short maxAge keeps revocation lag low; DB stays the
   // source of truth once the cache expires.
