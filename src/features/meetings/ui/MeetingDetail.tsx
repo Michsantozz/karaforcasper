@@ -849,6 +849,7 @@ function NotesPanels({
 
       {data.dynamics && (
         <DynamicsPanel
+          botId={data.botId}
           dynamics={data.dynamics}
           insight={data.dynamicsInsight}
           videoUrl={canClip ? data.videoUrl : null}
@@ -904,11 +905,13 @@ function toneColor(tone: MeetingHealthInsight["moments"][number]["tone"]): strin
 }
 
 function DynamicsPanel({
+  botId,
   dynamics,
   insight,
   videoUrl,
   onSeek,
 }: {
+  botId: string;
   dynamics: MeetingDynamics;
   insight: MeetingHealthInsight | null;
   videoUrl: string | null;
@@ -919,6 +922,12 @@ function DynamicsPanel({
   const tension = useTensionAnalysis();
   const tenseByAt =
     tension.state.status === "done" ? tension.state.result.byAt : null;
+  const behavior =
+    tension.state.status === "done" ? tension.state.result.behavior : null;
+  // LLM behavioral read per tense moment, matched by rounded second.
+  const behaviorByAt = new Map(
+    (behavior?.moments ?? []).map((m) => [Math.round(m.atSeconds), m]),
+  );
   // Balance drives the headline read: even floor vs one-person-dominated.
   const balancePct = Math.round(balance * 100);
   const balanceLabel =
@@ -1011,14 +1020,22 @@ function DynamicsPanel({
                 </span>
                 <button
                   type="button"
-                  onClick={() => tension.run(videoUrl, moments)}
-                  disabled={tension.state.status === "analyzing"}
+                  onClick={() => tension.run(botId, videoUrl, dynamics)}
+                  disabled={
+                    tension.state.status === "analyzing" ||
+                    tension.state.status === "reading"
+                  }
                   className="flex items-center gap-1.5 rounded-[4px] border bg-background px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground transition-colors hover:bg-muted/40 disabled:opacity-60"
                 >
                   {tension.state.status === "analyzing" ? (
                     <>
                       <Loader2Icon className="size-3 animate-spin" />
                       {Math.round(tension.state.progress * 100)}%
+                    </>
+                  ) : tension.state.status === "reading" ? (
+                    <>
+                      <Loader2Icon className="size-3 animate-spin" />
+                      reading
                     </>
                   ) : (
                     <>
@@ -1034,10 +1051,23 @@ function DynamicsPanel({
                 {tension.state.message}
               </p>
             )}
+            {/* LLM behavioral read over the acoustic tension — the "how it felt" */}
+            {behavior && (
+              <div className="rounded-[5px] border border-(--thread-accent-secondary)/40 bg-(--thread-accent-secondary)/5 px-2.5 py-2">
+                <p className="flex items-center gap-1.5 text-sm font-semibold leading-snug text-(--thread-accent-secondary)">
+                  <FlameIcon className="size-3.5 shrink-0" />
+                  {behavior.headline}
+                </p>
+                <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                  {behavior.summary}
+                </p>
+              </div>
+            )}
             {moments.map((m, i) => {
               const Icon = DYNAMICS_MOMENT_ICON[m.kind];
               const read = insightByAt.get(Math.round(m.atSeconds));
               const label = read?.label ?? m.label;
+              const behave = behaviorByAt.get(Math.round(m.atSeconds));
               const tense = tenseByAt?.get(Math.round(m.atSeconds));
               const color = tense?.isTense
                 ? "text-(--thread-accent-secondary)"
@@ -1053,21 +1083,34 @@ function DynamicsPanel({
                   key={i}
                   type="button"
                   onClick={() => onSeek(m.atSeconds)}
-                  className="flex items-center gap-2.5 rounded-[5px] border bg-background px-2.5 py-1.5 text-left transition-colors hover:bg-muted/40"
+                  className="flex flex-col gap-1 rounded-[5px] border bg-background px-2.5 py-1.5 text-left transition-colors hover:bg-muted/40"
                 >
-                  <Icon className={cn("size-3.5 shrink-0", color)} />
-                  <span className="min-w-0 flex-1 truncate text-sm">
-                    {label}
-                  </span>
-                  {tense?.isTense && (
-                    <span className="flex shrink-0 items-center gap-1 rounded-[4px] bg-(--thread-accent-secondary)/15 px-1.5 py-0.5 font-mono text-[9px] uppercase text-(--thread-accent-secondary)">
-                      <FlameIcon className="size-2.5" />
-                      tense
+                  <div className="flex w-full items-center gap-2.5">
+                    <Icon className={cn("size-3.5 shrink-0", color)} />
+                    <span className="min-w-0 flex-1 truncate text-sm">
+                      {label}
                     </span>
+                    {tense?.isTense && (
+                      <span className="flex shrink-0 items-center gap-1 rounded-[4px] bg-(--thread-accent-secondary)/15 px-1.5 py-0.5 font-mono text-[9px] uppercase text-(--thread-accent-secondary)">
+                        <FlameIcon className="size-2.5" />
+                        tense
+                      </span>
+                    )}
+                    <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
+                      {fmt(m.atSeconds)}
+                    </span>
+                  </div>
+                  {/* LLM behavioral read of the tense moment (the "why") */}
+                  {behave && (
+                    <div className="flex items-start gap-1.5 pl-6">
+                      <span className="shrink-0 rounded-[3px] bg-muted px-1 py-px font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
+                        {behave.behavior}
+                      </span>
+                      <span className="min-w-0 flex-1 text-[11px] leading-snug text-muted-foreground">
+                        {behave.read}
+                      </span>
+                    </div>
                   )}
-                  <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
-                    {fmt(m.atSeconds)}
-                  </span>
                 </button>
               );
             })}

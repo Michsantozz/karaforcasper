@@ -126,6 +126,25 @@ export interface MeetingHealthInsight {
   moments: InsightMoment[];
 }
 
+/** LLM behavioral read of one tense moment (mirrors server behavior-insight.ts). */
+export interface BehaviorMoment {
+  atSeconds: number;
+  read: string;
+  behavior:
+    | "conflict"
+    | "frustration"
+    | "disengagement"
+    | "dominance"
+    | "engaged";
+}
+
+/** LLM behavioral insight over the acoustic tension (mirrors server behavior-insight.ts). */
+export interface BehaviorInsight {
+  headline: string;
+  summary: string;
+  moments: BehaviorMoment[];
+}
+
 export interface MeetingDetailResponse {
   botId: string;
   status: string;

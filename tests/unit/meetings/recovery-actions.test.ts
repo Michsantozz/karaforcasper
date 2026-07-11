@@ -21,6 +21,7 @@ const enrichMeeting = vi.fn();
 const findBotByBotId = vi.fn();
 const deleteBotMapping = vi.fn();
 const recallFetch = vi.fn();
+const generateBehaviorInsight = vi.fn();
 const withUserScope = vi.fn((_u: string, fn: () => unknown) => fn());
 
 vi.mock("@/features/auth/model/session", () => ({
@@ -44,6 +45,9 @@ vi.mock("@/server/recall/bot-repository", () => ({
 vi.mock("@/server/recall/client", () => ({
   recallFetch: (...a: unknown[]) => recallFetch(...a),
 }));
+vi.mock("@/server/recall/behavior-insight", () => ({
+  generateBehaviorInsight: (...a: unknown[]) => generateBehaviorInsight(...a),
+}));
 vi.mock("@/shared/db/rls", () => ({
   withUserScope: (u: string, fn: () => unknown) => withUserScope(u, fn),
 }));
@@ -59,6 +63,11 @@ beforeEach(() => {
   enrichMeeting.mockResolvedValue({ state: "done" });
   findBotByBotId.mockResolvedValue({ dedupKey: "dk-1" });
   recallFetch.mockResolvedValue(undefined);
+  generateBehaviorInsight.mockResolvedValue({
+    headline: "h",
+    summary: "s",
+    moments: [],
+  });
 });
 
 describe("reprocessMeeting", () => {
@@ -184,5 +193,80 @@ describe("setMeetingShare — public share-link toggle", () => {
     const res = await setMeetingShare("bot-1", true);
 
     expect(res).toEqual({ ok: false, error: "not found or not accessible" });
+  });
+});
+
+describe("analyzeMeetingBehavior — client-triggered behavioral read", () => {
+  const moments = [
+    {
+      atSeconds: 10,
+      kind: "interruption" as const,
+      label: "Ana cut off João",
+      intensity: 0.8,
+      isTense: true,
+    },
+  ];
+  const metrics = {
+    balance: 0.4,
+    interruptions: 3,
+    silenceSeconds: 8,
+    participants: [
+      { name: "Ana", talkShare: 0.7, interruptionsMade: 2, longestTurnSeconds: 40 },
+    ],
+  };
+
+  it("unauthenticated → rejected, no LLM read", async () => {
+    requireUserId.mockRejectedValue(new Error("no session"));
+    const { analyzeMeetingBehavior } = await load();
+
+    const res = await analyzeMeetingBehavior("bot-1", moments, metrics);
+
+    expect(res).toEqual({ ok: false, error: "unauthenticated" });
+    expect(assertBotOwner).not.toHaveBeenCalled();
+    expect(generateBehaviorInsight).not.toHaveBeenCalled();
+  });
+
+  it("non-owner → refused, no LLM read (no cross-tenant analysis)", async () => {
+    assertBotOwner.mockRejectedValue(new Error("not accessible"));
+    const { analyzeMeetingBehavior } = await load();
+
+    const res = await analyzeMeetingBehavior("someone-elses", moments, metrics);
+
+    expect(res).toEqual({ ok: false, error: "not found or not accessible" });
+    expect(generateBehaviorInsight).not.toHaveBeenCalled();
+  });
+
+  it("owner → runs the read and returns the insight", async () => {
+    const insight = {
+      headline: "Tense standoff",
+      summary: "Ana dominated.",
+      moments: [{ atSeconds: 10, read: "Ana cut in", behavior: "conflict" as const }],
+    };
+    generateBehaviorInsight.mockResolvedValue(insight);
+    const { analyzeMeetingBehavior } = await load();
+
+    const res = await analyzeMeetingBehavior("bot-1", moments, metrics);
+
+    expect(res).toEqual({ ok: true, insight });
+    expect(assertBotOwner).toHaveBeenCalledWith("bot-1", "u1");
+    expect(generateBehaviorInsight).toHaveBeenCalledWith(moments, metrics);
+  });
+
+  it("owner but nothing tense → ok with null insight", async () => {
+    generateBehaviorInsight.mockResolvedValue(null);
+    const { analyzeMeetingBehavior } = await load();
+
+    const res = await analyzeMeetingBehavior("bot-1", moments, metrics);
+
+    expect(res).toEqual({ ok: true, insight: null });
+  });
+
+  it("LLM read throws → surfaces the error, never propagates", async () => {
+    generateBehaviorInsight.mockRejectedValue(new Error("model down"));
+    const { analyzeMeetingBehavior } = await load();
+
+    const res = await analyzeMeetingBehavior("bot-1", moments, metrics);
+
+    expect(res).toEqual({ ok: false, error: "model down" });
   });
 });

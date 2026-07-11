@@ -13,6 +13,12 @@ import {
   deleteBotMapping,
 } from "@/server/recall/bot-repository";
 import { recallFetch } from "@/server/recall/client";
+import {
+  generateBehaviorInsight,
+  type BehaviorInsight,
+  type BehaviorMomentInput,
+  type BehaviorMetricsInput,
+} from "@/server/recall/behavior-insight";
 import { withUserScope } from "@/shared/db/rls";
 
 /**
@@ -111,6 +117,43 @@ export async function setMeetingShare(
   const state = await withUserScope(userId, () => enableMeetingShare(botId));
   if (!state) return { ok: false, error: "not found or not accessible" };
   return { ok: true, shareToken: state.shareToken };
+}
+
+/** Result of a behavioral-insight run: the LLM read (null when nothing tense). */
+export type BehaviorResult =
+  | { ok: true; insight: BehaviorInsight | null }
+  | { ok: false; error: string };
+
+/**
+ * Reads the human behavior behind the client-computed acoustic tension moments.
+ * The client passes the already-fused per-moment scores + dynamics metrics (no
+ * audio/video bytes) and the LLM interprets them. Ownership-checked so a client
+ * can never run analysis against another tenant's meeting. Best-effort: a null
+ * insight (flat meeting or LLM failure) is still `ok`. Used by the notebook's
+ * "analyze tension" flow.
+ */
+export async function analyzeMeetingBehavior(
+  botId: string,
+  moments: BehaviorMomentInput[],
+  metrics: BehaviorMetricsInput,
+): Promise<BehaviorResult> {
+  let userId: string;
+  try {
+    userId = await requireUserId();
+  } catch {
+    return { ok: false, error: "unauthenticated" };
+  }
+  if (!(await isOwner(botId, userId))) {
+    return { ok: false, error: "not found or not accessible" };
+  }
+
+  try {
+    const insight = await generateBehaviorInsight(moments, metrics);
+    return { ok: true, insight };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "analysis failed";
+    return { ok: false, error: message };
+  }
 }
 
 /** Ownership check that never throws (returns false on any denial). */
