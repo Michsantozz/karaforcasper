@@ -113,9 +113,20 @@ export async function deleteBotMapping(dedupKey: string): Promise<void> {
 }
 
 /**
- * Derives the default dedup_key: one bot per meeting instance.
- * Format: `${joinAtIso|adhoc}-${meetingUrl}`.
+ * Derives the default dedup_key: one bot per meeting instance PER USER.
+ * Format: `${userId}:${joinAtIso|adhoc}-${meetingUrl}`.
+ *
+ * The `userId` prefix namespaces the key by tenant. Without it, two different
+ * users scheduling a bot for the SAME meeting URL + time collide on one key:
+ * the second user's dedup lookup would find the first user's bot (a bot they
+ * can't access) and their own meeting would never get a bot. recall_bots has no
+ * RLS (no user_id column; dedup_key is the sole PK), so this prefix is the only
+ * thing keeping two tenants' "my bot for this meeting" records distinct.
  */
-export function defaultDedupKey(meetingUrl: string, joinAt?: string): string {
-  return `${joinAt ?? "adhoc"}-${meetingUrl}`;
+export function defaultDedupKey(
+  userId: string,
+  meetingUrl: string,
+  joinAt?: string,
+): string {
+  return `${userId}:${joinAt ?? "adhoc"}-${meetingUrl}`;
 }

@@ -53,11 +53,37 @@ export async function enrichMeeting(botId: string): Promise<EnrichResult> {
   // No row (webhook hasn't enqueued yet) or already done: nothing to do here.
   if (!claimed) return { state: "skipped", reason: "no pending record" };
 
+  // Resolve the effective owner: the row's userId, or — if the row was enqueued
+  // ownerless (webhook had no metadata.user_id and no recall_bots row yet) — the
+  // owner recorded on the bot mapping. Persisting this on the `done` write
+  // BACKFILLS orphan rows: without it, an ownerless meeting is enriched (LLM
+  // paid) and then hidden from every user by RLS forever. Falls back to
+  // claimed.userId (may still be null → row stays orphan, warned by notifyOwner).
+  const ownerUserId =
+    claimed.userId ?? botOwnerUserId(await findBotByBotId(botId));
+
   try {
     const summary = await summarizeMeeting(botId);
 
     if (summary.state === "processing") {
-      // Transcript still not ready: goes back to pending (the cron retries).
+      // Transcript still not ready. `claimMeetingRecord` already bumped attempts
+      // for THIS pass, so claimed.attempts reflects the current try. If we've hit
+      // the ceiling, stop retrying: a transcript that never became ready after
+      // MAX_ATTEMPTS is a terminal failure — otherwise the reconcile cron would
+      // re-claim it forever (pending→processing→pending), bumping attempts
+      // unbounded and never surfacing to the owner. Below the ceiling, requeue
+      // so the cron retries.
+      if (claimed.attempts >= MAX_ATTEMPTS) {
+        await withSystemScope(() =>
+          failMeetingRecord(botId, "transcript never became ready (max attempts)"),
+        );
+        await notifyMeetingFailed(
+          botId,
+          ownerUserId,
+          "transcript never became ready",
+        );
+        return { state: "failed", error: "transcript never became ready" };
+      }
       await withSystemScope(() =>
         requeueMeetingRecord(botId, "transcript still processing"),
       );
@@ -69,14 +95,14 @@ export async function enrichMeeting(botId: string): Promise<EnrichResult> {
       );
       // Terminal: no transcript to work with. Tell the owner instead of leaving
       // a silent failed row no one is told about.
-      await notifyMeetingFailed(botId, claimed.userId, "empty transcript");
+      await notifyMeetingFailed(botId, ownerUserId, "empty transcript");
       return { state: "failed", error: "empty transcript" };
     }
 
     // Durable capture (word-level transcript + video → our storage) so the
     // notebook survives Recall's artifact expiry. Best-effort and OUTSIDE the
     // db transaction (network/upload); nulls if not ready or storage is off.
-    const media = await captureMeetingMedia(botId, claimed.userId);
+    const media = await captureMeetingMedia(botId, ownerUserId);
 
     // Team-dynamics / meeting-health metrics from the word-level transcript
     // (pure timestamp math, no LLM/audio). Null when timestamps are missing.
@@ -90,7 +116,7 @@ export async function enrichMeeting(botId: string): Promise<EnrichResult> {
 
     await withSystemScope(async () => {
       await completeMeetingRecord(botId, {
-        userId: claimed.userId,
+        userId: ownerUserId,
         meetingUrl: claimed.meetingUrl,
         transcript: summary.transcriptText ?? null,
         summary: summary.summary,
@@ -109,7 +135,7 @@ export async function enrichMeeting(botId: string): Promise<EnrichResult> {
       });
     });
 
-    const notified = await notifyOwner(botId, claimed.userId, summary);
+    const notified = await notifyOwner(botId, ownerUserId, summary);
     return { state: "done", notified };
   } catch (err) {
     const message = err instanceof Error ? err.message : "unknown error";
@@ -121,7 +147,7 @@ export async function enrichMeeting(botId: string): Promise<EnrichResult> {
       );
       // Dead-letter: retries exhausted. Notify the owner so a meeting that
       // failed 5× doesn't just vanish from their radar.
-      await notifyMeetingFailed(botId, claimed.userId, `max attempts: ${message}`);
+      await notifyMeetingFailed(botId, ownerUserId, `max attempts: ${message}`);
       return { state: "failed", error: message };
     }
     await withSystemScope(() => requeueMeetingRecord(botId, message));

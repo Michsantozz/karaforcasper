@@ -43,7 +43,10 @@ vi.mock("@/server/recall/availability", () => ({
 }));
 vi.mock("@/server/recall/bot-repository", () => ({
   saveBotMapping: (...a: unknown[]) => saveBotMapping(...a),
-  defaultDedupKey: (url: string) => `adhoc-${url}`,
+  // Mirror the real signature (userId, meetingUrl, joinAt?) so the dedup key is
+  // namespaced per tenant — see the #3 assertion below.
+  defaultDedupKey: (userId: string, url: string, joinAt?: string) =>
+    `${userId}:${joinAt ?? "adhoc"}-${url}`,
 }));
 vi.mock("@/shared/db/rls", () => ({
   withUserScope: (_u: string, fn: () => unknown) => fn(),
@@ -141,6 +144,30 @@ describe("calendar tools — happy path scopes to the session user", () => {
 
     const postCall = recallFetch.mock.calls[1][0];
     expect(postCall.body.deduplication_key).toBe("u1:e");
+  });
+
+  it("create_event with sendBot persists a recall_bots dedup key namespaced by the session user (#3)", async () => {
+    // With sendBot, the tool ALSO writes a recall_bots mapping. Its local dedup
+    // key must be namespaced by the session user so two tenants scheduling the
+    // same meeting URL don't collide on one PK (that table has no RLS).
+    listCalendarsByUser.mockResolvedValue([
+      { recallCalendarId: "c", platform: "google_calendar", userId: "u1" },
+    ]);
+    getCalendarAccessToken.mockResolvedValue({ token: "tok" });
+    createGoogleEvent.mockResolvedValue({ id: "ev1", meetingUrl: "https://meet/x" });
+    recallFetch.mockResolvedValue({ id: "bot-1" }); // POST bot
+    const exec = await tool("createCalendarEventTool");
+
+    await exec({
+      summary: "x",
+      startIso: "2026-07-11T10:00:00-03:00",
+      endIso: "2026-07-11T11:00:00-03:00",
+      sendBot: true,
+    });
+
+    expect(saveBotMapping).toHaveBeenCalledWith(
+      expect.objectContaining({ dedupKey: expect.stringContaining("u1:") }),
+    );
   });
 
   it("create_event fails when the user has no Google calendar connected", async () => {

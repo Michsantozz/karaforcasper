@@ -32,6 +32,11 @@ vi.mock("@/server/recall/calendar-repository", () => ({
 vi.mock("@/server/recall/oauth-state", () => ({
   verifyOAuthState: (...a: unknown[]) => verifyOAuthState(...a),
 }));
+// RLS scope is a passthrough here — the isolation itself is exercised by the
+// repository/RLS tests; this route test only cares about the callback logic.
+vi.mock("@/shared/db/rls", () => ({
+  withUserScope: (_userId: string, fn: () => unknown) => fn(),
+}));
 
 const call = (qs: string) =>
   import("@/_app/api-routes/calendar-google-callback").then(({ GET }) =>
@@ -89,11 +94,36 @@ describe("calendar OAuth callback — linking uses the VERIFIED userId", () => {
     expect(reconnectCalendar).not.toHaveBeenCalled();
   });
 
-  it("reconnects (dedup) an existing calendar instead of duplicating", async () => {
-    findCalendarByEmail.mockResolvedValue({ recallCalendarId: "existing" });
+  it("reconnects (dedup) the caller's OWN existing calendar instead of duplicating", async () => {
+    verifyOAuthState.mockReturnValue("u1");
+    findCalendarByEmail.mockResolvedValue({
+      recallCalendarId: "existing",
+      userId: "u1", // owned by the same user → safe to reconnect (token refresh)
+    });
     await call("?code=abc&state=signed");
     expect(reconnectCalendar).toHaveBeenCalledWith("existing", expect.any(Object));
     expect(createCalendar).not.toHaveBeenCalled();
+  });
+
+  it("does NOT reconnect a calendar owned by ANOTHER user (no cross-tenant hijack)", async () => {
+    // Two distinct app users authorize the same Google account (shared mailbox,
+    // account switch, duplicate signup). The row on that email belongs to the
+    // VICTIM; reconnecting it would PATCH the victim's Recall calendar with this
+    // caller's refresh token and reassign the row. The callback must create a
+    // fresh calendar for the caller instead.
+    verifyOAuthState.mockReturnValue("attacker");
+    findCalendarByEmail.mockResolvedValue({
+      recallCalendarId: "victim-cal",
+      userId: "victim",
+    });
+    await call("?code=abc&state=signed");
+    expect(reconnectCalendar).not.toHaveBeenCalled();
+    expect(createCalendar).toHaveBeenCalledOnce();
+    // The mapping is saved under the ATTACKER's id and the NEW calendar id —
+    // never touching the victim's row.
+    expect(saveCalendarMapping).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: "attacker", recallCalendarId: "cal-1" }),
+    );
   });
 
   it("502 when the token exchange fails", async () => {

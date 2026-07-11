@@ -14,6 +14,7 @@ import {
   saveCalendarMapping,
 } from "@/server/recall/calendar-repository";
 import { verifyOAuthState } from "@/server/recall/oauth-state";
+import { withUserScope } from "@/shared/db/rls";
 
 const PLATFORM = "google_calendar" as const;
 
@@ -73,20 +74,37 @@ export async function GET(req: Request) {
       oauthEmail: email,
     };
 
-    // 2. Dedup by (platform, email): reconnect if one already exists (token
-    // refresh), otherwise create a new one. Recall doesn't dedup calendars on creation.
-    const existing = await findCalendarByEmail(PLATFORM, email);
-    const calendar = existing
-      ? await reconnectCalendar(existing.recallCalendarId, oauth)
-      : await createCalendar({ platform: PLATFORM, webhookUrl, ...oauth });
+    // 2. Dedup by (platform, email): reconnect if THIS user already has one
+    // (token refresh), otherwise create a new one. Recall doesn't dedup calendars
+    // on creation.
+    //
+    // The lookup + write run under withUserScope so the RLS policies filter to
+    // the caller (the DB-level tenant boundary; see drizzle/0008). We ALSO check
+    // ownership explicitly below: `findCalendarByEmail` matches on (platform,
+    // email) only — two distinct app users can authorize the SAME Google account
+    // (shared/service mailbox, account switch, duplicate signup). Reconnecting a
+    // row that belongs to ANOTHER user would PATCH the victim's Recall calendar
+    // with this caller's refresh token and reassign the row on save — a silent
+    // cross-tenant calendar hijack. So we only reconnect a row we actually own;
+    // a foreign match is treated as a brand-new calendar for this user.
+    await withUserScope(userId, async () => {
+      const existing = await findCalendarByEmail(PLATFORM, email);
+      const ownedExisting =
+        existing && existing.userId === userId ? existing : null;
 
-    // 3. Persists the mapping
-    await saveCalendarMapping({
-      recallCalendarId: calendar.id,
-      userId,
-      platform: PLATFORM,
-      platformEmail: calendar.platform_email ?? email,
-      status: calendar.status,
+      const cal = ownedExisting
+        ? await reconnectCalendar(ownedExisting.recallCalendarId, oauth)
+        : await createCalendar({ platform: PLATFORM, webhookUrl, ...oauth });
+
+      // 3. Persists the mapping (INSERT/UPDATE by recallCalendarId PK). Under the
+      // user scope so the WITH CHECK policy accepts it (row belongs to userId).
+      await saveCalendarMapping({
+        recallCalendarId: cal.id,
+        userId,
+        platform: PLATFORM,
+        platformEmail: cal.platform_email ?? email,
+        status: cal.status,
+      });
     });
 
     // Redirects back to the meetings agent UI, signaling the connection.

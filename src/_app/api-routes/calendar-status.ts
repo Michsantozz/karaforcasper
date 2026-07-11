@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { listCalendarsByUser } from "@/server/recall/calendar-repository";
 import { getSession } from "@/features/auth/model/session";
+import { withUserScope } from "@/shared/db/rls";
 
 /**
  * Status of the authenticated user's connected calendars.
@@ -13,7 +14,11 @@ export async function GET() {
     return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
   }
 
-  const calendars = await listCalendarsByUser(session.user.id);
+  // Under withUserScope so the RLS policy filters user_calendars to the caller
+  // (the DB-level tenant boundary; see drizzle/0008).
+  const calendars = await withUserScope(session.user.id, () =>
+    listCalendarsByUser(session.user.id),
+  );
   return NextResponse.json({
     connected: calendars.length > 0,
     count: calendars.length,

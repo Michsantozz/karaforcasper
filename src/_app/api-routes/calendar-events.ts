@@ -6,6 +6,7 @@ import {
 } from "@/server/recall/calendar-repository";
 import { getSession } from "@/features/auth/model/session";
 import { serverError } from "@/shared/lib/api-error";
+import { withUserScope } from "@/shared/db/rls";
 
 /**
  * Lists events from the authenticated user's connected calendars.
@@ -28,16 +29,19 @@ export async function GET(req: Request) {
 
   try {
     // Resolve which calendars to query — always scoped to the session user.
-    let calendarIds: string[];
-    if (calendarId) {
-      const mapping = await findCalendarById(calendarId);
-      if (!mapping || mapping.userId !== userId) {
-        return NextResponse.json({ error: "unknown calendar" }, { status: 404 });
+    // The DB lookups run under withUserScope (RLS filters user_calendars to the
+    // caller); the explicit `!== userId` check is the app-level backstop.
+    const calendarIds = await withUserScope(userId, async () => {
+      if (calendarId) {
+        const mapping = await findCalendarById(calendarId);
+        if (!mapping || mapping.userId !== userId) return null;
+        return [calendarId];
       }
-      calendarIds = [calendarId];
-    } else {
       const mappings = await listCalendarsByUser(userId);
-      calendarIds = mappings.map((m) => m.recallCalendarId);
+      return mappings.map((m) => m.recallCalendarId);
+    });
+    if (calendarIds === null) {
+      return NextResponse.json({ error: "unknown calendar" }, { status: 404 });
     }
 
     // Lists events for each calendar (1st page). Paginate via `next` if needed.

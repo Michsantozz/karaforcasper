@@ -16,7 +16,7 @@ import {
 } from "@/server/recall/meeting-repository";
 import { computeTeamTrends } from "@/server/recall/dynamics-trends";
 import { pickRecording, wrapUntrustedTranscript } from "@/server/recall/recordings";
-import { assertBotOwner } from "@/server/recall/ownership";
+import { assertBotOwner, isBotOwner } from "@/server/recall/ownership";
 import { withUserScope } from "@/shared/db/rls";
 import { getSession } from "@/features/auth/model/session";
 
@@ -182,8 +182,20 @@ export const scheduleRecallBotTool = createTool({
     dedupKey: z.string(),
   }),
   execute: async (input) => {
+    // Meeting owner = session user (never comes from chat). Resolved BEFORE the
+    // dedup key so the key is namespaced per tenant — two users scheduling the
+    // same meeting must not collide on one bot. Persisted in the bot's metadata
+    // so the webhook/enrich know who to notify.
+    const session = await getSession();
+    const userId = session?.user?.id ?? null;
+    if (!userId) {
+      // No owner → the bot would be an orphan (hidden by RLS, no one to notify).
+      // Refuse instead of scheduling a bot no one can ever see.
+      throw new Error("Cannot schedule a bot without an authenticated user.");
+    }
+
     const dedupKey =
-      input.dedupKey ?? defaultDedupKey(input.meetingUrl, input.joinAt);
+      input.dedupKey ?? defaultDedupKey(userId, input.meetingUrl, input.joinAt);
 
     const existing = await findBotByDedupKey(dedupKey);
     if (existing) {
@@ -195,11 +207,6 @@ export const scheduleRecallBotTool = createTool({
         dedupKey,
       };
     }
-
-    // Meeting owner = session user (never comes from chat). Persisted in the
-    // bot's metadata so the webhook/enrich know who to notify.
-    const session = await getSession();
-    const userId = session?.user?.id ?? null;
 
     let bot: RecallBot;
     try {
@@ -222,7 +229,7 @@ export const scheduleRecallBotTool = createTool({
           },
           metadata: {
             dedup_key: dedupKey,
-            ...(userId ? { user_id: userId } : {}),
+            user_id: userId,
           },
         },
       });
@@ -240,7 +247,7 @@ export const scheduleRecallBotTool = createTool({
       botId: bot.id,
       meetingUrl: input.meetingUrl,
       joinAt: input.joinAt ? new Date(input.joinAt) : null,
-      metadata: userId ? { user_id: userId } : undefined,
+      metadata: { user_id: userId },
     });
 
     return {
@@ -777,18 +784,35 @@ export const listScheduledRecallBotsTool = createTool({
     ),
   }),
   execute: async (input) => {
+    // The Recall API key is workspace-wide: `v1/bot/` returns EVERY tenant's
+    // bots. Without filtering, any authenticated user could enumerate other
+    // users' scheduled meetings. Resolve the caller and keep only bots they own.
+    const userId = (await getSession())?.user?.id;
+    if (!userId) {
+      throw new Error("Not authenticated — cannot list scheduled bots.");
+    }
+
     const joinAtAfter = input.joinAtAfter ?? new Date().toISOString();
     const res = await recallFetch<{ count?: number; results?: RecallBot[] }>({
       method: "GET",
       path: "v1/bot/",
       query: { join_at_after: joinAtAfter },
     });
-    const bots = (res.results ?? []).map((b) => ({
+
+    const owned = (
+      await Promise.all(
+        (res.results ?? []).map(async (b) =>
+          (await isBotOwner(b.id, userId)) ? b : null,
+        ),
+      )
+    ).filter((b): b is RecallBot => b !== null);
+
+    const bots = owned.map((b) => ({
       botId: b.id,
       status: latestStatus(b),
       joinAt: b.join_at ?? null,
     }));
-    return { count: res.count ?? bots.length, bots };
+    return { count: bots.length, bots };
   },
 });
 

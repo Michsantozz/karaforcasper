@@ -508,16 +508,22 @@ export async function listStuckMeetingRecords(
     .from(meetingRecords)
     .where(
       or(
+        // pending/processing/failed rows that are stale AND still have retry
+        // budget. The `attempts < maxAttempts` ceiling applies to ALL three:
+        // without it on pending/processing, a meeting whose transcript never
+        // becomes ready (or a worker that keeps dying) loops forever, bumping
+        // attempts unbounded and never reaching a terminal `failed`. The
+        // enrich worker turns a claim past the ceiling into a terminal failure.
         and(
           eq(meetingRecords.status, "pending"),
+          lt(meetingRecords.attempts, maxAttempts),
           lt(meetingRecords.updatedAt, threshold),
         ),
         and(
           eq(meetingRecords.status, "processing"),
+          lt(meetingRecords.attempts, maxAttempts),
           lt(meetingRecords.updatedAt, threshold),
         ),
-        // Retry failed rows that haven't exhausted their attempt budget. Also
-        // gated on staleMs so we don't re-hit one that just failed this instant.
         and(
           eq(meetingRecords.status, "failed"),
           lt(meetingRecords.attempts, maxAttempts),

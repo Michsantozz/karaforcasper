@@ -293,7 +293,7 @@ export const createCalendarEventTool = createTool({
       // Persists the bot with its owner (user_id) so the bot webhook knows who
       // to notify when the minutes are ready (transcript.done). Idempotent.
       await saveBotMapping({
-        dedupKey: defaultDedupKey(event.meetingUrl),
+        dedupKey: defaultDedupKey(userId, event.meetingUrl),
         botId: bot.id,
         meetingUrl: event.meetingUrl,
         metadata: { event_id: event.id, user_id: userId },

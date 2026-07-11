@@ -127,6 +127,49 @@ describe("enrichMeeting — máquina de estados", () => {
     expect(completeMeetingRecord).not.toHaveBeenCalled();
   });
 
+  it("still-processing NO limite de tentativas → fail terminal (não loop infinito)", async () => {
+    // #4: um transcript que nunca fica pronto não pode retentar pra sempre.
+    // claimMeetingRecord já incrementou attempts; no limite, vira failed
+    // terminal e o dono é avisado — em vez de requeue→pending pra sempre.
+    findMeetingRecord.mockResolvedValue({ status: "pending" });
+    claimMeetingRecord.mockResolvedValue({ ...CLAIMED, attempts: 5 });
+    summarizeMeeting.mockResolvedValue({ state: "processing" });
+    const { enrichMeeting } = await importEnrich();
+
+    const res = await enrichMeeting("bot-1");
+
+    expect(res).toEqual({
+      state: "failed",
+      error: "transcript never became ready",
+    });
+    expect(failMeetingRecord).toHaveBeenCalledWith(
+      "bot-1",
+      "transcript never became ready (max attempts)",
+    );
+    // Não pode ter voltado pra pending.
+    expect(requeueMeetingRecord).not.toHaveBeenCalled();
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: "owner-1", type: "meeting_failed" }),
+    );
+  });
+
+  it("still-processing ABAIXO do limite → requeue (segue retentando)", async () => {
+    // #4: abaixo do teto, o comportamento antigo permanece — requeue.
+    findMeetingRecord.mockResolvedValue({ status: "pending" });
+    claimMeetingRecord.mockResolvedValue({ ...CLAIMED, attempts: 4 });
+    summarizeMeeting.mockResolvedValue({ state: "processing" });
+    const { enrichMeeting } = await importEnrich();
+
+    const res = await enrichMeeting("bot-1");
+
+    expect(res).toEqual({ state: "processing" });
+    expect(requeueMeetingRecord).toHaveBeenCalledWith(
+      "bot-1",
+      "transcript still processing",
+    );
+    expect(failMeetingRecord).not.toHaveBeenCalled();
+  });
+
   it("fail quando o transcript vem vazio/indisponível", async () => {
     findMeetingRecord.mockResolvedValue({ status: "pending" });
     claimMeetingRecord.mockResolvedValue(CLAIMED);
@@ -301,6 +344,33 @@ describe("reconcileStuckMeetings — sweep", () => {
     expect(completeMeetingRecord).toHaveBeenCalledWith(
       "bot-failed",
       expect.objectContaining({ summary: "recovered" }),
+    );
+  });
+});
+
+describe("enrichMeeting — backfill de dono em linha órfã (#6)", () => {
+  it("claim sem userId mas o bot mapping tem dono → grava o dono no done", async () => {
+    // A linha foi enfileirada órfã (webhook sem metadata.user_id). Ao concluir,
+    // o dono é resolvido pelo bot mapping e PERSISTIDO — senão a ata ficaria
+    // invisível por RLS pra sempre, apesar de já ter custado o LLM.
+    findMeetingRecord.mockResolvedValue({ status: "pending" });
+    claimMeetingRecord.mockResolvedValue({ ...CLAIMED, userId: null });
+    findBotByBotId.mockResolvedValue({ metadata: { user_id: "resolved-owner" } });
+    botOwnerUserId.mockReturnValue("resolved-owner");
+    summarizeMeeting.mockResolvedValue({ state: "ready", summary: "ok" });
+    const { enrichMeeting } = await importEnrich();
+
+    const res = await enrichMeeting("bot-orphan");
+
+    expect(res).toEqual({ state: "done", notified: true });
+    // O done grava o dono RESOLVIDO, não o null do claim.
+    expect(completeMeetingRecord).toHaveBeenCalledWith(
+      "bot-orphan",
+      expect.objectContaining({ userId: "resolved-owner" }),
+    );
+    // E o dono resolvido é notificado.
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: "resolved-owner" }),
     );
   });
 });

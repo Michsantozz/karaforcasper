@@ -6,6 +6,7 @@ import {
   listCalendarsByUser,
 } from "@/server/recall/calendar-repository";
 import { getSession } from "@/features/auth/model/session";
+import { withUserScope } from "@/shared/db/rls";
 
 /**
  * Disconnects the authenticated user's calendar(s).
@@ -24,17 +25,20 @@ export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}) as { calendarId?: string });
   const calendarId = (body as { calendarId?: string }).calendarId;
 
-  // Resolve which calendars to disconnect — always scoped to the user.
-  let targets: string[];
-  if (calendarId) {
-    const mapping = await findCalendarById(calendarId);
-    if (!mapping || mapping.userId !== userId) {
-      return NextResponse.json({ error: "unknown calendar" }, { status: 404 });
+  // Resolve which calendars to disconnect — always scoped to the user. The DB
+  // lookups run under withUserScope (RLS filters user_calendars to the caller);
+  // the explicit `!== userId` check is the app-level backstop.
+  const targets = await withUserScope(userId, async () => {
+    if (calendarId) {
+      const mapping = await findCalendarById(calendarId);
+      if (!mapping || mapping.userId !== userId) return null;
+      return [calendarId];
     }
-    targets = [calendarId];
-  } else {
     const mappings = await listCalendarsByUser(userId);
-    targets = mappings.map((m) => m.recallCalendarId);
+    return mappings.map((m) => m.recallCalendarId);
+  });
+  if (targets === null) {
+    return NextResponse.json({ error: "unknown calendar" }, { status: 404 });
   }
 
   let removed = 0;
@@ -44,7 +48,8 @@ export async function POST(req: Request) {
     } catch {
       // Even if Recall already removed it, we clean up the local mapping.
     }
-    await deleteCalendarMapping(id);
+    // Under the user scope so the RLS policy authorizes the delete (owned row).
+    await withUserScope(userId, () => deleteCalendarMapping(id));
     removed += 1;
   }
 
