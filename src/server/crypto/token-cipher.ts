@@ -71,6 +71,27 @@ function isEnvelope(value: string): boolean {
 }
 
 /**
+ * Boot guard: token encryption is a no-op passthrough when no primary key is
+ * configured (dev convenience). In production that silently persists Google
+ * OAuth access/refresh tokens in PLAINTEXT with no operator-visible signal — a
+ * DB dump/backup leak then exposes every connected user's calendar credentials.
+ *
+ * So: fail-fast in production if the key is missing; warn (never block) in dev
+ * and test, mirroring assertRlsHardening's best-effort posture. Call once on
+ * server boot.
+ */
+export function assertTokenEncryptionKey(): void {
+  if (primary) return;
+  const msg =
+    "[crypto] ACCOUNT_TOKEN_ENCRYPTION_KEY is not set — OAuth tokens are stored " +
+    "in PLAINTEXT. Set a 32-byte base64 key (openssl rand -base64 32).";
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(msg);
+  }
+  console.warn(msg);
+}
+
+/**
  * Encrypts a token into the versioned envelope. No-op (returns input) when no
  * primary key is configured, or when the value is already an envelope
  * (idempotent — better-auth may run the update hook on an already-stored value).

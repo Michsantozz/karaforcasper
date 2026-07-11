@@ -22,6 +22,13 @@ export async function register() {
   const { validateEnv } = await import("@/shared/lib/env-schema");
   validateEnv();
 
+  // Fail-fast in production if OAuth-token encryption has no key (would store
+  // Google tokens in plaintext). Warns-only in dev/test. Throws → crashes boot.
+  const { assertTokenEncryptionKey } = await import(
+    "@/server/crypto/token-cipher"
+  );
+  assertTokenEncryptionKey();
+
   // Defense-in-depth RLS check — warns (never blocks) if the DB connection can
   // bypass row-level security (owner/BYPASSRLS role). Best-effort, non-fatal.
   const { assertRlsHardening } = await import("@/shared/db/rls");

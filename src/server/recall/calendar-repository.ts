@@ -115,9 +115,9 @@ export async function setCalendarAutoRecord(
   await scopedDb()
     .update(userCalendars)
     .set({
-      metadata: sql`coalesce(${userCalendars.metadata}, '{}'::jsonb) || ${sql.raw(
-        `'{"auto_record": ${autoRecord ? "true" : "false"}}'::jsonb`,
-      )}`,
+      // jsonb_build_object binds `autoRecord` as a parameter — no sql.raw, so
+      // there's no string-interpolation sink to widen into an injection later.
+      metadata: sql`coalesce(${userCalendars.metadata}, '{}'::jsonb) || jsonb_build_object('auto_record', ${autoRecord})`,
       updatedAt: new Date(),
     })
     .where(eq(userCalendars.recallCalendarId, recallCalendarId));

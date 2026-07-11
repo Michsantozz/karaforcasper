@@ -18,7 +18,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: casper
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-casper}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: casperagent
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -35,7 +35,7 @@ services:
       target: builder
     env_file: .env
     environment:
-      DATABASE_URL: postgres://casper:${POSTGRES_PASSWORD:-casper}@db:5432/casperagent
+      DATABASE_URL: postgres://casper:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/casperagent
     command: ["pnpm", "db:migrate"]
     depends_on:
       db:
@@ -49,8 +49,8 @@ services:
     restart: unless-stopped
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
     # Host ports offset to 92xx: 9000/9001 are commonly taken by another local
     # MinIO. Container stays on 9000/9001 internally (compose network + init use
     # those); only the host mapping is shifted.
@@ -73,8 +73,8 @@ services:
       minio:
         condition: service_healthy
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
       S3_BUCKET: ${S3_BUCKET:-casper-uploads}
     entrypoint: >
       /bin/sh -c "
@@ -119,7 +119,7 @@ services:
       # owner. For defense-in-depth the app SHOULD connect as the non-owner
       # `app_user` role (see drizzle/0008 + docs/rls.md); until that role is
       # provisioned with LOGIN in prod, `casper` is used and a boot guard warns.
-      DATABASE_URL: postgres://casper:${POSTGRES_PASSWORD:-casper}@db:5432/casperagent
+      DATABASE_URL: postgres://casper:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/casperagent
       # LLM guardrails (prompt-injection block + PII redact) on the chat agent.
       # Off by default (LLM cost/latency); turn on for untrusted-input prod.
       ENABLE_LLM_GUARDRAILS: ${ENABLE_LLM_GUARDRAILS:-false}
@@ -135,8 +135,8 @@ services:
       S3_ENDPOINT: http://minio:9000
       S3_REGION: ${S3_REGION:-us-east-1}
       S3_BUCKET: ${S3_BUCKET:-casper-uploads}
-      S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
-      S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env}
+      S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
       S3_PUBLIC_URL: ${S3_PUBLIC_URL:-http://localhost:9200/casper-uploads}
       S3_FORCE_PATH_STYLE: "true"
     ports:

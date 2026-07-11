@@ -1,6 +1,7 @@
 import "server-only";
 import { recallFetch } from "@/server/recall/client";
 import { findMeetingRecord } from "@/server/recall/meeting-repository";
+import { pickRecording } from "@/server/recall/recordings";
 import {
   computeMeetingDynamics,
   type MeetingDynamics,
@@ -120,7 +121,10 @@ export async function getMeetingDetail(botId: string): Promise<MeetingDetail> {
     path: `v1/bot/${botId}/`,
   }).catch(() => null);
 
-  const shortcuts = bot?.recordings?.[0]?.media_shortcuts;
+  // A bot's `recordings` is an array — a re-join/resume can produce more than
+  // one. pickRecording prefers the transcript-`done` one; reading `[0]` blindly
+  // silently ignored every recording but the first (see recordings.ts).
+  const shortcuts = pickRecording(bot?.recordings, botId)?.media_shortcuts;
 
   // Video: durable URL if we have one, else Recall's signed URL (expires).
   const video = shortcuts?.video_mixed;
@@ -131,7 +135,15 @@ export async function getMeetingDetail(botId: string): Promise<MeetingDetail> {
   // Structured transcript with timestamps.
   const transcriptArtifact = shortcuts?.transcript;
   let transcript: TranscriptUtteranceView[] = [];
-  let transcriptState: "ready" | "processing" | "none" = "none";
+  // When there's no Recall artifact yet (the common case right after
+  // `transcript.done` enqueues the row but before recording metadata is
+  // populated), fall back to the DB row's status so the client keeps polling.
+  // Leaving this "none" made `useMeetingDetail`'s refetchInterval stop forever,
+  // stranding the notebook on "no transcript" until a manual reload.
+  let transcriptState: "ready" | "processing" | "none" =
+    record?.status === "pending" || record?.status === "processing"
+      ? "processing"
+      : "none";
 
   if (transcriptArtifact) {
     const url = transcriptArtifact.data?.download_url;

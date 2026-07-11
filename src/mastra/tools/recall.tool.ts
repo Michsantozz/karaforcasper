@@ -15,6 +15,7 @@ import {
   listDynamicsForUser,
 } from "@/server/recall/meeting-repository";
 import { computeTeamTrends } from "@/server/recall/dynamics-trends";
+import { pickRecording, wrapUntrustedTranscript } from "@/server/recall/recordings";
 import { assertBotOwner } from "@/server/recall/ownership";
 import { withUserScope } from "@/shared/db/rls";
 import { getSession } from "@/features/auth/model/session";
@@ -114,7 +115,10 @@ async function loadTranscript(botId: string): Promise<{
     path: `v1/bot/${botId}/`,
   });
 
-  const transcript = bot.recordings?.[0]?.media_shortcuts?.transcript;
+  // A bot can have >1 recording (re-join/resume); pickRecording reads the
+  // transcript-`done` one instead of `[0]` blindly (see recordings.ts).
+  const transcript = pickRecording(bot.recordings, botId)?.media_shortcuts
+    ?.transcript;
   if (!transcript) return { bot, state: "none", segments: [] };
 
   const url = transcript.data?.download_url;
@@ -317,7 +321,9 @@ export const getRecallTranscriptTool = createTool({
       return {
         botId: input.botId,
         state: "ready" as const,
-        transcript: record.transcript,
+        // Transcript is attacker-reachable speech re-entering the privileged
+        // supervisor context — frame it as data, not instructions (SEC).
+        transcript: wrapUntrustedTranscript(record.transcript),
         speakers,
       };
     }
@@ -327,7 +333,12 @@ export const getRecallTranscriptTool = createTool({
       return { botId: bot.id, state, transcript: null };
     }
     const { text, speakers } = renderTranscript(segments);
-    return { botId: bot.id, state, transcript: text, speakers };
+    return {
+      botId: bot.id,
+      state,
+      transcript: wrapUntrustedTranscript(text),
+      speakers,
+    };
   },
 });
 

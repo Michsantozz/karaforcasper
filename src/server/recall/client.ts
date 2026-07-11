@@ -45,6 +45,17 @@ type RecallRequest = {
   body?: unknown;
 };
 
+// Bounded retry for transient failures. Only GETs are retried — they're
+// idempotent, so a retried POST/PATCH/DELETE (e.g. schedule_bot) could
+// double-act. 507 (ad-hoc pool depletion) is excluded: it has its own ~30s
+// user-facing "try again" semantics, not an instant retry.
+const MAX_RETRIES = 2; // total attempts = 3
+const BASE_DELAY_MS = 300;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
 /** Executes an authenticated request against the Recall.ai REST API. */
 export async function recallFetch<T = unknown>(req: RecallRequest): Promise<T> {
   const apiKey = requireEnv("RECALL_API_KEY");
@@ -59,30 +70,49 @@ export async function recallFetch<T = unknown>(req: RecallRequest): Promise<T> {
     }
   }
 
-  const res = await fetch(url, {
-    method: req.method,
-    headers: {
-      Authorization: `Token ${apiKey}`,
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-    body: req.body === undefined ? undefined : JSON.stringify(req.body),
-  });
+  const canRetry = req.method === "GET";
 
-  // 204 / empty body (e.g. some DELETEs) — returns undefined.
-  const text = await res.text();
-  const parsed = text ? safeJson(text) : undefined;
+  for (let attempt = 0; ; attempt++) {
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: req.method,
+        headers: {
+          Authorization: `Token ${apiKey}`,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: req.body === undefined ? undefined : JSON.stringify(req.body),
+      });
+    } catch (err) {
+      // Network-level failure (no response). Retry idempotent reads, else rethrow.
+      if (canRetry && attempt < MAX_RETRIES) {
+        await sleep(BASE_DELAY_MS * 2 ** attempt + Math.floor(Math.random() * 100));
+        continue;
+      }
+      throw err;
+    }
 
-  if (!res.ok) {
-    if (res.status === 507) throw new RecallAdhocPoolError(parsed);
-    throw new RecallError(
-      `Recall API ${req.method} ${req.path} failed: ${res.status}`,
-      res.status,
-      parsed ?? text,
-    );
+    // 204 / empty body (e.g. some DELETEs) — returns undefined.
+    const text = await res.text();
+    const parsed = text ? safeJson(text) : undefined;
+
+    if (!res.ok) {
+      if (res.status === 507) throw new RecallAdhocPoolError(parsed);
+      // Retry transient 5xx on idempotent reads with jittered backoff.
+      if (canRetry && res.status >= 500 && attempt < MAX_RETRIES) {
+        await sleep(BASE_DELAY_MS * 2 ** attempt + Math.floor(Math.random() * 100));
+        continue;
+      }
+      throw new RecallError(
+        `Recall API ${req.method} ${req.path} failed: ${res.status}`,
+        res.status,
+        parsed ?? text,
+      );
+    }
+
+    return parsed as T;
   }
-
-  return parsed as T;
 }
 
 function safeJson(text: string): unknown {
