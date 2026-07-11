@@ -2,8 +2,11 @@
 /.next
 /out
 /build
+# Todas as variantes de env (.env, .env.local, .env.production, .env.staging…)
+# ficam fora do repo. Só .env.example (sem segredo) é versionado.
 .env
-.env.local
+.env.*
+!.env.example
 *.pem
 agent-secret.pem
 .DS_Store
@@ -14,6 +17,12 @@ next-env.d.ts
 /test-results
 /playwright-report
 /videos
+
+# Mídia local (gravações de reunião baixadas para teste) — pesada, nunca vai
+# pro repo. Use object storage (S3/MinIO) para mídia real.
+*.mp4
+*.mov
+*.webm
 
 # Docs de trabalho/scratch — NÃO vão pro repo. Mantemos versionados apenas os
 # READMEs (README.md, tests/README.md), o CLAUDE.md e as skills reais
