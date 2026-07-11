@@ -37,6 +37,10 @@ jobs:
       - run: pnpm lint
       - run: pnpm test:unit
       - run: pnpm test:component
+      # integration é hermético (mocka I/O: Recall/calendar/RLS; DB fake lazy) —
+      # roda sem services, mas sem esta linha o project ficava órfão no CI e uma
+      # regressão na lógica de disponibilidade passava batida.
+      - run: pnpm test:integration
 
       # Valida o build de produção (RSC/bundler/boundaries) — o typecheck sozinho
       # não pega erros de bundling. Cacheia .next/cache entre runs pra acelerar.

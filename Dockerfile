@@ -70,6 +70,13 @@ EXPOSE 3000
 # SIGTERM p/ shutdown gracioso: Next drena requests in-flight + callbacks after().
 STOPSIGNAL SIGTERM
 
+# Readiness na própria imagem (não só no compose): orquestradores que leem a
+# image direto — K8s liveness/readiness, Coolify, Swarm — enxergam este probe.
+# `?ready=1` pinga Postgres (SELECT 1) → 503 se DB down. node -e/fetch porque
+# slim não garante curl/wget. start-period cobre o boot + primeira migration.
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=5 \
+  CMD ["node", "-e", "fetch('http://localhost:3000/api/health?ready=1').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+
 # tini → node server.js (gerado pelo standalone). Sem `next start`.
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["node", "server.js"]
