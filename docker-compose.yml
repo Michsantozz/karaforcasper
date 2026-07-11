@@ -12,16 +12,39 @@
 
 name: casperagent
 
+# Log rotation compartilhado — sem isto os logs json-file crescem infinito e
+# enchem o disco do host (failure mode clássico de self-host). `max-file` só
+# tem efeito se `max-size` estiver setado (doc do driver json-file).
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   db:
     image: postgres:17-alpine
     restart: unless-stopped
+    logging: *default-logging
     environment:
       POSTGRES_USER: casper
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: casperagent
     volumes:
       - pgdata:/var/lib/postgresql/data
+    # Postgres é o gargalo do stack — folga maior. read_only NÃO (escreve no
+    # datadir + sockets em /var/run). cap_drop ALL também NÃO: o entrypoint
+    # oficial roda como root, faz chmod no datadir e su-exec pro user postgres —
+    # dropar todas as caps mata o boot ("chmod: Operation not permitted").
+    # Testado: só no-new-privileges é compatível (accepting connections).
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U casper -d casperagent"]
       interval: 5s
@@ -33,6 +56,7 @@ services:
     build:
       context: .
       target: builder
+    logging: *default-logging
     env_file: .env
     environment:
       DATABASE_URL: postgres://casper:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/casperagent
@@ -45,9 +69,20 @@ services:
   # MinIO: object storage S3-compatível (uploads de imagem/attachments do chat).
   # console em :9001, API S3 em :9000. Bucket criado pelo job `minio-init`.
   minio:
-    image: minio/minio:latest
+    # Tag pinada (não `latest`) — reprodutibilidade entre deploys. Atualize
+    # conscientemente. RELEASE.2025-04-08 é uma release estável recente.
+    image: minio/minio:RELEASE.2025-04-08T15-41-24Z
     restart: unless-stopped
+    logging: *default-logging
     command: ["server", "/data", "--console-address", ":9001"]
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
@@ -68,7 +103,8 @@ services:
   # Job one-shot: cria o bucket e o deixa com leitura pública (imagens servidas
   # por URL direta pro modelo de visão). Encerra após configurar.
   minio-init:
-    image: minio/mc:latest
+    image: minio/mc:RELEASE.2025-04-08T15-39-49Z
+    logging: *default-logging
     depends_on:
       minio:
         condition: service_healthy
@@ -87,9 +123,19 @@ services:
   # Servidor Inngest: registra o endpoint /api/inngest do app e executa o cron
   # do loop autônomo + workflows. Sem ele, o agente NÃO é autônomo.
   inngest:
-    image: inngest/inngest:latest
+    # Tag pinada (não `latest`). Atualize conscientemente ao subir versão.
+    image: inngest/inngest:v1.5.3
     restart: unless-stopped
+    logging: *default-logging
     command: ["inngest", "start"]
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     environment:
       INNGEST_DEV: "0"
       # `inngest start` (prod) authenticates apps with these. MUST match the keys
@@ -112,6 +158,20 @@ services:
         NEXT_SERVER_ACTIONS_ENCRYPTION_KEY: ${NEXT_SERVER_ACTIONS_ENCRYPTION_KEY}
         GIT_HASH: ${GIT_HASH:-}
     restart: unless-stopped
+    logging: *default-logging
+    # Next standalone + Mastra/LLM buffers. read_only NÃO — Next escreve em
+    # .next/cache em runtime. cap_drop ALL é seguro (server HTTP não precisa
+    # de cap privilegiada); non-root já vem do Dockerfile (USER node).
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     env_file: .env
     environment:
       # NOTE (RLS hardening): meeting_records + user_calendars use FORCE ROW LEVEL

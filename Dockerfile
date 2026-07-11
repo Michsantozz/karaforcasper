@@ -8,7 +8,7 @@
 FROM node:24-slim AS base
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
-# corepack respeita packageManager: "pnpm@11.0.9" do package.json (versão exata).
+# corepack respeita packageManager: "pnpm@11.11.0" do package.json (versão exata).
 RUN corepack enable
 
 # ---- deps ----------------------------------------------------------------
