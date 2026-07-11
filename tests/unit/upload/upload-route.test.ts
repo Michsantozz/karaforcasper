@@ -25,6 +25,13 @@ vi.mock("@/server/storage/s3", () => ({
   uploadObject: (...a: unknown[]) => uploadObject(...a),
 }));
 
+// Rate limiter is DB-backed (Postgres); stub the check so the route never
+// touches the DB. Keep the real 429 response (pure, no DB).
+vi.mock("@/shared/lib/rate-limit", async (orig) => ({
+  ...(await orig<typeof import("@/shared/lib/rate-limit")>()),
+  checkRateLimit: vi.fn(async () => ({ ok: true, count: 1, retryAfter: 0 })),
+}));
+
 function makeRequest(file: File | null): Request {
   const form = new FormData();
   if (file) form.append("file", file);

@@ -23,6 +23,12 @@ vi.mock("@/features/auth/model/session", () => ({
 vi.mock("@/server/recall/ownership", () => ({
   isBotOwner: (...a: unknown[]) => isBotOwner(...a),
 }));
+// Rate limiter is DB-backed (Postgres); stub the check so the route never
+// touches the DB. Keep the real 429 response (pure, no DB).
+vi.mock("@/shared/lib/rate-limit", async (orig) => ({
+  ...(await orig<typeof import("@/shared/lib/rate-limit")>()),
+  checkRateLimit: vi.fn(async () => ({ ok: true, count: 1, retryAfter: 0 })),
+}));
 vi.mock("@mastra/ai-sdk", () => ({
   handleChatStream: (...a: unknown[]) => handleChatStream(...a),
 }));
