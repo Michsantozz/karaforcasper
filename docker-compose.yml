@@ -117,6 +117,11 @@ services:
       DATABASE_URL: postgres://casper:${POSTGRES_PASSWORD:-casper}@db:5432/casperagent
       INNGEST_BASE_URL: http://inngest:8288
       INNGEST_DEV: "0"
+      # Same keys as the inngest service — the SDK signs event sends + step
+      # callbacks with these. Mismatch/absence in prod (INNGEST_DEV=0) breaks the
+      # app<->inngest handshake. Supplied via .env (see .env.example).
+      INNGEST_EVENT_KEY: ${INNGEST_EVENT_KEY:?set INNGEST_EVENT_KEY in .env}
+      INNGEST_SIGNING_KEY: ${INNGEST_SIGNING_KEY:?set INNGEST_SIGNING_KEY in .env}
       # Storage S3 (MinIO). Endpoint interno via rede do compose; a URL pública
       # (S3_PUBLIC_URL) é o que vai no image part servido ao browser/modelo.
       S3_ENDPOINT: http://minio:9000
