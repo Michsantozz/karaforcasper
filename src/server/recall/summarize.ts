@@ -1,7 +1,7 @@
 import "server-only";
 import { generateObject } from "ai";
 import { z } from "zod";
-import { createBedrockModel } from "@/mastra/model";
+import { createChatModel } from "@/mastra/model";
 import { recallFetch } from "@/server/recall/client";
 
 /**
@@ -238,7 +238,7 @@ export async function summarizeMeeting(
   const durationMinutes = computeDurationMinutes(segments);
 
   const { object } = await generateObject({
-    model: createBedrockModel(),
+    model: createChatModel(),
     schema: meetingNotesSchema,
     prompt:
       `You receive the transcript of a meeting in the format "Participant: speech".\n` +
