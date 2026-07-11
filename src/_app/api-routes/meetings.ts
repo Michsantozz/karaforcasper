@@ -61,6 +61,7 @@ export async function GET(req: Request) {
       meetingUrl: b.meetingUrl,
       summary: null,
       participantCount: 0,
+      durationSeconds: null,
       createdAt: b.joinAt.toISOString(),
       updatedAt: b.joinAt.toISOString(),
       joinAt: b.joinAt.toISOString(),

@@ -13,7 +13,6 @@ import {
   listCalendarsByUser,
 } from "@/server/recall/calendar-repository";
 import { saveBotMapping, defaultDedupKey } from "@/server/recall/bot-repository";
-import { setCalendarAutoRecord } from "@/server/recall/calendar-repository";
 import { getSession } from "@/features/auth/model/session";
 import { withUserScope } from "@/shared/db/rls";
 
@@ -362,50 +361,3 @@ export const getFreeSlotsTool = createTool({
   },
 });
 
-/**
- * Turns AUTOMATIC recording on/off for a calendar (opt-in). When on, the app
- * schedules bots on its own for upcoming events with a meeting link — via a
- * sync webhook and a sweep cron. This is explicit user consent: without it
- * the app never records meetings automatically.
- */
-export const setCalendarAutoRecordTool = createTool({
-  id: "set_calendar_auto_record",
-  description:
-    "Turns automatic recording on or off for a user's connected calendar. " +
-    "When on, the app sends bots on its own to upcoming events with a meeting link. " +
-    "Use it when the user asks to 'record all meetings' on a calendar, or to stop.",
-  inputSchema: z.object({
-    calendarId: z
-      .string()
-      .optional()
-      .describe("Calendar to configure. Omit to apply to all of the user's calendars."),
-    enabled: z.boolean().describe("true = turns on automatic recording; false = turns it off."),
-  }),
-  outputSchema: z.object({
-    ok: z.boolean(),
-    enabled: z.boolean(),
-    calendars: z.number(),
-  }),
-  execute: async (input) => {
-    const userId = await sessionUserId();
-
-    let calendarIds: string[];
-    if (input.calendarId) {
-      await assertOwnedCalendar(input.calendarId, userId);
-      calendarIds = [input.calendarId];
-    } else {
-      const mappings = await withUserScope(userId, () =>
-        listCalendarsByUser(userId),
-      );
-      calendarIds = mappings.map((m) => m.recallCalendarId);
-    }
-
-    await withUserScope(userId, async () => {
-      for (const cid of calendarIds) {
-        await setCalendarAutoRecord(cid, input.enabled);
-      }
-    });
-
-    return { ok: true, enabled: input.enabled, calendars: calendarIds.length };
-  },
-});

@@ -44,6 +44,8 @@ export async function GET(
     videoUrl: detail.videoUrl,
     transcript: detail.transcript,
     transcriptState: detail.transcriptState,
+    durationSeconds: detail.durationSeconds,
+    shareToken: r.shareToken,
     createdAt: r.createdAt,
   });
 }

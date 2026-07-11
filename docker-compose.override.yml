@@ -1,0 +1,13 @@
+# Override LOCAL (não versionado) — deploy via Cloudflare tunnel careglyph.
+#
+# A porta 3000 do host está ocupada por outro app (evolution_frontend), então o
+# app do CasperAgent é publicado em 3009 — a mesma porta que o tunnel
+# careglyph-local.yml (casper.careglyph.com) já roteia. Assim o tunnel funciona
+# sem editar o ingress principal.
+#
+# MinIO continua em 9200/9201 (host) — o mesmo container já rodando.
+
+services:
+  app:
+    ports:
+      - "3009:3000"

@@ -11,6 +11,7 @@ import { summarizeMeeting } from "@/server/recall/summarize";
 import {
   listMeetingRecordsForUser,
   searchMeetingRecords,
+  findMeetingRecord,
 } from "@/server/recall/meeting-repository";
 import { assertBotOwner } from "@/server/recall/ownership";
 import { withUserScope } from "@/shared/db/rls";
@@ -22,12 +23,13 @@ import { getSession } from "@/features/auth/model/session";
  * participants/summary/state) MUST call this before touching Recall — RLS does
  * not cover these direct Recall reads. Fail-closed: no session → throws.
  */
-async function requireBotOwner(botId: string): Promise<void> {
+async function requireBotOwner(botId: string): Promise<string> {
   const userId = (await getSession())?.user?.id;
   if (!userId) {
     throw new Error("Not authenticated — cannot access meeting data.");
   }
   await assertBotOwner(botId, userId);
+  return userId;
 }
 
 /**
@@ -297,7 +299,27 @@ export const getRecallTranscriptTool = createTool({
     speakers: z.array(z.string()).optional(),
   }),
   execute: async (input) => {
-    await requireBotOwner(input.botId);
+    const userId = await requireBotOwner(input.botId);
+
+    // Local-first: our persisted minutes survive Recall's artifact expiry, so a
+    // transcript from an old meeting is still answerable long after Recall drops
+    // the raw recording. Only fall back to Recall when we haven't saved it yet
+    // (e.g. a meeting that just ended and hasn't been processed).
+    const record = await withUserScope(userId, () =>
+      findMeetingRecord(input.botId),
+    );
+    if (record?.transcript) {
+      const speakers = record.transcriptStruct
+        ? [...new Set(record.transcriptStruct.map((s) => s.speaker))]
+        : undefined;
+      return {
+        botId: input.botId,
+        state: "ready" as const,
+        transcript: record.transcript,
+        speakers,
+      };
+    }
+
     const { bot, state, segments } = await loadTranscript(input.botId);
     if (state !== "ready") {
       return { botId: bot.id, state, transcript: null };
@@ -423,7 +445,32 @@ export const getRecallParticipantsTool = createTool({
       .optional(),
   }),
   execute: async (input) => {
-    await requireBotOwner(input.botId);
+    const userId = await requireBotOwner(input.botId);
+
+    // Local-first: talkShares (name + speaking %) persist with the minutes, so
+    // an old meeting still lists who attended long after Recall expires the
+    // participant artifact. Speaking seconds are derived from the saved
+    // word-level transcript's span; if unavailable, we report the % share only.
+    const record = await withUserScope(userId, () =>
+      findMeetingRecord(input.botId),
+    );
+    if (record?.talkShares?.length) {
+      const struct = record.transcriptStruct ?? [];
+      let totalSeconds = 0;
+      for (const utt of struct) {
+        const last = utt.words[utt.words.length - 1]?.end;
+        if (last != null && last > totalSeconds) totalSeconds = last;
+      }
+      const participants = record.talkShares
+        .map((t) => ({
+          name: t.name,
+          isHost: null,
+          speakingSeconds: Math.round((t.share ?? 0) * totalSeconds),
+        }))
+        .sort((a, b) => b.speakingSeconds - a.speakingSeconds);
+      return { botId: input.botId, state: "ready" as const, participants };
+    }
+
     const bot = await recallFetch<RecallBot>({
       method: "GET",
       path: `v1/bot/${input.botId}/`,
@@ -743,140 +790,3 @@ export const stopRecallRecordingTool = createTool({
   },
 });
 
-/** Pauses the recording (resumable with resume). */
-export const pauseRecallRecordingTool = createTool({
-  id: "pause_recall_recording",
-  description:
-    "Pauses a Recall.ai bot's recording without ending it. Resume later with resume_recall_recording.",
-  inputSchema: z.object({ botId: z.string().describe("Bot UUID") }),
-  outputSchema: z.object({ ok: z.boolean() }),
-  execute: async (input) => {
-    await requireBotOwner(input.botId);
-    await recallFetch({
-      method: "POST",
-      path: `v1/bot/${input.botId}/pause_recording/`,
-    });
-    return { ok: true };
-  },
-});
-
-/** Resumes a paused recording. */
-export const resumeRecallRecordingTool = createTool({
-  id: "resume_recall_recording",
-  description: "Resumes a paused recording for a Recall.ai bot.",
-  inputSchema: z.object({ botId: z.string().describe("Bot UUID") }),
-  outputSchema: z.object({ ok: z.boolean() }),
-  execute: async (input) => {
-    await requireBotOwner(input.botId);
-    await recallFetch({
-      method: "POST",
-      path: `v1/bot/${input.botId}/resume_recording/`,
-    });
-    return { ok: true };
-  },
-});
-
-/** Makes the bot send a message in the meeting chat (Zoom/Meet/Teams). */
-export const sendRecallChatMessageTool = createTool({
-  id: "send_recall_chat_message",
-  description:
-    "Makes the Recall.ai bot send a message in the meeting chat. Supported on Zoom, Google Meet, and Microsoft Teams.",
-  inputSchema: z.object({
-    botId: z.string().describe("Bot UUID (must be in the call)"),
-    message: z.string().describe("Message text"),
-    to: z
-      .string()
-      .optional()
-      .describe('Recipient. On non-Zoom platforms only "everyone" is supported.'),
-  }),
-  outputSchema: z.object({ ok: z.boolean() }),
-  execute: async (input) => {
-    await requireBotOwner(input.botId);
-    await recallFetch({
-      method: "POST",
-      path: `v1/bot/${input.botId}/send_chat_message/`,
-      body: {
-        message: input.message,
-        ...(input.to ? { to: input.to } : {}),
-      },
-    });
-    return { ok: true };
-  },
-});
-
-/** Makes the bot start sharing its screen (output screenshare). */
-export const startRecallScreenshareTool = createTool({
-  id: "start_recall_screenshare",
-  description:
-    "Makes the Recall.ai bot start sharing its screen in the meeting. Use stop_recall_screenshare to stop.",
-  inputSchema: z.object({ botId: z.string().describe("Bot UUID in the call") }),
-  outputSchema: z.object({ ok: z.boolean() }),
-  execute: async (input) => {
-    await recallFetch({
-      method: "POST",
-      path: `v1/bot/${input.botId}/output_screenshare/`,
-    });
-    return { ok: true };
-  },
-});
-
-/** Stops the bot's screenshare. */
-export const stopRecallScreenshareTool = createTool({
-  id: "stop_recall_screenshare",
-  description: "Stops a Recall.ai bot's screenshare.",
-  inputSchema: z.object({ botId: z.string().describe("Bot UUID") }),
-  outputSchema: z.object({ ok: z.boolean() }),
-  execute: async (input) => {
-    await recallFetch({
-      method: "DELETE",
-      path: `v1/bot/${input.botId}/output_screenshare/`,
-    });
-    return { ok: true };
-  },
-});
-
-/**
- * Makes the bot play an audio clip in the call (output_audio).
- *
- * For short tones/alerts/notices — NOT for conversational speech. Requires
- * a bot created with `automatic_audio_output` enabled. `b64Data` is base64-encoded mp3.
- */
-export const outputRecallAudioTool = createTool({
-  id: "output_recall_audio",
-  description:
-    "Makes the Recall.ai bot play an mp3 audio clip (base64) in the meeting — short alerts/tones/notices. " +
-    "Requires a bot with automatic_audio_output enabled.",
-  inputSchema: z.object({
-    botId: z.string().describe("Bot UUID in the call"),
-    b64Data: z.string().describe("Mp3 audio encoded in base64 (standard alphabet)"),
-  }),
-  outputSchema: z.object({ ok: z.boolean() }),
-  execute: async (input) => {
-    await recallFetch({
-      method: "POST",
-      path: `v1/bot/${input.botId}/output_audio/`,
-      body: { kind: "mp3", b64_data: input.b64Data },
-    });
-    return { ok: true };
-  },
-});
-
-/** Makes the bot display an image (base64 jpeg) as video in the call. */
-export const outputRecallVideoTool = createTool({
-  id: "output_recall_video",
-  description:
-    "Makes the Recall.ai bot display a jpeg image (base64, 16:9) as video output in the meeting.",
-  inputSchema: z.object({
-    botId: z.string().describe("Bot UUID in the call"),
-    b64Data: z.string().describe("Jpeg image encoded in base64 (16:9)"),
-  }),
-  outputSchema: z.object({ ok: z.boolean() }),
-  execute: async (input) => {
-    await recallFetch({
-      method: "POST",
-      path: `v1/bot/${input.botId}/output_video/`,
-      body: { kind: "jpeg", b64_data: input.b64Data },
-    });
-    return { ok: true };
-  },
-});

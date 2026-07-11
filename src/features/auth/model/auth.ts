@@ -45,6 +45,12 @@ const trustedOrigins = [
 export const auth = betterAuth({
   database: drizzleAdapter(db, { provider: "pg" }),
   trustedOrigins,
+  // Signed cookie cache — avoids a DB read on every getSession() (RSC/routes/
+  // tools all call it). Short maxAge keeps revocation lag low; DB stays the
+  // source of truth once the cache expires.
+  session: {
+    cookieCache: { enabled: true, maxAge: 300 },
+  },
   emailAndPassword: {
     enabled: true,
     requireEmailVerification,

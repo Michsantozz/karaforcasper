@@ -16,7 +16,7 @@
  * player.
  */
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   FileTextIcon,
   SparklesIcon,
@@ -24,6 +24,11 @@ import {
   HashIcon,
   UsersIcon,
   ClockIcon,
+  CalendarIcon,
+  Share2Icon,
+  LinkIcon,
+  CopyIcon,
+  Loader2Icon,
   CheckIcon,
   ZapIcon,
   MessageCircleQuestionIcon,
@@ -43,6 +48,7 @@ import {
   type MeetingSoundbite,
 } from "@/features/meetings/model/queries";
 import { useClip, type ClipState } from "@/features/meetings/model/useClip";
+import { setMeetingShare } from "@/features/meetings/api/actions";
 
 /* ── helpers ──────────────────────────────────────────────────────── */
 
@@ -63,6 +69,17 @@ function fmt(s: number): string {
   const m = Math.floor(s / 60);
   const sec = Math.floor(s % 60);
   return `${m}:${sec.toString().padStart(2, "0")}`;
+}
+
+/** "12m" / "1h 05m" compact duration for the header. Null-safe. */
+function fmtDurationLabel(seconds: number | null): string | null {
+  if (!seconds || seconds <= 0) return null;
+  const total = Math.round(seconds);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m`;
+  if (m > 0) return `${m}m`;
+  return `${total}s`;
 }
 
 /** kebab-case a label for a download filename. */
@@ -171,10 +188,14 @@ export function MeetingDetail({ botId }: { botId: string }) {
           </div>
         </div>
         <div className="flex items-center gap-4 font-mono text-[11px] text-muted-foreground">
-          <Meta icon={ClockIcon} v={new Date(data.createdAt).toLocaleDateString()} />
+          <Meta icon={CalendarIcon} v={new Date(data.createdAt).toLocaleDateString()} />
+          {fmtDurationLabel(data.durationSeconds) && (
+            <Meta icon={ClockIcon} v={fmtDurationLabel(data.durationSeconds)!} />
+          )}
           {speakers.length > 0 && (
             <Meta icon={UsersIcon} v={`${speakers.length} speakers`} />
           )}
+          <ShareControl botId={botId} initialToken={data.shareToken} />
         </div>
       </header>
 
@@ -235,6 +256,169 @@ function Shell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex h-full w-full flex-col gap-3 overflow-hidden bg-(--thread-frame-outer) p-4 font-sans text-foreground">
       {children}
+    </div>
+  );
+}
+
+/* ── share control (public link) ──────────────────────────────────── */
+
+/**
+ * Owner-only Share control in the notebook header. Toggles a public read-only
+ * link (/share/[token]) via the setMeetingShare Server Action, and lets the
+ * owner copy or revoke it. Optimistic-free: waits for the action to resolve so
+ * the shown token is always the real one.
+ */
+function ShareControl({
+  botId,
+  initialToken,
+}: {
+  botId: string;
+  initialToken: string | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const [token, setToken] = useState(initialToken);
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  // Keep the local token in sync if the detail refetches (e.g. after polling)
+  // WITHOUT an effect: adjust state during render when the incoming prop changed
+  // (React's "derive during render" pattern). Our own toggle still wins until
+  // the next server value arrives.
+  const [prevInitial, setPrevInitial] = useState(initialToken);
+  if (initialToken !== prevInitial) {
+    setPrevInitial(initialToken);
+    setToken(initialToken);
+  }
+
+  // Close the popover on outside click.
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e: MouseEvent) {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  const shareUrl = token
+    ? `${typeof window !== "undefined" ? window.location.origin : ""}/share/${token}`
+    : null;
+
+  async function toggle(enabled: boolean) {
+    setBusy(true);
+    setError(null);
+    const res = await setMeetingShare(botId, enabled);
+    setBusy(false);
+    if (!res.ok) {
+      setError(res.error);
+      return;
+    }
+    setToken(res.shareToken);
+  }
+
+  async function copy() {
+    if (!shareUrl) return;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setError("could not copy");
+    }
+  }
+
+  const shared = Boolean(token);
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-label="Share meeting"
+        aria-expanded={open}
+        className={cn(
+          "flex items-center gap-1.5 rounded-[5px] border bg-background px-2 py-1 font-mono text-[10px] uppercase tracking-wider transition-colors hover:bg-muted/60",
+          shared
+            ? "border-(--thread-accent-primary)/40 text-(--thread-accent-primary)"
+            : "text-muted-foreground hover:text-foreground",
+        )}
+      >
+        <Share2Icon className="size-3.5" />
+        {shared ? "shared" : "share"}
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-[calc(100%+6px)] z-20 w-72 rounded-[8px] border bg-background p-3 shadow-lg">
+          <div className="flex items-center justify-between">
+            <span className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+              <LinkIcon className="size-3.5" />
+              public link
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={shared}
+              disabled={busy}
+              onClick={() => toggle(!shared)}
+              className={cn(
+                "relative h-4 w-7 rounded-full transition-colors disabled:opacity-50",
+                shared ? "bg-(--thread-accent-primary)" : "bg-muted",
+              )}
+            >
+              <span
+                className={cn(
+                  "absolute top-0.5 size-3 rounded-full bg-background transition-transform",
+                  shared ? "translate-x-3.5" : "translate-x-0.5",
+                )}
+              />
+            </button>
+          </div>
+
+          <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
+            {shared
+              ? "Anyone with this link can view the minutes, transcript and recording — read-only."
+              : "Create a read-only link anyone can open, no sign-in required."}
+          </p>
+
+          {busy && (
+            <div className="mt-2 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+              <Loader2Icon className="size-3.5 animate-spin" />
+              updating…
+            </div>
+          )}
+
+          {shared && shareUrl && !busy && (
+            <div className="mt-2 flex items-center gap-1.5 rounded-[5px] border bg-muted/40 px-2 py-1">
+              <input
+                readOnly
+                value={shareUrl}
+                onFocus={(e) => e.currentTarget.select()}
+                className="min-w-0 flex-1 bg-transparent font-mono text-[10px] outline-none"
+              />
+              <button
+                type="button"
+                onClick={copy}
+                aria-label="Copy link"
+                className="shrink-0 text-muted-foreground hover:text-foreground"
+              >
+                {copied ? (
+                  <CheckIcon className="size-3.5 text-(--thread-accent-primary)" />
+                ) : (
+                  <CopyIcon className="size-3.5" />
+                )}
+              </button>
+            </div>
+          )}
+
+          {error && (
+            <p className="mt-2 font-mono text-[10px] text-(--thread-accent-secondary)">
+              {error}
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }

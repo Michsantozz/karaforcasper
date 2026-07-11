@@ -51,6 +51,8 @@ import {
   RefreshCwIcon,
   SquareIcon,
   TerminalIcon,
+  ThumbsUpIcon,
+  ThumbsDownIcon,
 } from "lucide-react";
 import {
   createContext,
@@ -400,6 +402,9 @@ const AssistantActionBar: FC = () => {
                       <CopyIcon className="animate-in zoom-in-75 fade-in duration-150" />
                     </AuiIf></ActionBarPrimitive.Copy>
       <ActionBarPrimitive.Reload render={<TooltipIconButton tooltip="Refresh" />}><RefreshCwIcon /></ActionBarPrimitive.Reload>
+      {/* Feedback (👍/👎) → FeedbackAdapter → /api/feedback → observability.addFeedback */}
+      <ActionBarPrimitive.FeedbackPositive render={<TooltipIconButton tooltip="Good response" />}><ThumbsUpIcon /></ActionBarPrimitive.FeedbackPositive>
+      <ActionBarPrimitive.FeedbackNegative render={<TooltipIconButton tooltip="Bad response" />}><ThumbsDownIcon /></ActionBarPrimitive.FeedbackNegative>
       <ActionBarMorePrimitive.Root>
         <ActionBarMorePrimitive.Trigger render={<TooltipIconButton tooltip="More" className="data-[state=open]:bg-accent" />}><MoreHorizontalIcon /></ActionBarMorePrimitive.Trigger>
         <ActionBarMorePrimitive.Content

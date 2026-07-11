@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AssistantRuntimeProvider,
   useRemoteThreadListRuntime,
+  useAuiState,
 } from "@assistant-ui/react";
 import {
   useChatRuntime,
@@ -24,6 +25,7 @@ import { PickDateTool } from "@/features/meetings/ui/PickDateToolUI";
 import { ConnectCalendarTool } from "@/features/meetings/ui/CalendarConnectToolUI";
 import { createThreadListAdapter } from "@/features/assistant/model/thread-list-adapter";
 import { createUploadAttachmentAdapter } from "@/features/assistant/model/attachment-adapter";
+import { createFeedbackAdapter } from "@/features/assistant/model/feedback-adapter";
 
 /**
  * Runtime for a single active thread. Wrapped by `useRemoteThreadListRuntime`,
@@ -56,9 +58,17 @@ function useChatThreadRuntime() {
   // for the runtime's lifetime — it only closes over fetch.
   const attachments = useMemo(() => createUploadAttachmentAdapter(), []);
 
+  // Active thread id (= Mastra thread id) for correlating feedback. Read via
+  // useAuiState because this hook runs inside the thread-list-item context.
+  const remoteId = useAuiState((s) => s.threadListItem.remoteId);
+  const feedback = useMemo(
+    () => createFeedbackAdapter(() => remoteId),
+    [remoteId],
+  );
+
   return useChatRuntime({
     transport,
-    adapters: { attachments },
+    adapters: { attachments, feedback },
     // After a frontend tool returns its result, automatically resend to the
     // agent so it continues the flow without needing a new message.
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,

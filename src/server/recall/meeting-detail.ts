@@ -35,6 +35,27 @@ export interface MeetingDetail {
   transcript: TranscriptUtteranceView[];
   videoUrl: string | null;
   transcriptState: "ready" | "processing" | "none";
+  /** Meeting length in seconds, derived from the transcript timeline. Null if unknown. */
+  durationSeconds: number | null;
+}
+
+/**
+ * Derives the meeting length from the transcript timeline: the largest word
+ * `end` (falling back to `start`) across all utterances. Cheap and migration-
+ * free — no separate duration column to backfill. Null when there are no timed
+ * words (empty/processing transcript).
+ */
+export function deriveDurationSeconds(
+  transcript: TranscriptUtteranceView[],
+): number | null {
+  let max = 0;
+  for (const u of transcript) {
+    for (const w of u.words) {
+      const t = w.end ?? w.start;
+      if (t != null && t > max) max = t;
+    }
+  }
+  return max > 0 ? Math.round(max) : null;
 }
 
 type RecallMediaArtifact = {
@@ -74,6 +95,7 @@ export async function getMeetingDetail(botId: string): Promise<MeetingDetail> {
       transcript: persistedTranscript,
       videoUrl: record?.videoUrl ?? null,
       transcriptState: "ready",
+      durationSeconds: deriveDurationSeconds(persistedTranscript),
     };
   }
 
@@ -111,7 +133,14 @@ export async function getMeetingDetail(botId: string): Promise<MeetingDetail> {
     }
   }
 
-  return { botId, record, transcript, videoUrl, transcriptState };
+  return {
+    botId,
+    record,
+    transcript,
+    videoUrl,
+    transcriptState,
+    durationSeconds: deriveDurationSeconds(transcript),
+  };
 }
 
 function toUtterance(seg: RawSegment): TranscriptUtteranceView {

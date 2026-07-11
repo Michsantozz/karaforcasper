@@ -75,6 +75,17 @@ function deriveTitle(m: MeetingListItem): string {
   return "Untitled meeting";
 }
 
+/** "12m" / "1h 05m" compact duration from seconds. Null-safe. */
+function fmtDuration(seconds: number | null): string | null {
+  if (!seconds || seconds <= 0) return null;
+  const total = Math.round(seconds);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m`;
+  if (m > 0) return `${m}m`;
+  return `${total}s`;
+}
+
 /** "Today · 14:00" style label, computed on the client from createdAt. */
 function fmtWhen(iso: string): string {
   const d = new Date(iso);
@@ -232,6 +243,7 @@ export function MeetingsList() {
 function MeetingRow({ m, first }: { m: MeetingListItem; first: boolean }) {
   const clickable = m.status === "done";
   const title = deriveTitle(m);
+  const duration = fmtDuration(m.durationSeconds);
 
   const inner = (
     <div
@@ -247,6 +259,15 @@ function MeetingRow({ m, first }: { m: MeetingListItem; first: boolean }) {
         <span className="truncate text-sm font-medium">{title}</span>
         <div className="flex items-center gap-2 font-mono text-[10px] text-muted-foreground">
           <span className="tabular-nums">{fmtWhen(m.createdAt)}</span>
+          {duration && (
+            <>
+              <span aria-hidden>·</span>
+              <span className="inline-flex items-center gap-1 tabular-nums">
+                <ClockIcon className="size-3" aria-hidden />
+                {duration}
+              </span>
+            </>
+          )}
           {m.participantCount > 0 && (
             <>
               <span aria-hidden>·</span>

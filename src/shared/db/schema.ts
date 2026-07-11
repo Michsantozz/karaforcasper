@@ -218,6 +218,15 @@ export const meetingRecords = pgTable(
      * Null when media copy was skipped/failed (player falls back to Recall).
      */
     videoUrl: text("video_url"),
+    /**
+     * Public share token (unguessable). When non-null, the meeting is reachable
+     * read-only at /share/[token] WITHOUT auth (it bypasses RLS via the public
+     * repository). Clearing it (set null) revokes the link. Unique so the public
+     * lookup can index on it.
+     */
+    shareToken: text("share_token").unique(),
+    /** When the current share link was created (for display). Null if not shared. */
+    shareCreatedAt: timestamp("share_created_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -228,6 +237,7 @@ export const meetingRecords = pgTable(
   (table) => [
     index("meeting_records_user_idx").on(table.userId),
     index("meeting_records_status_idx").on(table.status),
+    index("meeting_records_share_token_idx").on(table.shareToken),
   ],
 );
 

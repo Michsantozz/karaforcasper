@@ -4,6 +4,7 @@ import { meetingReconcileWorkflow } from "./workflows/meeting-reconcile.workflow
 import { meetingEnrichWorkflow } from "./workflows/meeting-enrich.workflow";
 import { autoScheduleWorkflow } from "./workflows/auto-schedule.workflow";
 import { getMastraStore } from "./storage";
+import { createObservability } from "./observability";
 
 export const mastra = new Mastra({
   // assistantAgent is the unified meeting agent (Recall.ai + calendar).
@@ -16,4 +17,8 @@ export const mastra = new Mastra({
   // Persists traces, telemetry and workflow state in the app's PG (schema
   // `mastra`). Without this the cron would run stateless.
   storage: getMastraStore(),
+  // Traces + model-generation spans + the human-feedback pipeline (👍/👎 from
+  // the chat land here via observability.addFeedback). Without it, feedback is
+  // a NoOp. SensitiveDataFilter is auto-applied so span text is scrubbed.
+  observability: createObservability(),
 });

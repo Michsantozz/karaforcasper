@@ -2,7 +2,11 @@
 
 import { requireUserId } from "@/features/auth/model/session";
 import { assertBotOwner } from "@/server/recall/ownership";
-import { requeueMeetingRecord } from "@/server/recall/meeting-repository";
+import {
+  requeueMeetingRecord,
+  enableMeetingShare,
+  disableMeetingShare,
+} from "@/server/recall/meeting-repository";
 import { enrichMeeting } from "@/server/recall/enrich";
 import {
   findBotByBotId,
@@ -74,6 +78,39 @@ export async function cancelScheduledMeeting(
   // Clear the mapping so it stops showing as scheduled (best-effort).
   if (bot?.dedupKey) await deleteBotMapping(bot.dedupKey);
   return { ok: true };
+}
+
+/** Result of a share toggle: the token (null once revoked) so the UI builds the link. */
+export type ShareResult =
+  | { ok: true; shareToken: string | null }
+  | { ok: false; error: string };
+
+/**
+ * Enables or revokes the meeting's public share link. Ownership-checked and
+ * RLS-scoped, so a client can never share/unshare another tenant's meeting.
+ * Used by the Share control in the notebook header.
+ */
+export async function setMeetingShare(
+  botId: string,
+  enabled: boolean,
+): Promise<ShareResult> {
+  let userId: string;
+  try {
+    userId = await requireUserId();
+  } catch {
+    return { ok: false, error: "unauthenticated" };
+  }
+  if (!(await isOwner(botId, userId))) {
+    return { ok: false, error: "not found or not accessible" };
+  }
+
+  if (!enabled) {
+    await withUserScope(userId, () => disableMeetingShare(botId));
+    return { ok: true, shareToken: null };
+  }
+  const state = await withUserScope(userId, () => enableMeetingShare(botId));
+  if (!state) return { ok: false, error: "not found or not accessible" };
+  return { ok: true, shareToken: state.shareToken };
 }
 
 /** Ownership check that never throws (returns false on any denial). */

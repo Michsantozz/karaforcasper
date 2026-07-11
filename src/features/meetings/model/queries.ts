@@ -29,6 +29,8 @@ export interface MeetingListItem {
   meetingUrl: string | null;
   summary: string | null;
   participantCount: number;
+  /** Meeting length in seconds; null for scheduled/processing rows. */
+  durationSeconds: number | null;
   /** ISO join time for scheduled rows; null for recorded ones. */
   joinAt: string | null;
   createdAt: string;
@@ -98,6 +100,10 @@ export interface MeetingDetailResponse {
   videoUrl: string | null;
   transcript: TranscriptUtterance[];
   transcriptState: "ready" | "processing" | "none";
+  /** Meeting length in seconds, derived from the transcript timeline. Null if unknown. */
+  durationSeconds: number | null;
+  /** Public share token if the meeting is shared, else null (owner-only field). */
+  shareToken: string | null;
   createdAt: string;
 }
 
@@ -155,6 +161,41 @@ export function useMeetingsList(filters: MeetingsQuery = {}) {
 
   const flat = query.data?.pages.flatMap((pg) => pg.meetings) ?? [];
   return { ...query, flat };
+}
+
+/** Public (share-token) meeting view — the read-only subset served at /share/[token]. */
+export interface PublicMeetingResponse {
+  title: string;
+  summary: string | null;
+  overview: string | null;
+  decisions: string[];
+  actionItems: MeetingActionItem[];
+  topics: string[];
+  sections: MeetingSection[];
+  moments: MeetingMoment[];
+  talkShares: MeetingTalkShare[];
+  transcript: TranscriptUtterance[];
+  videoUrl: string | null;
+  durationSeconds: number | null;
+  createdAt: string;
+}
+
+/**
+ * Public meeting by share token. No auth — hits /api/public/meetings/:token.
+ * 404 (unknown/revoked token) is terminal; no polling (the meeting is done).
+ */
+export function usePublicMeeting(token: string) {
+  return useQuery({
+    queryKey: ["public-meeting", token] as const,
+    queryFn: () =>
+      getJson<PublicMeetingResponse>(`/api/public/meetings/${token}`),
+    enabled: Boolean(token),
+    retry: (count, err) => {
+      const status = err instanceof HttpError ? err.status : 0;
+      if (status === 404) return false;
+      return count < 2;
+    },
+  });
 }
 
 /**

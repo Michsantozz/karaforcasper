@@ -1,5 +1,13 @@
 import { Agent } from "@mastra/core/agent";
 import { Memory } from "@mastra/memory";
+import {
+  TokenLimiter,
+  CostGuardProcessor,
+  PromptInjectionDetector,
+  PIIDetector,
+  type InputProcessor,
+  type OutputProcessor,
+} from "@mastra/core/processors";
 import { createModel } from "@/mastra/model";
 import { getMastraStore } from "@/mastra/storage";
 import { mcp } from "@/mastra/mcp";
@@ -8,15 +16,8 @@ import {
   getRecallBotTool,
   listScheduledRecallBotsTool,
   cancelRecallBotTool,
-  sendRecallChatMessageTool,
   startRecallRecordingTool,
   stopRecallRecordingTool,
-  pauseRecallRecordingTool,
-  resumeRecallRecordingTool,
-  startRecallScreenshareTool,
-  stopRecallScreenshareTool,
-  outputRecallAudioTool,
-  outputRecallVideoTool,
   getRecallTranscriptTool,
   getRecallRecordingTool,
   summarizeRecallMeetingTool,
@@ -29,7 +30,6 @@ import {
   scheduleBotForEventTool,
   removeBotFromEventTool,
   createCalendarEventTool,
-  setCalendarAutoRecordTool,
   getFreeSlotsTool,
 } from "@/mastra/tools/calendar.tool";
 
@@ -50,28 +50,79 @@ const localTools = {
   remove_bot: cancelRecallBotTool,
   start_recording: startRecallRecordingTool,
   stop_recording: stopRecallRecordingTool,
-  pause_recording: pauseRecallRecordingTool,
-  resume_recording: resumeRecallRecordingTool,
   get_transcript: getRecallTranscriptTool,
   get_recording: getRecallRecordingTool,
   summarize_meeting: summarizeRecallMeetingTool,
   get_participants: getRecallParticipantsTool,
   list_my_meetings: listMyMeetingsTool,
   search_my_meetings: searchMyMeetingsTool,
-  send_chat_message: sendRecallChatMessageTool,
-  start_screenshare: startRecallScreenshareTool,
-  stop_screenshare: stopRecallScreenshareTool,
-  output_audio: outputRecallAudioTool,
-  output_video: outputRecallVideoTool,
 
   // --- Connected calendar ---
   list_calendar_events: listCalendarEventsTool,
   schedule_bot_for_event: scheduleBotForEventTool,
   remove_bot_from_event: removeBotFromEventTool,
   create_calendar_event: createCalendarEventTool,
-  set_calendar_auto_record: setCalendarAutoRecordTool,
   get_free_slots: getFreeSlotsTool,
 };
+
+/**
+ * Guardrails / cost control (input side). The chat is public-facing and spends
+ * real LLM tokens (Fireworks/Bedrock), so we cap cost and defend the prompt:
+ *
+ *  - CostGuardProcessor (always on): per-user ceiling. `scope:'resource'` tracks
+ *    cumulative spend per user over a window and blocks once it exceeds maxCost.
+ *    Reads from the observability metrics we now export — zero extra LLM cost.
+ *  - PromptInjectionDetector + PIIDetector (LLM-based → extra latency+cost):
+ *    gated behind ENABLE_LLM_GUARDRAILS. When on, injection is BLOCKED and PII is
+ *    REDACTED before the message reaches the model. `lastMessageOnly` keeps the
+ *    check cheap (only the newest user turn, not the whole history). They reuse
+ *    the agent's own model so no second provider is needed.
+ *
+ * Lazy (DynamicArgument): built per request so envs are read at runtime, not at
+ * import — same reason `model` is lazy (keeps `next build` working env-free).
+ */
+const MAX_COST_PER_USER = Number(process.env.MAX_COST_PER_USER_USD ?? "1.0");
+
+function buildInputProcessors(): InputProcessor[] {
+  const processors: InputProcessor[] = [
+    new CostGuardProcessor({
+      maxCost: MAX_COST_PER_USER,
+      scope: "resource",
+      window: "24h",
+      strategy: "block",
+    }),
+  ];
+  if (process.env.ENABLE_LLM_GUARDRAILS === "true") {
+    const model = createModel();
+    processors.push(
+      new PromptInjectionDetector({
+        model,
+        strategy: "block",
+        lastMessageOnly: true,
+      }),
+      new PIIDetector({
+        model,
+        strategy: "redact",
+        redactionMethod: "placeholder",
+        lastMessageOnly: true,
+      }),
+    );
+  }
+  return processors;
+}
+
+/**
+ * Output side: cap the generated response so a runaway generation can't burn
+ * tokens unbounded. Non-LLM, cheap. 'truncate' stops emitting past the limit.
+ */
+function buildOutputProcessors(): OutputProcessor[] {
+  return [
+    new TokenLimiter({
+      limit: Number(process.env.MAX_RESPONSE_TOKENS ?? "4000"),
+      strategy: "truncate",
+    }),
+  ];
+}
 
 export const assistantAgent = new Agent({
   id: "assistantAgent",
@@ -116,9 +167,13 @@ Main flows:
    - These read the user's OWN persisted meetings only — never ask for a botId here; the tools return them.
 
 2) During a live meeting:
-   - Control the bot's recording: start_recording / stop_recording / pause_recording / resume_recording.
-   - Interact in the call: send_chat_message, start_screenshare / stop_screenshare, output_audio (short mp3 alerts), output_video (jpeg image).
+   - Control the bot's recording: start_recording / stop_recording.
    - Remove the bot from the call with remove_bot.
+
+Working memory (durable user profile):
+- You keep a per-user profile (name, timezone, default meeting duration, recording preference, calendar connection, usual meeting times). It persists across ALL of this user's conversations.
+- Whenever the user reveals a durable fact — their timezone, that they prefer 30-min meetings, that their calendar is connected, that they never record 1:1s — UPDATE the working memory so you don't ask again next time.
+- READ it before asking: if the timezone/duration is already there, use it silently instead of asking. Don't ask for something you already know.
 
 General rules:
 - Don't dump raw JSON: summarize in natural language.
@@ -127,10 +182,36 @@ General rules:
   // when the agent runs, not on import — otherwise `next build` (page-data
   // collection) breaks without runtime envs. Defaults to Fireworks (Track 3).
   model: () => createModel(),
-  // Persistent memory in PG (schema `mastra`) — the agent remembers previous
-  // conversations per thread. No semantic recall (no embeddings) for now: it
-  // uses recent thread history, simple and with no embedding cost.
-  memory: new Memory({ storage: getMastraStore() }),
+  // Persistent memory in PG (schema `mastra`). No semantic recall yet (needs a
+  // vector store + embedder — deferred to avoid embedding cost/setup); this uses
+  // recent thread history plus two always-on features:
+  //  - generateTitle: the agent names each thread from the first user message
+  //    and persists it via updateThread, so the sidebar shows real titles
+  //    instead of "New Chat" (runs async, doesn't slow the response).
+  //  - workingMemory (resource-scoped): a durable per-user profile the agent
+  //    reads/writes across ALL their threads — timezone, recording prefs,
+  //    default meeting duration, whether their calendar is connected. This is
+  //    what lets "schedule at my usual time" or "in my timezone" work without
+  //    the user restating it every conversation.
+  memory: new Memory({
+    storage: getMastraStore(),
+    options: {
+      lastMessages: 20,
+      generateTitle: true,
+      workingMemory: {
+        enabled: true,
+        scope: "resource",
+        template: `# User Profile
+- **Name**:
+- **Timezone**: (e.g. America/Sao_Paulo / BRT -03:00)
+- **Default meeting duration**: (e.g. 30m, 1h)
+- **Recording preference**: (bot on by default? any meetings to skip?)
+- **Calendar**: (connected? Google/Outlook? primary email)
+- **Usual meeting times / working hours**:
+- **Other preferences**:`,
+      },
+    },
+  }),
   // DynamicArgument: combines local tools + MCP tools (Recall.ai read-only).
   tools: async () => {
     const { toolsets, errors } = await mcp.listToolsetsWithErrors();
@@ -143,4 +224,8 @@ General rules:
     );
     return { ...localTools, ...mcpTools };
   },
+  // Cost ceiling + optional prompt-injection/PII guardrails (input), response
+  // token cap (output). Lazy so envs resolve at request time. See builders above.
+  inputProcessors: () => buildInputProcessors(),
+  outputProcessors: () => buildOutputProcessors(),
 });

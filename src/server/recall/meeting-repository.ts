@@ -1,4 +1,5 @@
 import "server-only";
+import { randomBytes } from "node:crypto";
 import { and, desc, eq, ilike, inArray, lt, or, sql } from "drizzle-orm";
 import { scopedDb } from "@/shared/db/rls";
 import {
@@ -30,7 +31,32 @@ export function isMeetingStatus(s: string): s is MeetingRecordStatus {
 export type MeetingListItem = Pick<
   MeetingRecordRow,
   "botId" | "status" | "meetingUrl" | "summary" | "createdAt" | "updatedAt"
-> & { participantCount: number };
+> & { participantCount: number; durationSeconds: number | null };
+
+/**
+ * Approximate meeting length for the LIST, without loading the heavy word-level
+ * `transcriptStruct` jsonb per row. Takes the largest timestamp across the small
+ * summary jsonbs (soundbite ends, moment/section points). It's a floor (the last
+ * flagged moment), good enough for the list; the detail view computes the exact
+ * length from the full transcript. Null when no timed markers exist.
+ */
+function deriveListDuration(row: {
+  moments: MeetingRecordRow["moments"];
+  sections: MeetingRecordRow["sections"];
+  soundbites: MeetingRecordRow["soundbites"];
+}): number | null {
+  let max = 0;
+  for (const s of row.soundbites ?? []) {
+    if (s.endSeconds > max) max = s.endSeconds;
+  }
+  for (const m of row.moments ?? []) {
+    if (m.atSeconds != null && m.atSeconds > max) max = m.atSeconds;
+  }
+  for (const s of row.sections ?? []) {
+    if (s.startSeconds != null && s.startSeconds > max) max = s.startSeconds;
+  }
+  return max > 0 ? Math.round(max) : null;
+}
 
 /**
  * Lists the user's meeting minutes for the index, most recent first.
@@ -49,6 +75,9 @@ export async function listMeetingRecordsForUser(
       meetingUrl: meetingRecords.meetingUrl,
       summary: meetingRecords.summary,
       talkShares: meetingRecords.talkShares,
+      moments: meetingRecords.moments,
+      sections: meetingRecords.sections,
+      soundbites: meetingRecords.soundbites,
       createdAt: meetingRecords.createdAt,
       updatedAt: meetingRecords.updatedAt,
     })
@@ -56,9 +85,10 @@ export async function listMeetingRecordsForUser(
     .orderBy(desc(meetingRecords.createdAt))
     .limit(limit);
 
-  return rows.map(({ talkShares, ...r }) => ({
+  return rows.map(({ talkShares, moments, sections, soundbites, ...r }) => ({
     ...r,
     participantCount: talkShares?.length ?? 0,
+    durationSeconds: deriveListDuration({ moments, sections, soundbites }),
   }));
 }
 
@@ -118,6 +148,9 @@ export async function listMeetingRecordsPage(
       meetingUrl: meetingRecords.meetingUrl,
       summary: meetingRecords.summary,
       talkShares: meetingRecords.talkShares,
+      moments: meetingRecords.moments,
+      sections: meetingRecords.sections,
+      soundbites: meetingRecords.soundbites,
       createdAt: meetingRecords.createdAt,
       updatedAt: meetingRecords.updatedAt,
     })
@@ -128,10 +161,13 @@ export async function listMeetingRecordsPage(
 
   const hasMore = rows.length > limit;
   const page = hasMore ? rows.slice(0, limit) : rows;
-  const items = page.map(({ talkShares, ...r }) => ({
-    ...r,
-    participantCount: talkShares?.length ?? 0,
-  }));
+  const items = page.map(
+    ({ talkShares, moments, sections, soundbites, ...r }) => ({
+      ...r,
+      participantCount: talkShares?.length ?? 0,
+      durationSeconds: deriveListDuration({ moments, sections, soundbites }),
+    }),
+  );
   const nextCursor = hasMore
     ? page[page.length - 1].createdAt.toISOString()
     : null;
@@ -214,6 +250,84 @@ export async function findMeetingRecord(
     .select()
     .from(meetingRecords)
     .where(eq(meetingRecords.botId, botId))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+/* ── public sharing ───────────────────────────────────────────────────── */
+
+/** Current share state of a meeting (for the owner's Share control). */
+export interface MeetingShareState {
+  shareToken: string | null;
+  shareCreatedAt: Date | null;
+}
+
+/**
+ * Enables a public share link for the meeting (idempotent-ish): if it already
+ * has a token, returns it unchanged; otherwise mints a new unguessable one.
+ *
+ * RLS-scoped: MUST run under withUserScope — only the owner can share their
+ * meeting (scopedDb() filters to the caller, so a non-owner update hits 0 rows).
+ * Returns null if the meeting doesn't exist / isn't the caller's.
+ */
+export async function enableMeetingShare(
+  botId: string,
+): Promise<MeetingShareState | null> {
+  const existing = await findMeetingRecord(botId);
+  if (!existing) return null;
+  if (existing.shareToken) {
+    return {
+      shareToken: existing.shareToken,
+      shareCreatedAt: existing.shareCreatedAt,
+    };
+  }
+  // 32 hex chars = 128 bits of entropy — unguessable, URL-safe.
+  const token = randomBytes(16).toString("hex");
+  const now = new Date();
+  const rows = await scopedDb()
+    .update(meetingRecords)
+    .set({ shareToken: token, shareCreatedAt: now, updatedAt: now })
+    .where(eq(meetingRecords.botId, botId))
+    .returning({
+      shareToken: meetingRecords.shareToken,
+      shareCreatedAt: meetingRecords.shareCreatedAt,
+    });
+  return rows[0] ?? null;
+}
+
+/**
+ * Revokes the public share link (clears the token). Idempotent.
+ * RLS-scoped: MUST run under withUserScope.
+ */
+export async function disableMeetingShare(botId: string): Promise<void> {
+  await scopedDb()
+    .update(meetingRecords)
+    .set({ shareToken: null, shareCreatedAt: null, updatedAt: new Date() })
+    .where(eq(meetingRecords.botId, botId));
+}
+
+/**
+ * Looks up a meeting by its public share token — the ONLY read that returns a
+ * meeting to an UNAUTHENTICATED caller. Filters on the token AND status="done"
+ * so only ready minutes are ever public.
+ *
+ * MUST run under withSystemScope: the public page has no user, so RLS would
+ * fail-closed. The unguessable token IS the authorization; the query narrows to
+ * that single row. Returns null when the token is unknown / revoked / not done.
+ */
+export async function findMeetingByShareToken(
+  token: string,
+): Promise<MeetingRecordRow | null> {
+  if (!token) return null;
+  const rows = await scopedDb()
+    .select()
+    .from(meetingRecords)
+    .where(
+      and(
+        eq(meetingRecords.shareToken, token),
+        eq(meetingRecords.status, "done"),
+      ),
+    )
     .limit(1);
   return rows[0] ?? null;
 }
