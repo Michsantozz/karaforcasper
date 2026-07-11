@@ -15,6 +15,8 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 const requireUserId = vi.fn();
 const assertBotOwner = vi.fn();
 const requeueMeetingRecord = vi.fn();
+const enableMeetingShare = vi.fn();
+const disableMeetingShare = vi.fn();
 const enrichMeeting = vi.fn();
 const findBotByBotId = vi.fn();
 const deleteBotMapping = vi.fn();
@@ -29,6 +31,8 @@ vi.mock("@/server/recall/ownership", () => ({
 }));
 vi.mock("@/server/recall/meeting-repository", () => ({
   requeueMeetingRecord: (...a: unknown[]) => requeueMeetingRecord(...a),
+  enableMeetingShare: (...a: unknown[]) => enableMeetingShare(...a),
+  disableMeetingShare: (...a: unknown[]) => disableMeetingShare(...a),
 }));
 vi.mock("@/server/recall/enrich", () => ({
   enrichMeeting: (...a: unknown[]) => enrichMeeting(...a),
@@ -127,5 +131,58 @@ describe("cancelScheduledMeeting", () => {
 
     expect(res.ok).toBe(false);
     expect(deleteBotMapping).not.toHaveBeenCalled();
+  });
+});
+
+describe("setMeetingShare — public share-link toggle", () => {
+  it("unauthenticated → rejected, share never touched", async () => {
+    requireUserId.mockRejectedValue(new Error("no session"));
+    const { setMeetingShare } = await load();
+
+    const res = await setMeetingShare("bot-1", true);
+
+    expect(res).toEqual({ ok: false, error: "unauthenticated" });
+    expect(enableMeetingShare).not.toHaveBeenCalled();
+    expect(disableMeetingShare).not.toHaveBeenCalled();
+  });
+
+  it("non-owner → refused, share never enabled (no public leak)", async () => {
+    assertBotOwner.mockRejectedValue(new Error("not accessible"));
+    const { setMeetingShare } = await load();
+
+    const res = await setMeetingShare("bot-1", true);
+
+    expect(res).toEqual({ ok: false, error: "not found or not accessible" });
+    expect(enableMeetingShare).not.toHaveBeenCalled();
+  });
+
+  it("owner enable → mints a token under user scope", async () => {
+    enableMeetingShare.mockResolvedValue({ shareToken: "tok-abc" });
+    const { setMeetingShare } = await load();
+
+    const res = await setMeetingShare("bot-1", true);
+
+    expect(res).toEqual({ ok: true, shareToken: "tok-abc" });
+    expect(withUserScope).toHaveBeenCalledWith("u1", expect.any(Function));
+    expect(enableMeetingShare).toHaveBeenCalledWith("bot-1");
+  });
+
+  it("owner disable → clears the token, returns null", async () => {
+    const { setMeetingShare } = await load();
+
+    const res = await setMeetingShare("bot-1", false);
+
+    expect(res).toEqual({ ok: true, shareToken: null });
+    expect(disableMeetingShare).toHaveBeenCalledWith("bot-1");
+    expect(enableMeetingShare).not.toHaveBeenCalled();
+  });
+
+  it("enable but the meeting vanished → not-accessible, no token returned", async () => {
+    enableMeetingShare.mockResolvedValue(null);
+    const { setMeetingShare } = await load();
+
+    const res = await setMeetingShare("bot-1", true);
+
+    expect(res).toEqual({ ok: false, error: "not found or not accessible" });
   });
 });
