@@ -264,3 +264,59 @@ export function useMeetingDetail(botId: string) {
       query.state.data?.transcriptState === "processing" ? 15_000 : false,
   });
 }
+
+/* ── longitudinal team trends (cross-meeting) ───────────────────── */
+
+export interface ParticipantTrend {
+  name: string;
+  meetings: number;
+  avgTalkShare: number;
+  talkShareSlope: number;
+  totalInterruptionsMade: number;
+  interruptionsSlope: number;
+  firstShare: number;
+  lastShare: number;
+}
+
+export interface TeamSignal {
+  kind:
+    | "fading_participant"
+    | "rising_dominance"
+    | "rising_friction"
+    | "declining_balance";
+  subject?: string;
+  message: string;
+  severity: number;
+}
+
+export interface TeamTrends {
+  meetings: number;
+  from: string;
+  to: string;
+  participants: ParticipantTrend[];
+  balanceSeries: Array<{ at: string; balance: number }>;
+  balanceSlope: number;
+  signals: TeamSignal[];
+}
+
+export interface TeamTrendsResponse {
+  available: boolean;
+  meetingsWithDynamics: number;
+  trends: TeamTrends | null;
+}
+
+/**
+ * Longitudinal team-health trends across the user's meetings. Static-ish data
+ * (past meetings), so no polling — a plain query.
+ */
+export function useTeamTrends() {
+  return useQuery({
+    queryKey: ["team-trends"] as const,
+    queryFn: () => getJson<TeamTrendsResponse>("/api/team-trends"),
+    retry: (count, err) => {
+      const status = err instanceof HttpError ? err.status : 0;
+      if (status === 401) return false;
+      return count < 2;
+    },
+  });
+}

@@ -76,7 +76,7 @@ describe("searchAgent — cross-meeting search specialist", () => {
   it("owns exactly the history-search tools", async () => {
     const { searchAgent } = await import("@/mastra/agents/search.agent");
     expect((await toolNames(searchAgent)).sort()).toEqual(
-      ["list_my_meetings", "search_my_meetings"].sort(),
+      ["get_team_trends", "list_my_meetings", "search_my_meetings"].sort(),
     );
   });
 

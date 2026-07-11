@@ -92,6 +92,48 @@ export async function listMeetingRecordsForUser(
   }));
 }
 
+/** One meeting's dynamics snapshot in time — the unit of longitudinal analysis. */
+export interface DynamicsSnapshot {
+  botId: string;
+  meetingUrl: string | null;
+  createdAt: Date;
+  dynamics: NonNullable<MeetingRecordRow["dynamics"]>;
+}
+
+/**
+ * Lists the user's meetings that HAVE dynamics, oldest→newest, for longitudinal
+ * team-health analysis (how participation/interruptions/balance evolve over
+ * time). RLS-scoped: only the caller's rows. Rows without dynamics are skipped.
+ */
+export async function listDynamicsForUser(
+  limit = 200,
+): Promise<DynamicsSnapshot[]> {
+  const rows = await scopedDb()
+    .select({
+      botId: meetingRecords.botId,
+      meetingUrl: meetingRecords.meetingUrl,
+      createdAt: meetingRecords.createdAt,
+      dynamics: meetingRecords.dynamics,
+    })
+    .from(meetingRecords)
+    .where(sql`${meetingRecords.dynamics} is not null`)
+    .orderBy(meetingRecords.createdAt)
+    .limit(limit);
+
+  return rows.flatMap((r) =>
+    r.dynamics
+      ? [
+          {
+            botId: r.botId,
+            meetingUrl: r.meetingUrl,
+            createdAt: r.createdAt,
+            dynamics: r.dynamics,
+          },
+        ]
+      : [],
+  );
+}
+
 /** A page of meetings + the cursor to fetch the next one (null when exhausted). */
 export interface MeetingPage {
   items: MeetingListItem[];
@@ -418,12 +460,21 @@ export async function requeueMeetingRecord(
 }
 
 /**
- * Returns botIds of minutes stuck for the reconciliation cron: pending for
- * more than `staleMs`, or failed (for a new attempt). Doesn't touch
- * done/recently processing.
+ * Returns botIds of minutes the reconciliation cron should reprocess:
+ *  - `pending`/`processing` stale for more than `staleMs` (a lost webhook or a
+ *    dead worker that never finished), and
+ *  - `failed` that still have retry budget (`attempts < maxAttempts`) — a
+ *    transient failure (empty transcript that later showed up, Recall/LLM blip)
+ *    would otherwise be a silent dead-end: the minutes never generate and no
+ *    one is told. `failed` rows past the attempt ceiling are left terminal on
+ *    purpose (a genuinely empty meeting shouldn't loop forever).
+ *
+ * Does NOT touch `done` or recently-updated `processing` (avoids racing a live
+ * run — see the staleMs note in the reconcile workflow).
  */
 export async function listStuckMeetingRecords(
   staleMs: number,
+  maxAttempts: number,
 ): Promise<string[]> {
   const threshold = new Date(Date.now() - staleMs);
   const rows = await scopedDb()
@@ -437,6 +488,13 @@ export async function listStuckMeetingRecords(
         ),
         and(
           eq(meetingRecords.status, "processing"),
+          lt(meetingRecords.updatedAt, threshold),
+        ),
+        // Retry failed rows that haven't exhausted their attempt budget. Also
+        // gated on staleMs so we don't re-hit one that just failed this instant.
+        and(
+          eq(meetingRecords.status, "failed"),
+          lt(meetingRecords.attempts, maxAttempts),
           lt(meetingRecords.updatedAt, threshold),
         ),
       ),

@@ -12,7 +12,9 @@ import {
   listMeetingRecordsForUser,
   searchMeetingRecords,
   findMeetingRecord,
+  listDynamicsForUser,
 } from "@/server/recall/meeting-repository";
+import { computeTeamTrends } from "@/server/recall/dynamics-trends";
 import { assertBotOwner } from "@/server/recall/ownership";
 import { withUserScope } from "@/shared/db/rls";
 import { getSession } from "@/features/auth/model/session";
@@ -584,6 +586,104 @@ export const listMyMeetingsTool = createTool({
         meetingUrl: r.meetingUrl,
         createdAt: r.createdAt.toISOString(),
       })),
+    };
+  },
+});
+
+/**
+ * LONGITUDINAL team-health: aggregates dynamics ACROSS the user's meetings to
+ * show how participation, interruptions and balance evolve over time, and
+ * surfaces actionable signals (a fading participant, rising dominance/friction,
+ * declining balance) the agent can proactively raise. RLS-scoped to the session
+ * user. Needs no botId — it spans all the user's meetings.
+ */
+export const getTeamTrendsTool = createTool({
+  id: "get_team_trends",
+  description:
+    "Analyzes how the team's meeting dynamics EVOLVE ACROSS meetings over time " +
+    "(not one meeting): per-person talk-time trajectory, who is fading or " +
+    "dominating more, rising interruptions/friction, and whether the team is " +
+    "getting more or less balanced. Returns actionable signals to raise " +
+    "proactively (e.g. 'Marina is going quiet'). Use for 'how is our team " +
+    "trending', 'is anyone dominating more', 'who's gone quiet', 'is friction " +
+    "rising'. Needs NO botId — it spans all the user's meetings.",
+  inputSchema: z.object({
+    limit: z
+      .number()
+      .int()
+      .min(3)
+      .max(200)
+      .optional()
+      .describe("Max recent meetings to analyze. Default 50."),
+  }),
+  outputSchema: z.object({
+    available: z.boolean(),
+    meetings: z.number(),
+    signals: z.array(
+      z.object({
+        kind: z.enum([
+          "fading_participant",
+          "rising_dominance",
+          "rising_friction",
+          "declining_balance",
+        ]),
+        subject: z.string().optional(),
+        message: z.string(),
+        severity: z.number(),
+      }),
+    ),
+    participants: z.array(
+      z.object({
+        name: z.string(),
+        meetings: z.number(),
+        avgTalkShare: z.number(),
+        talkShareSlope: z.number(),
+        firstShare: z.number(),
+        lastShare: z.number(),
+        totalInterruptionsMade: z.number(),
+      }),
+    ),
+    balanceSlope: z.number(),
+  }),
+  execute: async (input) => {
+    const userId = (await getSession())?.user?.id;
+    if (!userId) {
+      return {
+        available: false,
+        meetings: 0,
+        signals: [],
+        participants: [],
+        balanceSlope: 0,
+      };
+    }
+    // RLS-scoped: only the caller's dynamics snapshots. Never system scope.
+    const snapshots = await withUserScope(userId, () =>
+      listDynamicsForUser(input.limit ?? 50),
+    );
+    const trends = computeTeamTrends(snapshots);
+    if (!trends) {
+      return {
+        available: false,
+        meetings: snapshots.length,
+        signals: [],
+        participants: [],
+        balanceSlope: 0,
+      };
+    }
+    return {
+      available: true,
+      meetings: trends.meetings,
+      signals: trends.signals,
+      participants: trends.participants.map((p) => ({
+        name: p.name,
+        meetings: p.meetings,
+        avgTalkShare: p.avgTalkShare,
+        talkShareSlope: p.talkShareSlope,
+        firstShare: p.firstShare,
+        lastShare: p.lastShare,
+        totalInterruptionsMade: p.totalInterruptionsMade,
+      })),
+      balanceSlope: trends.balanceSlope,
     };
   },
 });

@@ -3,5 +3,6 @@ export * from "./ui/PickDateToolUI";
 export * from "./ui/MeetingDetail";
 export * from "./ui/MeetingNotebook";
 export * from "./ui/MeetingsList";
+export * from "./ui/TeamTrends";
 export * from "./ui/PublicMeetingView";
 export * from "./api/actions";
