@@ -155,20 +155,46 @@ export function computeMeetingDynamics(
     }
 
     const prev = i > 0 ? turns[i - 1] : null;
-    if (prev && prev.speaker !== turn.speaker) {
-      const overlap = prev.end - turn.start;
-      if (overlap >= INTERRUPTION_OVERLAP_SECONDS) {
-        // This turn started while the previous speaker was still talking.
-        interruptions += 1;
-        p.interruptionsMade += 1;
-        ensure(prev.speaker).interruptionsReceived += 1;
-        moments.push({
-          kind: "interruption",
-          atSeconds: turn.start,
-          durationSeconds: overlap,
-          label: `${turn.speaker} cut off ${prev.speaker}`,
-        });
+    if (prev) {
+      // Interruption is attributed to whoever was ACTUALLY still speaking when
+      // this turn began — the previous turn with the largest end that overlaps
+      // turn.start and belongs to someone else. With 3+ overlapping turns, the
+      // immediate predecessor may be the interrupter too (already counted), so
+      // we scan back to the genuinely-active different speaker.
+      // Scan earlier turns for one that is still ongoing at turn.start and
+      // belongs to someone else. Turns are sorted by START, not END, so an older
+      // turn can still have the largest end (a long turn others cut into) — we
+      // can't early-break on end; we bound the scan by start instead. In
+      // practice the overlap window is tiny, so this stays cheap.
+      let active: Turn | null = null;
+      for (let j = i - 1; j >= 0; j--) {
+        const cand = turns[j];
+        // Once a candidate STARTED before a full window ago AND we already have
+        // a match, older turns can't beat it meaningfully — but to stay correct
+        // with long turns we only stop when starts are far behind this one.
+        if (turn.start - cand.start > MONOLOGUE_SECONDS && active) break;
+        if (cand.speaker !== turn.speaker && cand.end > turn.start) {
+          if (!active || cand.end > active.end) active = cand;
+        }
+      }
+
+      if (active) {
+        const overlap = active.end - turn.start;
+        if (overlap >= INTERRUPTION_OVERLAP_SECONDS) {
+          interruptions += 1;
+          p.interruptionsMade += 1;
+          ensure(active.speaker).interruptionsReceived += 1;
+          moments.push({
+            kind: "interruption",
+            atSeconds: turn.start,
+            durationSeconds: overlap,
+            label: `${turn.speaker} cut off ${active.speaker}`,
+          });
+        }
       } else {
+        // No one was speaking into this turn → measure the dead-air gap since
+        // the previous turn ended, regardless of whether the speaker changed
+        // (a long pause between one person's own turns is still silence).
         const gap = turn.start - prev.end;
         if (gap >= SILENCE_GAP_SECONDS) {
           silenceSeconds += gap;

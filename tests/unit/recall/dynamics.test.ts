@@ -126,6 +126,48 @@ describe("computeMeetingDynamics", () => {
     expect(dominated.balance).toBeLessThan(0.3);
   });
 
+  it("counts silence between consecutive turns of the SAME speaker", () => {
+    // Ana speaks [0,5], pauses, then speaks again [12,14]: a 7s gap that the
+    // old logic ignored because the speaker didn't change.
+    const d = computeMeetingDynamics([
+      utt("Ana", [[0, 5]]),
+      utt("Ana", [[12, 14]]),
+    ])!;
+    expect(d.silenceSeconds).toBeCloseTo(7);
+    expect(d.moments.some((m) => m.kind === "silence")).toBe(true);
+  });
+
+  it("attributes a 3-way overlap to the genuinely active speaker", () => {
+    // Ana [0,20] talks long; João [5,7] cuts in briefly; Marina [8,12] cuts in
+    // while ANA is still going (not João, who already finished at 7). Marina's
+    // interruption must be credited to Ana, not to the immediate predecessor João.
+    const d = computeMeetingDynamics([
+      utt("Ana", [[0, 20]]),
+      utt("João", [[5, 7]]),
+      utt("Marina", [[8, 12]]),
+    ])!;
+    const ana = d.participants.find((p) => p.name === "Ana")!;
+    const marina = d.participants.find((p) => p.name === "Marina")!;
+    // Marina interrupted Ana (still active), João interrupted Ana too.
+    expect(marina.interruptionsMade).toBe(1);
+    expect(ana.interruptionsReceived).toBe(2);
+    const marinaCut = d.moments.find(
+      (m) => m.kind === "interruption" && m.label.startsWith("Marina"),
+    );
+    expect(marinaCut?.label).toBe("Marina cut off Ana");
+  });
+
+  it("does not count a gap after someone else's turn ended as silence-with-interruption", () => {
+    // Speaker change but with a clean gap (no overlap) → still silence, not
+    // interruption. Guards the branch order in the rewritten loop.
+    const d = computeMeetingDynamics([
+      utt("Ana", [[0, 5]]),
+      utt("João", [[11, 13]]),
+    ])!;
+    expect(d.interruptions).toBe(0);
+    expect(d.silenceSeconds).toBeCloseTo(6);
+  });
+
   it("caps and orders moments by magnitude", () => {
     // Two silences of different lengths — the larger must come first.
     const d = computeMeetingDynamics([
