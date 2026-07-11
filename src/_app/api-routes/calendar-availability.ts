@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getDayAvailability } from "@/server/recall/availability";
 import { getSession } from "@/features/auth/model/session";
+import { serverError } from "@/shared/lib/api-error";
 
 /**
  * Availability for a single DAY for the authenticated user — the business-hours
@@ -43,10 +44,6 @@ export async function GET(req: Request) {
     });
     return NextResponse.json(day);
   } catch (err) {
-    const message = err instanceof Error ? err.message : "unknown error";
-    return NextResponse.json(
-      { error: "availability failed", detail: message },
-      { status: 502 },
-    );
+    return serverError("calendar-availability", err, "availability_failed", 502);
   }
 }

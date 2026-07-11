@@ -7,6 +7,7 @@ import {
 } from "@/server/recall/calendar-repository";
 import { autoScheduleForCalendar } from "@/server/recall/auto-schedule";
 import { withSystemScope } from "@/shared/db/rls";
+import { serverError } from "@/shared/lib/api-error";
 
 /**
  * Recall webhook (Calendar V2, delivered via Svix).
@@ -101,12 +102,9 @@ export async function POST(req: Request) {
         break;
     }
   } catch (err) {
-    const message = err instanceof Error ? err.message : "unknown error";
-    // 5xx makes Svix redeliver. Use with caution for non-transient errors.
-    return NextResponse.json(
-      { error: "webhook processing failed", detail: message },
-      { status: 500 },
-    );
+    // 5xx makes Svix redeliver. Full error logged server-side; the caller
+    // (Recall/Svix) only needs the status, not our internal message.
+    return serverError("webhook-recall", err, "webhook_processing_failed", 500);
   }
 
   return NextResponse.json({ ok: true });

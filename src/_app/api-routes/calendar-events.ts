@@ -5,6 +5,7 @@ import {
   listCalendarsByUser,
 } from "@/server/recall/calendar-repository";
 import { getSession } from "@/features/auth/model/session";
+import { serverError } from "@/shared/lib/api-error";
 
 /**
  * Lists events from the authenticated user's connected calendars.
@@ -68,10 +69,8 @@ export async function GET(req: Request) {
 
     return NextResponse.json({ count: projected.length, events: projected });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "unknown error";
-    return NextResponse.json(
-      { error: "list events failed", detail: message },
-      { status: 502 },
-    );
+    // Full error logged server-side; client gets a generic code (no upstream
+    // message with hostnames/URLs from the Recall SDK/fetch leaking out).
+    return serverError("calendar-events", err, "list_events_failed", 502);
   }
 }
