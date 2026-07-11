@@ -1,6 +1,11 @@
 # 🎙️ Casper Agent
 
 [![CI](https://github.com/Michsantozz/karaforcasper/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Michsantozz/karaforcasper/actions/workflows/ci.yml)
+![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=nextdotjs)
+![React](https://img.shields.io/badge/React-19-149eca?logo=react)
+![TypeScript](https://img.shields.io/badge/TypeScript-6-3178c6?logo=typescript)
+![Node](https://img.shields.io/badge/Node-%E2%89%A524-339933?logo=nodedotjs)
+![pnpm](https://img.shields.io/badge/pnpm-11.11-f69220?logo=pnpm)
 
 **The AI meeting assistant that reads the room — not just the transcript.**
 
