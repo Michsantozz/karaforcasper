@@ -62,8 +62,34 @@ async function fetchStatus(): Promise<ConnectCalendarResult> {
   }
 }
 
-/** Registry of resolvers per toolCallId (the execute Promise completes on click). */
+/**
+ * Registry of pending `execute` resolvers, keyed by toolCallId. Connecting a
+ * calendar is GLOBAL account state, so `resolvePending`/`resolveAllPending`
+ * settle ONE or ALL waiting calls: if any card detects a connection, every
+ * duplicate `connect_calendar` call the model emitted in the same turn resolves
+ * with the same result — no orphaned card left hanging forever (the bug that
+ * left the agent stuck in "thinking…"). Each entry is deleted on settle so the
+ * Promise settles exactly once.
+ */
 const pending = new Map<string, (r: ConnectCalendarResult) => void>();
+
+/** Settles one waiting `execute` call (no-op if already settled/unknown). */
+function resolvePending(toolCallId: string, result: ConnectCalendarResult) {
+  const fn = pending.get(toolCallId);
+  if (fn) {
+    pending.delete(toolCallId);
+    fn(result);
+  }
+}
+
+/** Settles ALL waiting calls — used when calendar state changes globally
+ *  (connected succeeded, or the run was cancelled). */
+function resolveAllPending(result: ConnectCalendarResult) {
+  for (const [id, fn] of pending) {
+    pending.delete(id);
+    fn(result);
+  }
+}
 
 function ConnectCalendarCard({
   status,
@@ -84,15 +110,6 @@ function ConnectCalendarCard({
         <Row k="error" v={result.error ?? "connection canceled"} />
       </ToolCard>
     );
-  }
-
-  // execute still pending → show the connect button.
-  function resolve(r: ConnectCalendarResult) {
-    const fn = pending.get(toolCallId);
-    if (fn) {
-      pending.delete(toolCallId);
-      fn(r);
-    }
   }
 
   async function connect() {
@@ -124,7 +141,10 @@ function ConnectCalendarCard({
         try {
           popup.close();
         } catch {}
-        resolve(st);
+        // Connection is GLOBAL account state — settle EVERY pending
+        // connect_calendar call (the model may have emitted duplicates in this
+        // turn), not just this card's, so no duplicate is left hanging.
+        resolveAllPending(st);
         return;
       }
       if (timedOut || (popupClosed && !st.connected)) {
@@ -137,8 +157,10 @@ function ConnectCalendarCard({
           ? "timed out connecting the calendar"
           : "window closed without completing the connection";
         setLocalErr(msg);
-        // Doesn't resolve as a terminal error — the user can retry from the
-        // same card. We only resolve on success, or leave the agent waiting.
+        // Settle THIS card's call as a terminal not-connected result so the
+        // agent doesn't hang. The user can still retry via a new turn. (Other
+        // pending cards keep waiting for their own outcome / their own backstop.)
+        resolvePending(toolCallId, { connected: false, error: msg });
       }
     }, 1500);
   }
@@ -196,14 +218,42 @@ export const ConnectCalendarTool = makeAssistantTool<
   description:
     "Connects the user's Google calendar VIA CHAT (shows a button that opens Google consent in a popup). ALWAYS use this when a calendar action fails due to no calendar connected (e.g. create_calendar_event / list_calendar_events returning 'no calendar connected'), BEFORE sending the user to settings. Returns { connected, email }. If connected:true, proceed with the calendar action the user requested.",
   parameters: { type: "object", properties: {}, additionalProperties: false },
-  // execute: if a calendar is already connected, it resolves right away;
-  // otherwise it returns a pending Promise (the resolver is called when
-  // polling detects the connection).
-  execute: async (_args, { toolCallId }) => {
+  // execute: if a calendar is already connected, resolve right away; otherwise
+  // return a Promise that settles when the user completes the flow (a card's
+  // polling detects the connection → resolveAllPending), on run cancellation
+  // (abortSignal), or after a hard timeout. It NEVER stays pending forever —
+  // an unsettled frontend-tool call is what left the agent stuck in "thinking…"
+  // and persisted an orphaned tool-call that reopened stale.
+  execute: async (_args, { toolCallId, abortSignal }) => {
     const st = await fetchStatus();
     if (st.connected) return st;
+
     return new Promise<ConnectCalendarResult>((resolve) => {
-      pending.set(toolCallId, resolve);
+      let settled = false;
+      const settle = (r: ConnectCalendarResult) => {
+        if (settled) return;
+        settled = true;
+        pending.delete(toolCallId);
+        clearTimeout(timer);
+        abortSignal.removeEventListener("abort", onAbort);
+        resolve(r);
+      };
+
+      // Run cancelled (Stop button / thread switch) → settle so the tool-call
+      // reaches a terminal state instead of hanging.
+      const onAbort = () =>
+        settle({ connected: false, error: "connection cancelled" });
+      abortSignal.addEventListener("abort", onAbort, { once: true });
+
+      // Backstop: if the user never interacts, don't wait forever. 5 min is well
+      // past a real OAuth consent flow.
+      const timer = setTimeout(
+        () => settle({ connected: false, error: "connection timed out" }),
+        5 * 60_000,
+      );
+
+      // The card's connect()/poll resolves via resolvePending/resolveAllPending.
+      pending.set(toolCallId, settle);
     });
   },
   render: ConnectCalendarCard,

@@ -10,6 +10,7 @@ import {
   type ThreadHistoryAdapter,
 } from "@assistant-ui/react";
 import type { UIMessage } from "ai";
+import { sanitizeOrphanedToolCalls } from "@/shared/lib/sanitize-tool-calls";
 
 /**
  * Bridges assistant-ui's remote thread list to our REST endpoints (`/api/threads`),
@@ -70,8 +71,12 @@ function useThreadHistoryAdapter(): ThreadHistoryAdapter {
               `/api/threads/${remoteId}/messages`,
             ).then(jsonOrThrow)) as { messages: UIMessage[] };
 
+            // Repair orphaned frontend tool-calls (left non-terminal when the
+            // user navigated away mid-flow) so the thread doesn't reopen stuck.
+            const repaired = sanitizeOrphanedToolCalls(messages);
+
             let parentId: string | null = null;
-            const items = messages.map((message) => {
+            const items = repaired.map((message) => {
               const item = { parentId, message };
               parentId = message.id;
               return item;
@@ -172,13 +177,19 @@ export function createThreadListAdapter(): RemoteThreadListAdapter {
       };
     },
 
-    // Title generation isn't wired to a backend endpoint yet — assistant-ui
-    // falls back to the "New Chat" title until renamed. Throwing here would
-    // surface as an error, so we return an empty stream (closes immediately,
-    // no title update).
-    async generateTitle() {
+    // Titles the conversation from its opening turns. The endpoint generates
+    // the title (one-shot LLM), persists it via renameThread, and returns it;
+    // we stream that finished title back as the assistant-ui title text.
+    // Returning an empty stream (no appendText) leaves the "New Chat" fallback,
+    // which is what happens when the thread has no content yet (title === null).
+    async generateTitle(remoteId) {
       const { createAssistantStream } = await import("assistant-stream");
-      return createAssistantStream(async () => {});
+      const { title } = (await fetch(`/api/threads/${remoteId}/title`, {
+        method: "POST",
+      }).then(jsonOrThrow)) as { title: string | null };
+      return createAssistantStream((controller) => {
+        if (title) controller.appendText(title);
+      });
     },
 
     unstable_Provider: ThreadProvider,

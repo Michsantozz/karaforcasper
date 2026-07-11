@@ -1,7 +1,9 @@
 import "server-only";
 
+import { generateText } from "ai";
 import { toAISdkMessages } from "@mastra/ai-sdk/ui";
 import type { Memory } from "@mastra/memory";
+import { createChatModel } from "@/mastra/model";
 
 /**
  * Server-side thread store for the chat sidebar (ThreadList). It's a thin
@@ -172,4 +174,69 @@ export async function getThreadMessages(userId: string, threadId: string) {
     perPage: false,
   });
   return toAISdkMessages(messages, { version: "v6" });
+}
+
+/** Flattens a v6 UIMessage's text parts into a single string (ignores tool/file parts). */
+function messageText(message: {
+  parts?: Array<{ type: string; text?: string }>;
+}): string {
+  return (message.parts ?? [])
+    .filter((p) => p.type === "text" && typeof p.text === "string")
+    .map((p) => p.text)
+    .join(" ")
+    .trim();
+}
+
+/**
+ * Generates a short title (≤5 words) for a thread from its first exchange and
+ * persists it via `renameThread`. Returns the title, or null when there's not
+ * enough content yet (empty thread → keep the "New Chat" fallback).
+ *
+ * Reuses `createChatModel()` (the ai-sdk model, same MODEL_PROVIDER dispatch as
+ * the rest of the app) with a one-shot `generateText` — this is a cheap
+ * server-side call, NOT an agent run, so it doesn't touch the agent graph or
+ * memory recall. Ownership is enforced by `getThreadMessages`/`renameThread`
+ * (both resourceId-scoped), so this can't title another user's thread.
+ */
+export async function generateThreadTitle(
+  userId: string,
+  threadId: string,
+): Promise<string | null> {
+  const messages = await getThreadMessages(userId, threadId);
+
+  // Build a compact transcript of the opening turns. A couple of exchanges is
+  // plenty to name the conversation and keeps the prompt (and cost) small.
+  const transcript = messages
+    .slice(0, 4)
+    .map((m) => `${m.role}: ${messageText(m)}`)
+    .filter((line) => line.split(": ").slice(1).join(": ").length > 0)
+    .join("\n")
+    .slice(0, 2000);
+
+  // Nothing to title yet (brand-new thread before the first real message).
+  if (!transcript) return null;
+
+  const { text } = await generateText({
+    model: createChatModel(),
+    prompt:
+      "Generate a concise chat title (at most 5 words) that captures the topic " +
+      "of the conversation below. Reply with ONLY the title — no quotes, no " +
+      "punctuation at the end, no prefix like 'Title:'.\n\n" +
+      `Conversation:\n${transcript}`,
+  });
+
+  // Normalize: collapse whitespace, drop wrapping quotes/trailing period, cap
+  // length. A model that ignores the word limit still yields a sane title.
+  const title = text
+    .trim()
+    .replace(/^["'`]|["'`]$/g, "")
+    .replace(/\.$/, "")
+    .replace(/\s+/g, " ")
+    .slice(0, 80)
+    .trim();
+
+  if (!title) return null;
+
+  await renameThread(userId, threadId, title);
+  return title;
 }

@@ -86,12 +86,31 @@ function toLocalIso(d: Date): string {
 }
 
 /**
- * Registry of pending Promises per toolCallId. `execute` creates a Promise that
+ * Registry of pending resolvers per toolCallId. `execute` creates a Promise that
  * does NOT resolve until the user clicks — this way the tool call only
  * "completes" after the actual choice, and sendAutomaticallyWhen doesn't
  * resend a premature picked:false.
+ *
+ * It never stays pending forever, though: `execute` also settles it on run
+ * cancellation (abortSignal) and after a hard timeout. An unsettled
+ * frontend-tool call is what left the agent hanging in "thinking…" and
+ * persisted an orphaned tool-call that reopened stale.
  */
 const pending = new Map<string, (r: PickDateResult) => void>();
+
+/** Settles one waiting `execute` call (no-op if already settled/unknown). */
+function resolvePending(toolCallId: string, result: PickDateResult) {
+  const fn = pending.get(toolCallId);
+  if (fn) {
+    pending.delete(toolCallId);
+    fn(result);
+  }
+}
+
+/** A not-picked terminal result (abort/timeout). The card renders it as-is. */
+function notPicked(): PickDateResult {
+  return { picked: false, dateIso: null, timeHm: null, datetimeIso: null };
+}
 
 export function PickDateCard({
   args,
@@ -181,11 +200,7 @@ export function PickDateCard({
     };
     setTime(slot.timeHm);
     setDone(res);
-    const resolve = pending.get(toolCallId);
-    if (resolve) {
-      pending.delete(toolCallId);
-      resolve(res);
-    }
+    resolvePending(toolCallId, res);
   }
 
   const slots = avail?.slots ?? [];
@@ -300,13 +315,27 @@ export const PickDateTool = makeAssistantTool<PickDateArgs, PickDateResult>({
     },
     additionalProperties: false,
   },
-  // execute does NOT resolve right away: it returns a Promise that only
-  // completes when the user clicks a FREE slot in render (confirm calls the
-  // resolver). This way the tool call stays "pending" and sendAutomaticallyWhen
-  // doesn't resend a premature picked:false (which made the agent say "you closed without choosing").
-  execute: async (_args, { toolCallId }) =>
+  // execute does NOT resolve right away: it stays pending until the user clicks
+  // a FREE slot in render (confirm → resolvePending), so sendAutomaticallyWhen
+  // doesn't resend a premature picked:false. But it ALSO settles on run
+  // cancellation (abortSignal) and after a hard timeout — never pending forever,
+  // which is what hung the agent in "thinking…" and persisted an orphaned call.
+  execute: async (_args, { toolCallId, abortSignal }) =>
     new Promise<PickDateResult>((resolve) => {
-      pending.set(toolCallId, resolve);
+      let settled = false;
+      const settle = (r: PickDateResult) => {
+        if (settled) return;
+        settled = true;
+        pending.delete(toolCallId);
+        clearTimeout(timer);
+        abortSignal.removeEventListener("abort", onAbort);
+        resolve(r);
+      };
+      const onAbort = () => settle(notPicked());
+      abortSignal.addEventListener("abort", onAbort, { once: true });
+      // Backstop: 5 min is well past the time to pick a slot.
+      const timer = setTimeout(() => settle(notPicked()), 5 * 60_000);
+      pending.set(toolCallId, settle);
     }),
   render: PickDateCard,
 });

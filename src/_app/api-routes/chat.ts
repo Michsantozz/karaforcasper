@@ -85,15 +85,36 @@ export async function POST(req: Request) {
   const params = await req.json();
   // The transport injects `tools` (JSON Schema) and — for multi-thread chat —
   // a `threadId` (the active sidebar thread). `meetingBotId` is sent by the
-  // notebook so the agent knows which meeting is open. We forward tools as
+  // notebook so the agent knows which meeting is open. `agentId` selects which
+  // agent handles the turn (see allowlist below). We forward tools as
   // clientTools and bind memory to that thread so Mastra persists/recalls per
   // conversation. The rest of `params` passes through unchanged to the handler.
-  const { tools, threadId, meetingBotId, messages, ...rest } = params as {
+  const {
+    tools,
+    threadId,
+    meetingBotId,
+    agentId: requestedAgentId,
+    messages,
+    ...rest
+  } = params as {
     tools?: Record<string, FrontendToolJSONSchema>;
     threadId?: string;
     meetingBotId?: string;
+    agentId?: string;
     messages?: UIMessageLike[];
   } & Record<string, unknown>;
+
+  // Agent selection is an ALLOWLIST, never the raw body value: a caller could
+  // otherwise name any registered agent (e.g. a sub-agent) or an unknown id.
+  // `assistantAgent` is the default (home chat = the supervisor); the meeting
+  // notebook asks for `minutesAgent` (the meeting specialist, talked to
+  // directly). Anything else falls back to the supervisor.
+  const AGENT_ALLOWLIST = ["assistantAgent", "minutesAgent"] as const;
+  const agentId = AGENT_ALLOWLIST.includes(
+    requestedAgentId as (typeof AGENT_ALLOWLIST)[number],
+  )
+    ? (requestedAgentId as (typeof AGENT_ALLOWLIST)[number])
+    : "assistantAgent";
 
   // Meeting context: only inject if the caller actually OWNS the bot. An
   // unowned/forged meetingBotId is silently ignored — never surfaced to the
@@ -118,7 +139,7 @@ export async function POST(req: Request) {
   // version:'v6' required — assistant-ui types against AI SDK v6.
   const stream = await handleChatStream({
     mastra,
-    agentId: "assistantAgent",
+    agentId,
     params: {
       ...rest,
       messages: scopedMessages,

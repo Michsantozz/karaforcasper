@@ -48,6 +48,11 @@ function messagesPassedToHandler(): Array<{ role: string }> | undefined {
   return call?.params?.messages;
 }
 
+function agentIdPassedToHandler(): string | undefined {
+  const call = handleChatStream.mock.calls[0]?.[0] as { agentId?: string };
+  return call?.agentId;
+}
+
 async function post(body: unknown): Promise<Response> {
   const { POST } = await import("@/app/api/chat/route");
   return POST(new Request("http://x/api/chat", {
@@ -101,5 +106,35 @@ describe("POST /api/chat — meeting context", () => {
 
     expect(res.status).toBe(401);
     expect(handleChatStream).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/chat — agent selection (allowlist)", () => {
+  it("defaults to assistantAgent when agentId is absent", async () => {
+    await post({ messages: [userMsg] });
+    expect(agentIdPassedToHandler()).toBe("assistantAgent");
+  });
+
+  it("routes to minutesAgent when requested (notebook path)", async () => {
+    isBotOwner.mockResolvedValue(true);
+    await post({
+      agentId: "minutesAgent",
+      meetingBotId: "bot-1",
+      threadId: "meeting-bot-1",
+      messages: [userMsg],
+    });
+    expect(agentIdPassedToHandler()).toBe("minutesAgent");
+  });
+
+  it("falls back to assistantAgent for an unknown/forged agentId", async () => {
+    await post({ agentId: "searchAgent", messages: [userMsg] });
+    // searchAgent is a real sub-agent but NOT in the allowlist — must not be
+    // reachable directly from the client.
+    expect(agentIdPassedToHandler()).toBe("assistantAgent");
+  });
+
+  it("falls back to assistantAgent for a garbage agentId", async () => {
+    await post({ agentId: "../../etc/passwd", messages: [userMsg] });
+    expect(agentIdPassedToHandler()).toBe("assistantAgent");
   });
 });

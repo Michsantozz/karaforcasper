@@ -13,6 +13,7 @@ const renameThread = vi.fn();
 const setArchived = vi.fn();
 const deleteThread = vi.fn();
 const getThreadMessages = vi.fn();
+const generateThreadTitle = vi.fn();
 
 vi.mock("@/features/auth/model/session", () => ({
   getSession: (...a: unknown[]) => getSession(...a),
@@ -24,6 +25,7 @@ vi.mock("@/features/assistant/model/threads", () => ({
   setArchived: (...a: unknown[]) => setArchived(...a),
   deleteThread: (...a: unknown[]) => deleteThread(...a),
   getThreadMessages: (...a: unknown[]) => getThreadMessages(...a),
+  generateThreadTitle: (...a: unknown[]) => generateThreadTitle(...a),
 }));
 
 const req = (body?: unknown) =>
@@ -126,6 +128,45 @@ describe("DELETE /threads/:id", () => {
     deleteThread.mockRejectedValue(new Error("thread not found"));
     const { DELETE } = await import("@/_app/api-routes/thread-item");
     expect((await DELETE(req(), ctx("someone-elses"))).status).toBe(404);
+  });
+});
+
+describe("POST /threads/:id/title", () => {
+  it("401 without a session, store untouched", async () => {
+    getSession.mockResolvedValue(null);
+    const { POST } = await import("@/_app/api-routes/thread-title");
+    const res = await POST(req(), ctx("t1"));
+    expect(res.status).toBe(401);
+    expect(generateThreadTitle).not.toHaveBeenCalled();
+  });
+
+  it("returns the generated title scoped to the session user", async () => {
+    generateThreadTitle.mockResolvedValue("Weekly sync recap");
+    const { POST } = await import("@/_app/api-routes/thread-title");
+    const res = await POST(req(), ctx("t1"));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ title: "Weekly sync recap" });
+    expect(generateThreadTitle).toHaveBeenCalledWith("u1", "t1");
+  });
+
+  it("passes through a null title (empty thread → keep fallback)", async () => {
+    generateThreadTitle.mockResolvedValue(null);
+    const { POST } = await import("@/_app/api-routes/thread-title");
+    const res = await POST(req(), ctx("t1"));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ title: null });
+  });
+
+  it("maps a foreign thread to 404 (ownership)", async () => {
+    generateThreadTitle.mockRejectedValue(new Error("thread not found"));
+    const { POST } = await import("@/_app/api-routes/thread-title");
+    expect((await POST(req(), ctx("someone-elses"))).status).toBe(404);
+  });
+
+  it("re-throws unexpected errors (not swallowed as 404)", async () => {
+    generateThreadTitle.mockRejectedValue(new Error("model down"));
+    const { POST } = await import("@/_app/api-routes/thread-title");
+    await expect(POST(req(), ctx("t1"))).rejects.toThrow("model down");
   });
 });
 

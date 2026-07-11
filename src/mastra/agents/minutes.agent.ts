@@ -1,5 +1,7 @@
 import { Agent } from "@mastra/core/agent";
-import { createModel } from "@/mastra/model";
+import { Memory } from "@mastra/memory";
+import { createModel, createEmbedder } from "@/mastra/model";
+import { getMastraStore, getMastraVector } from "@/mastra/storage";
 import {
   getRecallTranscriptTool,
   getRecallRecordingTool,
@@ -18,8 +20,15 @@ import {
  * The supervisor delegates here via its `agents` field; `description` is what
  * the auto-generated delegation tool advertises to the supervisor's model.
  *
- * No memory of its own → it inherits the supervisor's memory (thread + working
- * memory) during delegation, so it sees the same conversation context.
+ * TWO entry points, hence its OWN memory:
+ *  - As a sub-agent (supervisor delegation): the supervisor passes it the botId
+ *    and the delegated task; the delegation is one-shot, so memory is moot there.
+ *  - DIRECTLY, as the meeting notebook's agent: the notebook calls /api/chat with
+ *    agentId="minutesAgent", a per-meeting threadId, and the botId pinned via a
+ *    system message. Here the conversation IS persisted — so this agent needs its
+ *    own Memory (same PG schema `mastra`, resourceId-scoped to the user). Without
+ *    it, `agent.stream({ memory: { thread, resource } })` would have nowhere to
+ *    persist/recall the notebook conversation.
  */
 export const minutesAgent = new Agent({
   id: "minutesAgent",
@@ -42,6 +51,33 @@ Rules:
 - Report results in natural language — never dump raw JSON.
 - If the recording/transcript isn't ready yet, say so plainly and suggest trying again shortly.`,
   model: () => createModel(),
+  // Own persistent memory in PG (schema `mastra`) — used when the notebook talks
+  // to this agent DIRECTLY (one thread per meeting, resourceId-scoped to the
+  // user). Lazy for the same reason as the supervisor's: createEmbedder() reads
+  // FIREWORKS_API_KEY via requireEnv (throws if absent), so building it per
+  // request keeps `next build` working env-free.
+  //  - generateTitle: names the meeting thread from the first user message and
+  //    persists it via updateThread (async, doesn't slow the response).
+  //  - semanticRecall (resource-scoped): notebook turns are embedded (Fireworks
+  //    Qwen3-Embedding-8B) into pgvector and retrieved by meaning, so a long
+  //    back-and-forth about one meeting can pull the relevant earlier turn back.
+  //  - No workingMemory: the notebook is scoped to ONE meeting, not a durable
+  //    per-user profile (that lives on the supervisor).
+  memory: () =>
+    new Memory({
+      storage: getMastraStore(),
+      vector: getMastraVector(),
+      embedder: createEmbedder(),
+      options: {
+        lastMessages: 20,
+        generateTitle: true,
+        semanticRecall: {
+          topK: 5,
+          messageRange: 2,
+          scope: "resource",
+        },
+      },
+    }),
   tools: {
     summarize_meeting: summarizeRecallMeetingTool,
     get_participants: getRecallParticipantsTool,
