@@ -11,7 +11,8 @@ import { requireEnv } from "@/shared/lib/env";
  * Valid regions: us-west-2 | us-east-1 | eu-central-1 | ap-northeast-1.
  */
 
-const DEFAULT_REGION = "us-east-1";
+/** Default Recall region when RECALL_REGION is unset (resources are region-local). */
+export const DEFAULT_REGION = "us-east-1";
 
 function baseUrl(): string {
   const region = process.env.RECALL_REGION || DEFAULT_REGION;

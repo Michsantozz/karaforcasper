@@ -32,16 +32,33 @@ import { encryptToken } from "@/server/crypto/token-cipher";
 const requireEmailVerification =
   process.env.REQUIRE_EMAIL_VERIFICATION === "true";
 
-// Trusted origins (better-auth CSRF/origin check). Includes the production
-// domain (env) + localhost on dev ports, so the same build works both
-// through the tunnel and accessed directly on localhost.
+// Trusted origins (better-auth CSRF/origin check). The production domain comes
+// from env (BETTER_AUTH_URL / NEXT_PUBLIC_APP_URL — validated at boot); the
+// localhost ports let the same build work through a tunnel and directly on
+// localhost in dev. Extra dev origins go in AUTH_EXTRA_TRUSTED_ORIGINS (CSV) so
+// no host is hardcoded in source.
+const devOrigins =
+  process.env.NODE_ENV === "production"
+    ? []
+    : ["http://localhost:3000", "http://localhost:3001", "http://localhost:3009"];
+
 const trustedOrigins = [
   process.env.BETTER_AUTH_URL,
   process.env.NEXT_PUBLIC_APP_URL,
-  "https://casper.careglyph.com",
-  "http://localhost:3000",
-  "http://localhost:3009",
+  ...(process.env.AUTH_EXTRA_TRUSTED_ORIGINS?.split(",").map((s) => s.trim()) ??
+    []),
+  ...devOrigins,
 ].filter((v): v is string => Boolean(v));
+
+// Google OAuth creds — both required together (env-schema enforces the pair).
+// `null` when unconfigured so we can skip registering the social provider.
+const googleCreds =
+  process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET
+    ? {
+        clientId: process.env.GOOGLE_CLIENT_ID,
+        clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+      }
+    : null;
 
 // Encrypts the token columns of an account record in place (only the fields
 // that are present). `account` here is better-auth's partial write payload, so
@@ -115,14 +132,20 @@ export const auth = betterAuth({
       "/forget-password": { window: 60, max: 3 },
     },
   },
-  socialProviders: {
-    google: {
-      clientId: process.env.GOOGLE_CLIENT_ID as string,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET as string,
-      accessType: "offline",
-      prompt: "select_account consent",
-    },
-  },
+  // Google social sign-in is optional (calendar OAuth is all-or-nothing, see
+  // env-schema). Register the provider only when both creds are present so a
+  // missing var fails loud at boot (env-schema) instead of silently coercing
+  // `undefined as string` and breaking the OAuth exchange at request time.
+  socialProviders: googleCreds
+    ? {
+        google: {
+          clientId: googleCreds.clientId,
+          clientSecret: googleCreds.clientSecret,
+          accessType: "offline",
+          prompt: "select_account consent",
+        },
+      }
+    : {},
   plugins: [
     // Magic link sign-in (passwordless email). Sent via Resend.
     magicLink({

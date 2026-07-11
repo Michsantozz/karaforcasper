@@ -1,6 +1,7 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { recallFetch } from "@/server/recall/client";
+import { DEFAULT_TIME_ZONE } from "@/shared/lib/config";
 import {
   listCalendarEvents,
   getCalendarAccessToken,
@@ -349,7 +350,7 @@ export const getFreeSlotsTool = createTool({
     const day = await getDayAvailability({
       userId,
       dateIso: input.dateIso,
-      timeZone: input.timeZone || "America/Sao_Paulo",
+      timeZone: input.timeZone || DEFAULT_TIME_ZONE,
     });
     return {
       dateIso: day.dateIso,

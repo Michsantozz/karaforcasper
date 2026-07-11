@@ -8,6 +8,7 @@ import {
 } from "@assistant-ui/react";
 import { Calendar } from "@/shared/ui/calendar";
 import { cn } from "@/shared/lib/utils";
+import { DEFAULT_TIME_ZONE } from "@/shared/lib/config";
 
 /**
  * pick_date — frontend tool that renders a clickable CALENDAR + TIME PICKER
@@ -60,12 +61,12 @@ type AvailabilityResponse = {
   noCalendar: boolean;
 };
 
-/** Browser timezone (e.g. "America/Sao_Paulo"), falling back to BRT. */
+/** Browser timezone (e.g. "America/Sao_Paulo"), falling back to the app default. */
 function browserTz(): string {
   try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Sao_Paulo";
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || DEFAULT_TIME_ZONE;
   } catch {
-    return "America/Sao_Paulo";
+    return DEFAULT_TIME_ZONE;
   }
 }
 

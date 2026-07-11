@@ -16,12 +16,6 @@ import { z } from "zod";
  * so the caller (`instrumentation.ts`) skips validation during the build phase.
  */
 
-const boolFromEnv = (def: boolean) =>
-  z
-    .string()
-    .optional()
-    .transform((v) => (v === undefined ? def : v === "true" || v === "1"));
-
 // Base surface — vars that are always required for the app to function at all.
 const baseSchema = z.object({
   // Postgres — Drizzle + better-auth + Mastra memory. Hard requirement.
@@ -42,7 +36,16 @@ const togglesSchema = z.object({
     .enum(["fireworks", "bedrock"])
     .optional()
     .transform((v) => v ?? "fireworks"),
-  INNGEST_DEV: boolFromEnv(true),
+  // Defaults to dev mode unless NODE_ENV=production (mirrors inngest/client.ts,
+  // which fails closed to prod behaviour when the var is unset).
+  INNGEST_DEV: z
+    .string()
+    .optional()
+    .transform((v) =>
+      v === undefined
+        ? process.env.NODE_ENV !== "production"
+        : v === "true" || v === "1",
+    ),
   // Google/calendar OAuth is optional wiring — required only if any of its
   // vars is present (partial config is a misconfiguration we want to catch).
   GOOGLE_CLIENT_ID: z.string().optional(),
@@ -90,6 +93,30 @@ function refine(env: NodeJS.ProcessEnv, toggles: Toggles, ctx: z.RefinementCtx) 
   if (!toggles.INNGEST_DEV) {
     require("INNGEST_SIGNING_KEY", "when INNGEST_DEV is off (production)");
     require("INNGEST_EVENT_KEY", "when INNGEST_DEV is off (production)");
+  }
+
+  // Production must set a public URL and a real sender: the dev fallbacks
+  // (localhost URL, resend.dev sandbox) would otherwise ship silently — emails
+  // sent from the sandbox address and deep-links pointing at localhost.
+  if (env.NODE_ENV === "production") {
+    if (
+      !env.NEXT_PUBLIC_APP_URL &&
+      !env.APP_URL &&
+      !env.BETTER_AUTH_URL
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["NEXT_PUBLIC_APP_URL"],
+        message:
+          "a public app URL is required in production (set NEXT_PUBLIC_APP_URL, APP_URL, or BETTER_AUTH_URL) — otherwise email links point at localhost",
+      });
+    }
+    if (env.RESEND_API_KEY) {
+      require(
+        "EMAIL_FROM",
+        "in production when RESEND_API_KEY is set (else emails ship from the resend.dev sandbox)",
+      );
+    }
   }
 
   // Google OAuth: all-or-nothing. If any var is set, require the full set.

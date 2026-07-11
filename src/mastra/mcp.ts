@@ -1,4 +1,5 @@
 import { MCPClient } from "@mastra/mcp";
+import { DEFAULT_REGION } from "@/server/recall/client";
 
 /**
  * MCP client connecting the agent to Recall.ai.
@@ -12,7 +13,7 @@ import { MCPClient } from "@mastra/mcp";
  * the canonical pattern: resolved per request, no top-level await at boot.
  */
 const recallApiKey = process.env.RECALL_API_KEY;
-const recallRegion = process.env.RECALL_REGION || "us-east-1";
+const recallRegion = process.env.RECALL_REGION || DEFAULT_REGION;
 
 export const mcp = new MCPClient({
   id: "recall-mcp",
