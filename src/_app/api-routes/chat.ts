@@ -126,6 +126,16 @@ export async function POST(req: Request) {
       clientTools: toClientTools(tools),
     } as Parameters<typeof handleChatStream>[0]["params"],
     version: "v6",
-  });
+    // handleChatStream masks stream errors by default (start→finish, no text).
+    // Surface the real cause into the stream so a model/provider/processor
+    // failure is diagnosable. Server-side we log ONLY the error message — never
+    // the full error object, which can carry request/response bodies (user +
+    // model content = PII) from the provider SDK.
+    onError: (error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("[chat] stream error:", message);
+      return message;
+    },
+  } as Parameters<typeof handleChatStream>[0]);
   return createUIMessageStreamResponse({ stream });
 }
