@@ -34,6 +34,12 @@ vi.mock("@/shared/db/rls", () => ({
   withUserScope: (userId: string, fn: () => unknown) =>
     withUserScope(userId, fn),
 }));
+// Route throttles via checkRateLimit (hits pg) — stub it to always allow so the
+// unit test needs no DB.
+vi.mock("@/shared/lib/rate-limit", async (orig) => ({
+  ...(await orig<typeof import("@/shared/lib/rate-limit")>()),
+  checkRateLimit: vi.fn(async () => ({ ok: true, count: 1, retryAfter: 0 })),
+}));
 
 function req(query = ""): Request {
   return new Request(`http://x/api/meetings${query}`);
