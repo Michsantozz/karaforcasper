@@ -10,7 +10,7 @@ DROP TABLE "signature_requests" CASCADE;--> statement-breakpoint
 DROP TABLE "usage_ledger" CASCADE;--> statement-breakpoint
 DROP TABLE "user_wallets" CASCADE;--> statement-breakpoint
 DROP TABLE "wallet_link_nonces" CASCADE;--> statement-breakpoint
-ALTER TABLE "notifications" DROP CONSTRAINT "notifications_request_id_signature_requests_id_fk";
+ALTER TABLE "notifications" DROP CONSTRAINT IF EXISTS "notifications_request_id_signature_requests_id_fk";
 --> statement-breakpoint
 ALTER TABLE "notifications" DROP COLUMN "request_id";--> statement-breakpoint
 DROP TYPE "public"."signature_request_kind";--> statement-breakpoint

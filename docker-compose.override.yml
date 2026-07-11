@@ -9,5 +9,21 @@
 
 services:
   app:
-    ports:
+    # !override REPLACES the base ports list (compose merges lists by default,
+    # which would keep the base 3000:3000 and collide with evolution_frontend).
+    ports: !override
       - "3009:3000"
+
+  inngest:
+    # `inngest start` (prod) não autodescobre como o dev. Precisa do --sdk-url
+    # apontando pro endpoint do app (rede interna do compose) pra sincronizar as
+    # functions/workflows por polling. Sem isso: 0 functions, crons não disparam.
+    command: !override
+      - "inngest"
+      - "start"
+      - "--sdk-url"
+      - "http://app:3000/api/inngest"
+    # inngest só descobre depois do app estar healthy.
+    depends_on:
+      app:
+        condition: service_healthy

@@ -60,8 +60,12 @@ const nextConfig: NextConfig = {
   // Build ID estável entre imagens/ambientes. Sem isto cada `next build` gera
   // um ID novo → version skew (assets 404, "Failed to find Server Action") em
   // rolling deploy. Injetado via CI (git SHA); cai no default se ausente.
+  // `||` (não `??`) trata string VAZIA como ausente: `GIT_HASH: ${GIT_HASH:-}`
+  // no compose vira "" quando não setado, e "" ?? x = "" geraria um BUILD_ID
+  // vazio → runtime "Invariant: buildID is required". Retornar null deixa o
+  // Next gerar um ID aleatório (o default correto).
   generateBuildId: async () =>
-    process.env.GIT_HASH ?? process.env.SOURCE_COMMIT ?? null,
+    process.env.GIT_HASH || process.env.SOURCE_COMMIT || null,
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },
