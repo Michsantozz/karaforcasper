@@ -19,8 +19,8 @@ import {
  * ESLint boundary can't import `notifications`. The bell is self-contained and
  * the app is what injects it — same pattern as OnboardingDialog.
  *
- * Clicking a notification with a requestId deep-links to /sign/:id and marks
- * it as read. Without a requestId (e.g. "minutes ready"), it goes to /meetings.
+ * Clicking a notification (e.g. "minutes ready") marks it read and opens its
+ * deep link (e.g. /meetings/[botId]), falling back to the /meetings index.
  */
 export function NotificationBell() {
   const { data: session } = useSession();
@@ -31,6 +31,13 @@ export function NotificationBell() {
 
   const [open, setOpen] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
+
+  // Mount gate: the server never has a session (client-only auth), so it always
+  // renders null. Rendering the bell before mount would diverge from the server
+  // HTML and trip a hydration mismatch. Show it only after the client mounts.
+  const [mounted, setMounted] = useState(false);
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => setMounted(true), []);
 
   // Fecha ao clicar fora / Esc.
   useEffect(() => {
@@ -51,7 +58,7 @@ export function NotificationBell() {
     };
   }, [open]);
 
-  if (!enabled) return null;
+  if (!mounted || !enabled) return null;
 
   const items = data?.notifications ?? [];
   const unread = data?.unreadCount ?? 0;
@@ -59,12 +66,12 @@ export function NotificationBell() {
   function openNotification(n: Notification) {
     if (!n.readAt) markRead.mutate(n.id);
     setOpen(false);
-    // Deep-link: multisig request → signing screen; otherwise → meetings.
-    router.push(n.requestId ? `/sign/${n.requestId}` : "/meetings");
+    // Deep link straight to the meeting notebook when present; else the index.
+    router.push(n.link ?? "/meetings");
   }
 
   return (
-    <div className="fixed bottom-3 left-2 z-50 md:left-2.5" ref={panelRef}>
+    <div className="fixed bottom-3 left-2 z-50 md:left-16" ref={panelRef}>
       {open && (
         <div className="absolute bottom-11 left-0 flex w-80 max-w-[calc(100vw-1.5rem)] flex-col rounded-[10px] border bg-popover shadow-lg">
           <div className="flex items-center justify-between border-b px-3 py-2">
@@ -111,7 +118,6 @@ export function NotificationBell() {
                       </span>
                       <span className="pl-0 font-mono text-[10px] text-muted-foreground">
                         {fmtWhen(n.createdAt)}
-                        {n.requestId ? " · open to sign" : ""}
                       </span>
                     </button>
                   </li>

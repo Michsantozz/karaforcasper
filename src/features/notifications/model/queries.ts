@@ -6,8 +6,8 @@
  * The backend (GET /api/notifications, POST /api/notifications/:id/read) already
  * exists; this file holds the query key, the type, and the hooks that the
  * global bell (NotificationBell) consumes. Its own slice so the AppShell (auth
- * feature) can render the bell without crossing the boundary into `multisig`
- * — notifications is cross-cutting to the product.
+ * feature) can render the bell without crossing the boundary — notifications is
+ * cross-cutting to the product.
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -16,8 +16,8 @@ export interface Notification {
   id: string;
   type: string;
   message: string;
-  /** Related multisig request (deep-link to /sign/:id), if any. */
-  requestId: string | null;
+  /** Deep link to open when clicked (e.g. /meetings/[botId]); null = index. */
+  link: string | null;
   readAt: string | null;
   createdAt: string;
 }
@@ -27,9 +27,8 @@ interface NotificationsResponse {
   unreadCount: number;
 }
 
-// Slice's own key (the /multisig dashboard uses ["notifications"] with a
-// different select; we isolate this so our polling/refetch options don't
-// leak into its query).
+// Slice's own key, isolated so our polling/refetch options don't leak into
+// any other notifications query.
 const notificationsKey = ["notifications", "bell"] as const;
 
 async function getJson<T>(url: string): Promise<T> {
@@ -40,7 +39,7 @@ async function getJson<T>(url: string): Promise<T> {
 
 /**
  * Lists the authenticated user's notifications. Does light polling (30s) so
- * the bell reflects new signature requests / ready minutes without a reload.
+ * the bell reflects ready minutes without a reload.
  * `enabled=false` (e.g. logged out) disables the query and the polling.
  */
 export function useNotifications(enabled = true) {

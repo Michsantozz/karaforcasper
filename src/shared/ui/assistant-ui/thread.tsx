@@ -188,13 +188,13 @@ const ThreadWelcome: FC = () => {
           aria-hidden
           className="size-1.5 animate-pulse rounded-[1px] bg-(--thread-accent-primary)"
         />
-        casper agent · testnet
+        meeting assistant · recall.ai
       </span>
       <h1 className="aui-thread-welcome-message-inner fade-in slide-in-from-bottom-1 animate-in fill-mode-both text-2xl font-semibold tracking-tight duration-200">
-        How can I help on-chain today?
+        Run your meetings on autopilot.
       </h1>
       <p className="aui-thread-welcome-subtitle fade-in slide-in-from-bottom-1 animate-in fill-mode-both text-sm text-muted-foreground duration-300">
-        Check balances, transfer CSPR, or trade on the CSPR.trade DEX.
+        Schedule, record, transcribe, and summarize — decisions and action items, ready when the call ends.
       </p>
     </div>
   );
@@ -233,7 +233,7 @@ const Composer: FC = () => {
               aria-hidden
               className="size-1.5 animate-pulse rounded-[1px] bg-(--thread-accent-primary)"
             />
-            casper-test
+            meeting-assistant
           </span>
         </div>
         <ComposerPrimitive.AttachmentDropzone render={<div data-slot="aui_composer-shell" className="data-[dragging=true]:border-(--thread-accent-primary) focus-within:border-(--thread-accent-primary) flex w-full flex-col gap-2 rounded-[5px] border bg-background p-(--composer-padding) transition-colors data-[dragging=true]:border-dashed data-[dragging=true]:bg-(--thread-accent-primary-soft)" />}><ComposerAttachments /><ComposerPrimitive.Input

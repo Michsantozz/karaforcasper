@@ -6,8 +6,7 @@ import { user } from "@/shared/db/auth-schema";
 
 /**
  * Transactional email sending (Resend). External PUSH channel — reaches the
- * user even when logged out (minutes ready, signature request), complementing
- * the in-app bell.
+ * user even when logged out (minutes ready), complementing the in-app bell.
  *
  * Graceful degradation: without RESEND_API_KEY, sendEmail becomes a no-op
  * (logs in dev) and NEVER throws — it must not bring down the bot webhook or
@@ -86,7 +85,7 @@ function shell(title: string, body: string, cta?: { label: string; href: string 
     <h2 style="font-size:18px;margin:0 0 8px">${title}</h2>
     <div style="font-size:14px;line-height:1.6;color:#333">${body}</div>
     ${button}
-    <p style="margin-top:24px;font-family:monospace;font-size:11px;color:#999">CasperAgent · meetings → verifiable on-chain decisions</p>
+    <p style="margin-top:24px;font-family:monospace;font-size:11px;color:#999">CasperAgent · meetings, recorded and summarized</p>
   </div>`;
 }
 
@@ -94,16 +93,22 @@ function shell(title: string, body: string, cta?: { label: string; href: string 
 export async function emailMeetingSummaryReady(input: {
   userId: string;
   detail: string;
+  /** Bot id, for the deep link straight to the meeting notebook. */
+  botId?: string;
 }): Promise<void> {
   const to = await userEmailById(input.userId);
   if (!to) return;
+  // Deep-link to the meeting notebook when we know the bot; else the index.
+  const href = input.botId
+    ? `${appUrl()}/meetings/${input.botId}`
+    : `${appUrl()}/meetings`;
   await sendEmail({
     to,
     subject: "Meeting minutes ready",
     html: shell(
       "Your minutes are ready",
-      `The meeting${input.detail} has been processed. Review the summary, decisions, and action items — and turn decisions into on-chain actions (notarize the minutes or prepare a multisig payment).`,
-      { label: "Open minutes", href: `${appUrl()}/meetings` },
+      `The meeting${input.detail} has been processed. Review the summary, decisions, and action items.`,
+      { label: "Open minutes", href },
     ),
   });
 }
@@ -154,49 +159,4 @@ export async function emailMagicLink(input: {
       { label: "Sign in", href: input.url },
     ),
   });
-}
-
-/** Shared body of the signature invitation (in-app user OR external). */
-function signatureRequestEmail(input: {
-  to: string;
-  requestId: string;
-  description?: string | null;
-}) {
-  return {
-    to: input.to,
-    subject: "You've been called to sign a payment",
-    html: shell(
-      "Signature requested",
-      `You've been added as a signer on a multisig payment${
-        input.description ? `: <strong>${input.description}</strong>` : ""
-      }. Open the link, connect your wallet, and sign so the payment can move forward to quorum. No account needed — just the wallet.`,
-      { label: "Review and sign", href: `${appUrl()}/sign/${input.requestId}` },
-    ),
-  };
-}
-
-/** "You've been called" email — triggered when creating a multisig request. */
-export async function emailSignatureRequested(input: {
-  userId: string;
-  requestId: string;
-  description?: string | null;
-}): Promise<void> {
-  const to = await userEmailById(input.userId);
-  if (!to) return;
-  await sendEmail(
-    signatureRequestEmail({ ...input, to }),
-  );
-}
-
-/**
- * Invites an EXTERNAL signer (no linked account) via direct email: the
- * creator provided the address when creating the request. Same body as the
- * in-app invitation, but addressed to the email string instead of resolving by userId.
- */
-export async function emailExternalSignatureRequested(input: {
-  to: string;
-  requestId: string;
-  description?: string | null;
-}): Promise<void> {
-  await sendEmail(signatureRequestEmail(input));
 }

@@ -4,7 +4,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
  * Canal de e-mail transacional (server/email.ts). Duas garantias críticas:
  *
  *  1. Degradação graciosa: sem RESEND_API_KEY, sendEmail é no-op e NUNCA lança —
- *     não pode derrubar o webhook de bot nem a criação de request multisig.
+ *     não pode derrubar o webhook de bot.
  *  2. Com key, chama o SDK Resend com from/to/subject/html corretos; e se o SDK
  *     lançar, o erro é engolido (best-effort), sem propagar ao chamador.
  *
@@ -147,7 +147,7 @@ describe("templates transacionais", () => {
     expect(call.html).toContain("https://link/reset?t=1");
   });
 
-  it("emailMeetingSummaryReady: resolve o e-mail do dono e aponta para /meetings", async () => {
+  it("emailMeetingSummaryReady: sem botId aponta para o índice /meetings", async () => {
     limit.mockResolvedValue([{ email: "owner@x.com" }]);
     send.mockResolvedValue({ id: "e" });
     const { emailMeetingSummaryReady } = await import("@/server/email");
@@ -157,60 +157,23 @@ describe("templates transacionais", () => {
     expect(call.html).toContain("https://app.example.com/meetings");
   });
 
+  it("emailMeetingSummaryReady: com botId faz deep-link para o notebook", async () => {
+    limit.mockResolvedValue([{ email: "owner@x.com" }]);
+    send.mockResolvedValue({ id: "e" });
+    const { emailMeetingSummaryReady } = await import("@/server/email");
+    await emailMeetingSummaryReady({
+      userId: "u1",
+      detail: " (30 min)",
+      botId: "bot-42",
+    });
+    const call = send.mock.calls[0][0];
+    expect(call.html).toContain("https://app.example.com/meetings/bot-42");
+  });
+
   it("emailMeetingSummaryReady: sem e-mail do dono, não envia", async () => {
     limit.mockResolvedValue([]);
     const { emailMeetingSummaryReady } = await import("@/server/email");
     await emailMeetingSummaryReady({ userId: "ghost", detail: "" });
     expect(send).not.toHaveBeenCalled();
-  });
-
-  it("emailSignatureRequested: aponta para /sign/:requestId", async () => {
-    limit.mockResolvedValue([{ email: "signer@x.com" }]);
-    send.mockResolvedValue({ id: "e" });
-    const { emailSignatureRequested } = await import("@/server/email");
-    await emailSignatureRequested({
-      userId: "u1",
-      requestId: "req-42",
-      description: "Pagar fornecedor",
-    });
-    const call = send.mock.calls[0][0];
-    expect(call.to).toBe("signer@x.com");
-    expect(call.html).toContain("https://app.example.com/sign/req-42");
-    expect(call.html).toContain("Pagar fornecedor");
-  });
-
-  it("emailSignatureRequested: sem e-mail do usuário resolvido, não envia", async () => {
-    limit.mockResolvedValue([]);
-    const { emailSignatureRequested } = await import("@/server/email");
-    await emailSignatureRequested({ userId: "ghost", requestId: "req-1" });
-    expect(send).not.toHaveBeenCalled();
-  });
-
-  it("emailExternalSignatureRequested: manda para o e-mail direto (sem resolver userId)", async () => {
-    send.mockResolvedValue({ id: "e" });
-    const { emailExternalSignatureRequested } = await import("@/server/email");
-    await emailExternalSignatureRequested({
-      to: "externo@fora.com",
-      requestId: "req-99",
-      description: "Pagar consultor",
-    });
-    const call = send.mock.calls[0][0];
-    // Endereça direto ao e-mail informado; não passa por userEmailById (nenhuma
-    // query de db resolvida neste teste — limit não é mockado com linha).
-    expect(call.to).toBe("externo@fora.com");
-    expect(call.html).toContain("https://app.example.com/sign/req-99");
-    expect(call.html).toContain("Pagar consultor");
-  });
-
-  it("emailExternalSignatureRequested: funciona sem descrição", async () => {
-    send.mockResolvedValue({ id: "e" });
-    const { emailExternalSignatureRequested } = await import("@/server/email");
-    await emailExternalSignatureRequested({
-      to: "externo@fora.com",
-      requestId: "req-100",
-    });
-    const call = send.mock.calls[0][0];
-    expect(call.to).toBe("externo@fora.com");
-    expect(call.html).toContain("https://app.example.com/sign/req-100");
   });
 });

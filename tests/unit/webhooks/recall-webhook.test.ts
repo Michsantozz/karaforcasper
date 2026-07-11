@@ -27,7 +27,7 @@ vi.mock("@/shared/db/rls", () => ({
     throw new Error("scopedDb not available in this unit test");
   },
 }));
-// auto-schedule toca billing/Recall; o gate de sync_events é out-of-scope aqui.
+// auto-schedule toca Recall; o gate de sync_events é out-of-scope aqui.
 const autoScheduleForCalendar = vi.fn();
 vi.mock("@/server/recall/auto-schedule", () => ({
   autoScheduleForCalendar: (...a: unknown[]) => autoScheduleForCalendar(...a),

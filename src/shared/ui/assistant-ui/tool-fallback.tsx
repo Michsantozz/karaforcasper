@@ -33,30 +33,22 @@ const pressable = "active:scale-[0.98]";
  * Classifies a tool's origin by name, to correctly label the tool-call
  * header (instead of marking everything as "mcp").
  *
- * - mcp:    tools served by MCP servers (recall_*, csprCloud_*, csprTrade_*).
- * - casper: native Casper SDK tools (wallet/transfer/balance/staking…).
+ * - mcp:    tools served by MCP servers (recall_*, mcp_*).
  * - tool:   local app tools (Recall bots, calendar, event creation…).
  */
-type ToolKind = "mcp" | "casper" | "tool";
+type ToolKind = "mcp" | "tool";
 
-const MCP_PREFIXES = ["recall_", "csprcloud_", "csprtrade_", "mcp_"];
-const CASPER_NAMES = new Set([
-  "get_agent_wallet",
-  "get_balance",
-  "transfer_cspr",
-]);
+const MCP_PREFIXES = ["recall_", "mcp_"];
 
 function classifyTool(toolName: string): ToolKind {
   const name = toolName.toLowerCase();
   if (MCP_PREFIXES.some((p) => name.startsWith(p))) return "mcp";
-  if (CASPER_NAMES.has(name) || name.startsWith("casper_")) return "casper";
   return "tool";
 }
 
 /** Dot color by tool origin. */
 const KIND_DOT: Record<ToolKind, string> = {
   mcp: "bg-(--thread-accent-secondary)",
-  casper: "bg-(--thread-accent-primary)",
   tool: "bg-(--thread-accent-primary)",
 };
 

@@ -10,11 +10,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
  * scope) so it doesn't leak cache between requests in Next's SSR and doesn't
  * get recreated on every render.
  *
- * Defaults chosen for the multisig/on-chain flow:
+ * Defaults chosen for the meeting/notifications flow:
  *  - staleTime 3s: screens do short polling (5–8s); keeping a low staleTime
  *    avoids redundant refetches between re-renders without delaying updates.
- *  - refetchOnWindowFocus: revalidates when returning to the tab (remote
- *    signers may have signed while the tab was in the background).
+ *  - refetchOnWindowFocus: revalidates when returning to the tab (new minutes
+ *    may have arrived while the tab was in the background).
  *  - retry 1: /api routes are local; a real failure is network-related, not
  *    worth retrying further.
  */

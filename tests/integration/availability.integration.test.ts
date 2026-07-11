@@ -99,7 +99,7 @@ describe("getDayAvailability — descarte de passado", () => {
     // "agora" = 13:30 local do próprio dia → 09,10,11,12,13 já passaram.
     const nowMidday = Date.parse(`${DATE}T13:30:00-03:00`);
     const day = await getDayAvailability({ userId: "u1", dateIso: DATE, timeZone: TZ, now: nowMidday });
-    const past = day.slots.filter((s) => s.reason === "já passou").map((s) => s.timeHm);
+    const past = day.slots.filter((s) => s.reason === "already past").map((s) => s.timeHm);
     expect(past).toEqual(["09:00", "10:00", "11:00", "12:00", "13:00"]);
     // 14:00 em diante seguem livres.
     expect(day.slots.find((s) => s.timeHm === "14:00")!.busy).toBe(false);

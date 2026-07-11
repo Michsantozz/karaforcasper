@@ -6,8 +6,7 @@ import userEvent from "@testing-library/user-event";
  * NotificationBell — sino global. Contrato:
  *  - deslogado (sessão nula): não renderiza nada;
  *  - badge mostra a contagem de não-lidas (9+ acima de 9);
- *  - clicar abre o painel; clicar num item marca como lido e faz deep-link
- *    (/sign/:requestId quando há request, senão /meetings).
+ *  - clicar abre o painel; clicar num item marca como lido e navega para /meetings.
  *
  * Hooks de sessão/dados e o router do Next são mockados — isolamos a UI do sino.
  */
@@ -36,9 +35,9 @@ import { NotificationBell } from "@/features/notifications/ui/NotificationBell";
 function notif(over: Record<string, unknown> = {}) {
   return {
     id: "n1",
-    type: "signature_request",
-    message: "Você foi convocado para assinar",
-    requestId: "req-1",
+    type: "meeting_summary_ready",
+    message: "Ata pronta",
+    link: "/meetings/bot-1",
     readAt: null,
     createdAt: new Date().toISOString(),
     ...over,
@@ -86,10 +85,10 @@ describe("NotificationBell — badge de não-lidas", () => {
   });
 });
 
-describe("NotificationBell — painel e deep-link", () => {
+describe("NotificationBell — painel e navegação", () => {
   it("abre o painel ao clicar e lista as notificações", async () => {
     notifData = {
-      notifications: [notif({ message: "Ata pronta", requestId: null })],
+      notifications: [notif({ message: "Ata pronta" })],
       unreadCount: 1,
     };
     const user = userEvent.setup();
@@ -106,23 +105,23 @@ describe("NotificationBell — painel e deep-link", () => {
     expect(screen.getByText(/nothing here/i)).toBeInTheDocument();
   });
 
-  it("clicar num item com requestId marca lido e vai para /sign/:id", async () => {
+  it("clicar num item marca lido e faz deep-link para o notebook", async () => {
     notifData = {
-      notifications: [notif({ id: "nX", requestId: "req-42" })],
+      notifications: [notif({ id: "nX", link: "/meetings/bot-9" })],
       unreadCount: 1,
     };
     const user = userEvent.setup();
     render(<NotificationBell />);
     await user.click(screen.getByRole("button", { name: /notifications/i }));
-    await user.click(screen.getByText(/convocado para assinar/i));
+    await user.click(screen.getByText("Ata pronta"));
 
     expect(markMutate).toHaveBeenCalledWith("nX");
-    expect(push).toHaveBeenCalledWith("/sign/req-42");
+    expect(push).toHaveBeenCalledWith("/meetings/bot-9");
   });
 
-  it("item sem requestId leva para /meetings", async () => {
+  it("sem link, cai no índice /meetings", async () => {
     notifData = {
-      notifications: [notif({ id: "nY", message: "Ata pronta", requestId: null })],
+      notifications: [notif({ id: "nY", link: null })],
       unreadCount: 1,
     };
     const user = userEvent.setup();
@@ -136,16 +135,16 @@ describe("NotificationBell — painel e deep-link", () => {
   it("não re-marca lido um item já lido, mas ainda navega", async () => {
     notifData = {
       notifications: [
-        notif({ id: "nZ", readAt: new Date().toISOString(), requestId: "req-9" }),
+        notif({ id: "nZ", link: "/meetings/bot-3", readAt: new Date().toISOString() }),
       ],
       unreadCount: 0,
     };
     const user = userEvent.setup();
     render(<NotificationBell />);
     await user.click(screen.getByRole("button", { name: /notifications/i }));
-    await user.click(screen.getByText(/convocado para assinar/i));
+    await user.click(screen.getByText("Ata pronta"));
 
     expect(markMutate).not.toHaveBeenCalled();
-    expect(push).toHaveBeenCalledWith("/sign/req-9");
+    expect(push).toHaveBeenCalledWith("/meetings/bot-3");
   });
 });
