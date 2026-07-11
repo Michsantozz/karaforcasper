@@ -1,11 +1,21 @@
 import "server-only";
-import { and, eq, inArray, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, lt, or, sql } from "drizzle-orm";
 import { scopedDb } from "@/shared/db/rls";
 import {
   meetingRecords,
+  meetingRecordStatusEnum,
   type MeetingRecordRow,
   type NewMeetingRecordRow,
 } from "@/shared/db/schema";
+
+/** Persisted meeting status values (from the DB enum) — for filter validation. */
+export type MeetingRecordStatus = (typeof meetingRecordStatusEnum.enumValues)[number];
+const MEETING_STATUSES = new Set<string>(meetingRecordStatusEnum.enumValues);
+
+/** True if `s` is a valid meeting_record status (for query-param filtering). */
+export function isMeetingStatus(s: string): s is MeetingRecordStatus {
+  return MEETING_STATUSES.has(s);
+}
 
 /**
  * Repository for persisted meeting minutes (meeting_records) — capability boundary.
@@ -15,6 +25,186 @@ import {
  * avoids re-fetching from Recall and re-paying the LLM on every read, and
  * enables the reconciliation cron to sweep minutes stuck in pending/processing.
  */
+
+/** One row of the meetings list (index). Only the columns the list renders. */
+export type MeetingListItem = Pick<
+  MeetingRecordRow,
+  "botId" | "status" | "meetingUrl" | "summary" | "createdAt" | "updatedAt"
+> & { participantCount: number };
+
+/**
+ * Lists the user's meeting minutes for the index, most recent first.
+ *
+ * RLS-scoped: runs under withUserScope, so it only returns the caller's rows.
+ * `talkShares` doubles as the participant count for the list avatars without
+ * having to re-fetch from Recall.
+ */
+export async function listMeetingRecordsForUser(
+  limit = 100,
+): Promise<MeetingListItem[]> {
+  const rows = await scopedDb()
+    .select({
+      botId: meetingRecords.botId,
+      status: meetingRecords.status,
+      meetingUrl: meetingRecords.meetingUrl,
+      summary: meetingRecords.summary,
+      talkShares: meetingRecords.talkShares,
+      createdAt: meetingRecords.createdAt,
+      updatedAt: meetingRecords.updatedAt,
+    })
+    .from(meetingRecords)
+    .orderBy(desc(meetingRecords.createdAt))
+    .limit(limit);
+
+  return rows.map(({ talkShares, ...r }) => ({
+    ...r,
+    participantCount: talkShares?.length ?? 0,
+  }));
+}
+
+/** A page of meetings + the cursor to fetch the next one (null when exhausted). */
+export interface MeetingPage {
+  items: MeetingListItem[];
+  /** Opaque cursor (ISO createdAt of the last item) for the next page. */
+  nextCursor: string | null;
+}
+
+export interface MeetingPageQuery {
+  /** Keyword: matched (case-insensitive) against summary/overview/transcript. */
+  query?: string;
+  /** Filter to a single record status (done/processing/pending/failed). */
+  status?: MeetingRecordStatus;
+  /** Keyset cursor: return rows strictly OLDER than this ISO createdAt. */
+  cursor?: string;
+  /** Page size (clamped 1..100 by the caller). Default 30. */
+  limit?: number;
+}
+
+/**
+ * Paginated, server-side-searched meetings index — the "library" query.
+ *
+ * Replaces client-side filtering over a 100-row cap: search runs in the DB
+ * (ILIKE over summary/overview/transcript, same predicate as the agent's
+ * search), status filters in SQL, and keyset pagination on createdAt keeps it
+ * stable as new meetings arrive (no OFFSET drift). RLS-scoped: MUST run under
+ * withUserScope — scopedDb() filters to the caller.
+ */
+export async function listMeetingRecordsPage(
+  input: MeetingPageQuery = {},
+): Promise<MeetingPage> {
+  const limit = Math.min(100, Math.max(1, input.limit ?? 30));
+
+  const conds = [];
+  const q = input.query?.trim();
+  if (q) {
+    const pattern = `%${q.replace(/[%_]/g, (c) => `\\${c}`)}%`;
+    conds.push(
+      or(
+        ilike(meetingRecords.summary, pattern),
+        ilike(meetingRecords.overview, pattern),
+        ilike(meetingRecords.transcript, pattern),
+      ),
+    );
+  }
+  if (input.status) conds.push(eq(meetingRecords.status, input.status));
+  // Keyset: next page = rows strictly older than the last createdAt seen.
+  if (input.cursor) conds.push(lt(meetingRecords.createdAt, new Date(input.cursor)));
+
+  // Fetch limit+1 to know whether a further page exists without a count query.
+  const rows = await scopedDb()
+    .select({
+      botId: meetingRecords.botId,
+      status: meetingRecords.status,
+      meetingUrl: meetingRecords.meetingUrl,
+      summary: meetingRecords.summary,
+      talkShares: meetingRecords.talkShares,
+      createdAt: meetingRecords.createdAt,
+      updatedAt: meetingRecords.updatedAt,
+    })
+    .from(meetingRecords)
+    .where(conds.length ? and(...conds) : undefined)
+    .orderBy(desc(meetingRecords.createdAt))
+    .limit(limit + 1);
+
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+  const items = page.map(({ talkShares, ...r }) => ({
+    ...r,
+    participantCount: talkShares?.length ?? 0,
+  }));
+  const nextCursor = hasMore
+    ? page[page.length - 1].createdAt.toISOString()
+    : null;
+
+  return { items, nextCursor };
+}
+
+/** One search hit: enough context for the agent to answer without a re-fetch. */
+export type MeetingSearchHit = Pick<
+  MeetingRecordRow,
+  "botId" | "summary" | "overview" | "topics" | "createdAt"
+> & { snippet: string | null };
+
+/**
+ * Full-text-ish search across the caller's persisted minutes — powers the
+ * agent's cross-meeting Q&A ("what did we decide about pricing?"). Matches
+ * `query` against summary/overview/transcript (case-insensitive ILIKE) and
+ * returns the top hits with a short transcript snippet around the match.
+ *
+ * RLS-scoped: MUST run under withUserScope — scopedDb() filters to the caller.
+ * ILIKE (no tsvector/GIN yet) keeps this migration-free; revisit if slow at scale.
+ */
+export async function searchMeetingRecords(
+  query: string,
+  limit = 5,
+): Promise<MeetingSearchHit[]> {
+  const q = query.trim();
+  if (!q) return [];
+  const pattern = `%${q.replace(/[%_]/g, (c) => `\\${c}`)}%`;
+
+  const rows = await scopedDb()
+    .select({
+      botId: meetingRecords.botId,
+      summary: meetingRecords.summary,
+      overview: meetingRecords.overview,
+      topics: meetingRecords.topics,
+      transcript: meetingRecords.transcript,
+      createdAt: meetingRecords.createdAt,
+    })
+    .from(meetingRecords)
+    .where(
+      and(
+        eq(meetingRecords.status, "done"),
+        or(
+          ilike(meetingRecords.summary, pattern),
+          ilike(meetingRecords.overview, pattern),
+          ilike(meetingRecords.transcript, pattern),
+        ),
+      ),
+    )
+    .orderBy(desc(meetingRecords.createdAt))
+    .limit(limit);
+
+  return rows.map(({ transcript, ...r }) => ({
+    ...r,
+    snippet: transcriptSnippet(transcript, q),
+  }));
+}
+
+/** Extracts a ~240-char window of the transcript around the first match. */
+function transcriptSnippet(
+  transcript: string | null,
+  query: string,
+): string | null {
+  if (!transcript) return null;
+  const idx = transcript.toLowerCase().indexOf(query.toLowerCase());
+  if (idx < 0) return null;
+  const start = Math.max(0, idx - 80);
+  const end = Math.min(transcript.length, idx + query.length + 160);
+  const prefix = start > 0 ? "…" : "";
+  const suffix = end < transcript.length ? "…" : "";
+  return `${prefix}${transcript.slice(start, end).trim()}${suffix}`;
+}
 
 /** Returns the persisted minutes of a bot, or null. */
 export async function findMeetingRecord(
