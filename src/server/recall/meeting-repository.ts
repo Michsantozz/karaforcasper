@@ -1,6 +1,6 @@
 import "server-only";
 import { randomBytes } from "node:crypto";
-import { and, desc, eq, ilike, inArray, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, ilike, lt, or, sql } from "drizzle-orm";
 import { scopedDb } from "@/shared/db/rls";
 import {
   meetingRecords,
@@ -395,13 +395,29 @@ export async function enqueueMeetingRecord(input: {
 }
 
 /**
- * Marks the minutes as "processing" and increments attempts, but ONLY if not
- * already "done" — avoids reprocessing minutes that are already ready. Returns
- * the claimed row (for the worker to proceed) or null if it was already done/nonexistent.
+ * Atomically claims a meeting record for enrichment: flips it to "processing"
+ * and bumps attempts, returning the claimed row — or null if nothing was
+ * claimable.
+ *
+ * Concurrency-safe by construction. Two workers can race on the same botId
+ * (webhook-enrich and reconcile-enrich are SEPARATE Inngest functions, so their
+ * per-botId concurrency keys don't cross): a naive `UPDATE ... WHERE status IN
+ * (...) RETURNING` lets BOTH observe the row and double-enrich (LLM paid twice,
+ * owner notified twice). We prevent that with `SELECT ... FOR UPDATE SKIP
+ * LOCKED` inside the claim — the loser skips the row-locked candidate and gets
+ * null instead of blocking or double-claiming.
+ *
+ * Claimable = pending/failed at any age, OR a `processing` row STALE beyond
+ * `staleProcessingMs` (a dead worker that never finished). A fresh `processing`
+ * row is a live run: we do NOT re-claim it (this closes the reconcile-vs-live
+ * race the old `IN (...,'processing')` predicate left open). Default 15 min ≈
+ * 3× the reconcile cron, so a slow-but-alive enrichment isn't stolen mid-run.
  */
 export async function claimMeetingRecord(
   botId: string,
+  staleProcessingMs = 15 * 60_000,
 ): Promise<MeetingRecordRow | null> {
+  const staleBefore = new Date(Date.now() - staleProcessingMs);
   const rows = await scopedDb()
     .update(meetingRecords)
     .set({
@@ -410,10 +426,20 @@ export async function claimMeetingRecord(
       updatedAt: new Date(),
     })
     .where(
-      and(
-        eq(meetingRecords.botId, botId),
-        inArray(meetingRecords.status, ["pending", "processing", "failed"]),
-      ),
+      // Subquery locks the candidate row FOR UPDATE SKIP LOCKED, so a concurrent
+      // claimer skips it instead of racing on the same row.
+      sql`${meetingRecords.botId} = (
+        select ${meetingRecords.botId} from ${meetingRecords}
+        where ${meetingRecords.botId} = ${botId}
+          and (
+            ${meetingRecords.status} in ('pending', 'failed')
+            or (
+              ${meetingRecords.status} = 'processing'
+              and ${meetingRecords.updatedAt} < ${staleBefore}
+            )
+          )
+        for update skip locked
+      )`,
     )
     .returning();
   return rows[0] ?? null;

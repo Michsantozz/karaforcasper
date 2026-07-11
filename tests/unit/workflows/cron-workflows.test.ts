@@ -44,7 +44,7 @@ describe("workflow auto-schedule — step", () => {
 });
 
 describe("workflow meeting-reconcile — step", () => {
-  it("varre com a janela de staleness de 5 min e repassa o resultado", async () => {
+  it("varre com a janela de staleness de 15 min e repassa o resultado", async () => {
     reconcileStuckMeetings.mockResolvedValue({
       processed: 2,
       done: 1,
@@ -56,8 +56,9 @@ describe("workflow meeting-reconcile — step", () => {
 
     const out = await run(reconcile);
 
-    // 5 min em ms — evita corrida com o enrich disparado pelo webhook.
-    expect(reconcileStuckMeetings).toHaveBeenCalledWith(5 * 60_000);
+    // 15 min em ms (≈3× o cron, alinhado ao claim's staleProcessingMs) — evita
+    // reprocessar uma enrichment ainda VIVA disparada pelo webhook.
+    expect(reconcileStuckMeetings).toHaveBeenCalledWith(15 * 60_000);
     expect(out).toEqual({ processed: 2, done: 1, stillPending: 1 });
   });
 });

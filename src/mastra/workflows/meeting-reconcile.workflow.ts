@@ -10,8 +10,10 @@ import { createWorkflow, createStep } from "@/inngest/client";
  * stays "pending"/"processing". Here we scan the stuck ones and reprocess them — durable
  * by construction (each tick is a new attempt).
  *
- * Runs every 5 min. staleMs=5min: only touches rows stuck long enough,
- * avoiding a race with the enrichment triggered by the webhook.
+ * Runs every 5 min. staleMs=15min (≈3× the cron, aligned with claim's
+ * staleProcessingMs): only reprocesses rows stuck long enough that a live
+ * webhook-enrich would already have finished, so we never race a running
+ * enrichment. A slow-but-alive run stays untouched until it's genuinely stale.
  */
 // Exported for unit testing the step logic in isolation (see tests/unit/workflows).
 export const reconcile = createStep({
@@ -24,7 +26,7 @@ export const reconcile = createStep({
   }),
   execute: async () => {
     const { reconcileStuckMeetings } = await import("@/server/recall/enrich");
-    return reconcileStuckMeetings(5 * 60_000);
+    return reconcileStuckMeetings(15 * 60_000);
   },
 });
 
