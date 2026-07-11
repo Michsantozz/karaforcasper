@@ -8,6 +8,12 @@
 # MinIO continua em 9200/9201 (host) — o mesmo container já rodando.
 
 services:
+  # Pin MinIO ao digest estável (a "latest" de ~10 meses que rodava saudável).
+  # A tag latest passou a resolver p/ RELEASE.2025-04-08, que falha no boot com
+  # "Unable to initialize OpenID: found invalid keys" e nunca fica ready.
+  minio:
+    image: minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+
   app:
     # !override REPLACES the base ports list (compose merges lists by default,
     # which would keep the base 3000:3000 and collide with evolution_frontend).

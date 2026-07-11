@@ -23,6 +23,7 @@ Casper records your Zoom/Meet/Teams calls, turns them into actionable minutes, a
 - **Auto-record a whole calendar** — flip it on once and every future event with a meeting link gets a bot automatically (deduped, self-healing) — no per-meeting booking.
 - **Send & control bots** on any Zoom/Meet/Teams call — send a bot, start/stop recording, remove it, all from chat.
 - **Automatic minutes** — when the transcript lands, a webhook generates summary, decisions, action items, topics, and soundbites, then notifies you. No coming back to ask.
+- **Screen Intelligence 👁️** — the transcript is blind to what's *on screen*: the number on the chart, the target on the slide, the error in the code. Casper's vision layer reads it. A **deterministic pre-filter** (zero LLM) scans the whole recording and picks only the handful of frames that actually matter — the first frame of each screen-share, moments where someone points at the screen (*"look here"*, *"olha esse número"* — PT-BR + EN deixis), and screens shown during acoustic-tension spikes — deduped and hard-capped at 12. Only those frames hit the Fireworks vision model, one call each, and it transcribes what's **literally** visible (never invents). A 90-minute call becomes ~8 vision calls, not 5,400 frames.
 - **Meeting notebook** — synced player, karaoke transcript, decisions, moments, and one-click clips.
 - **Ask across every meeting** — "what did we decide about pricing?" searches your whole history and cites the source.
 - **Attach screenshots & PDFs to chat** — drop an image or PDF into the assistant and the vision model reasons over it (allowlisted, size-capped, rate-limited).
@@ -33,6 +34,7 @@ Casper records your Zoom/Meet/Teams calls, turns them into actionable minutes, a
 - **Meeting-health dashboard** — talk-time per person, interruptions (who cut off whom), silences, monologues, and a participation **balance** score. Pure timestamp math: deterministic, no LLM, always on.
 - **AI insight** — one Fireworks call turns the metrics into a manager-facing read ("one voice dominated; little pushback from the rest") and labels each moment with what happened + an emotional tone.
 - **Acoustic tension detection** — on demand, Casper decodes the audio in your browser (WebCodecs, no upload) to tell *real* tension (loud, agitated overlap) from a casual "yeah, yeah". Tense moments get a 🔥.
+- **Behavioral read** — the layer above tension: a Fireworks call interprets *what each tense moment reveals* about the people — pushback, frustration, disengagement, dominance, or healthy engagement — plus a manager-facing headline and 2-3 sentence arc ("Tense budget standoff: one voice pushed, the rest went quiet"). Grounded strictly in the tension signal + dynamics numbers, never invented. **Only numbers and short timing labels cross the wire** — no audio or video bytes ever leave the browser — so it's private *and* token-cheap (one call, top-10 moments).
 - **Trends over time** (`/meetings/trends`) — who's fading out or taking over the room, rising friction, whether the team is getting more or less balanced — with signals the agent raises tactfully: *"Marina dropped from 22% to 4% over 6 meetings."*
 
 Just ask: *"how did the team interact?"*, *"is anyone going quiet?"*, *"was there tension?"*
@@ -47,7 +49,8 @@ Just ask: *"how did the team interact?"*, *"is anyone going quiet?"*, *"was ther
 - **Not one prompt — a supervised agent network.** A Casper supervisor routes per-meeting questions to a **Minutes** specialist and cross-meeting history/trends questions to a **Search** specialist, each with its own scoped toolset.
 - **Remembers you.** A durable per-user profile (timezone, default duration, recording prefs) persists across every conversation, plus **semantic recall** over past chats (Fireworks embeddings → pgvector) — not a rolling last-N window.
 - **Real product, not a demo.** Live deployment, multi-tenant by construction (Postgres RLS + ownership checks), Svix-signed fail-closed webhooks, and bounded app-level retries backed by **two independent recovery crons** (reconcile stuck rows + backfill missing ones).
-- **Runs on AMD.** Chat, embeddings, and the meeting-health insight all default to **Fireworks AI** (AMD hardware).
+- **Fireworks, used *intelligently* — not just called.** Every layer sends the model only what it can't compute for free. Team-dynamics metrics are pure timestamp math (talk-time, interruptions, silences) — **zero tokens**; Fireworks is spent on *one* insight call over the numbers, not on re-deriving them. Screen Intelligence pre-filters a whole recording down to ~12 high-signal frames deterministically, so the vision model reads a handful of screens instead of the video. Semantic recall embeds once per message and reuses it. The philosophy: **cheap deterministic work first, Fireworks only where judgment is genuinely needed** — the same token-efficient routing discipline the hackathon rewards, applied across the whole product.
+- **Runs on AMD.** Chat, vision, embeddings, and the meeting-health insight all default to **Fireworks AI** (AMD hardware) — one key, one provider, swappable model via `FIREWORKS_MODEL_ID`.
 
 ---
 
@@ -57,8 +60,9 @@ Just ask: *"how did the team interact?"*, *"is anyone going quiet?"*, *"was ther
 |---|---|
 | App | Next.js 16, React 19 (App Router + RSC) |
 | Agent | Mastra (agents, tools, workflows) |
-| LLM | **Fireworks AI** (default — chat, embeddings, insight; on AMD) · AWS Bedrock fallback |
+| LLM | **Fireworks AI** (default — chat, **vision**, embeddings, insight; on AMD) · AWS Bedrock fallback |
 | Team dynamics | Deterministic timestamp analysis + Fireworks insight + browser audio (WebCodecs) |
+| Screen Intelligence | Deterministic frame pre-filter (zero LLM) → Fireworks vision, ≤12 frames/call |
 | Meetings | Recall.ai (REST + MCP), Google Calendar OAuth |
 | Data | Postgres + Drizzle (multi-tenant RLS) |
 | Workflows | Inngest (crons, reconcile loop) |
@@ -70,7 +74,7 @@ Just ask: *"how did the team interact?"*, *"is anyone going quiet?"*, *"was ther
 
 **Schedule** → agent renders a free-slot picker, then creates the Calendar event + Meet link + bot in one call.
 
-**After the meeting** → Recall fires a Svix-verified `transcript.done` webhook → enrichment runs (idempotent, with retry): minutes **+** team-dynamics metrics **+** one Fireworks insight call, all persisted → you get a notification. A reconcile cron rescues anything that failed.
+**After the meeting** → Recall fires a Svix-verified `transcript.done` webhook → enrichment runs (idempotent, with retry): minutes **+** team-dynamics metrics (deterministic, zero tokens) **+** one Fireworks insight call **+** Screen Intelligence (a whole recording pre-filtered to ≤12 frames, one Fireworks vision call each) — all persisted → you get a notification. A reconcile cron rescues anything that failed.
 
 **Anytime** → ask the agent across your whole meeting history or about how a team is trending; reads are scoped to you and never leak across tenants.
 
@@ -129,9 +133,20 @@ Unit tests are hermetic (external services mocked). Live/E2E flows are opt-in (`
 
 ## 🧩 Architecture
 
-Feature-based, colocated with the App Router, with layer boundaries **enforced by ESLint** (`eslint-plugin-boundaries`): `app/` routes only, business logic in `features/<domain>/`, server-only code in `server/`, generic UI/DB/utils in `shared/`. Full rules in `CLAUDE.md`.
+Feature-based, colocated with the App Router, with layer boundaries **enforced by ESLint** (`eslint-plugin-boundaries` — a violating import fails `pnpm lint`). Six layers, one unidirectional import flow: `app → features/mastra → server/shared`, never the reverse.
 
-Solid arrows are requests; dashed arrows are the responses flowing back.
+| Layer | Owns | May import from |
+|---|---|---|
+| `app/` | Routing only — thin shells that delegate | `features`, `mastra`, `server`, `shared` |
+| `features/<domain>/` | Business logic per domain (`ui/` `model/` `api/` + `index.ts` barrel) | `shared`, `auth` (cross-cutting) |
+| `mastra/` | **The agent** — `agents/` `tools/` `workflows/` | `server`, `shared`, `auth`, `inngest` |
+| `server/` | **server-only** — Recall.ai, storage, crypto (never reaches the client bundle) | `server`, `shared` |
+| `shared/` | Generic, no business logic — `ui/` `lib/` `db/` (leaf) | `shared` only |
+| `inngest/` | Cron-aware workflow builders (infra) | `inngest` only |
+
+**Feature slices:** `meetings` · `notifications` · `auth` · `assistant`. `assistant` (chat orchestrator) may reach any slice; `auth` is cross-cutting. Everything else stays in its lane. Full rules in `CLAUDE.md`.
+
+The flows below trace how these layers cooperate at runtime. Solid arrows are requests; dashed arrows are the responses flowing back.
 
 ### 🔄 Enrichment — after a meeting
 
@@ -147,11 +162,12 @@ sequenceDiagram
 
     R->>API: transcript.done (Svix-signed)
     API->>M: trigger meeting-enrich
-    M->>S: fetch transcript + audio
+    M->>S: fetch transcript + audio + screen frames
     S-->>M: word-level transcript
-    Note over M: minutes + team-dynamics metrics
-    M->>F: one insight call
-    F-->>M: manager-facing read
+    Note over M: minutes + team-dynamics metrics (deterministic)
+    Note over M: pre-filter frames → ≤12 high-signal
+    M->>F: one insight call + one vision call per kept frame
+    F-->>M: manager-facing read + on-screen content
     M->>DB: persist (idempotent, retry)
     DB-->>M: ok
     M->>U: notify (bell + email)
