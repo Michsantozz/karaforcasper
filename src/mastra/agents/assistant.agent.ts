@@ -8,9 +8,11 @@ import {
   type InputProcessor,
   type OutputProcessor,
 } from "@mastra/core/processors";
-import { createModel } from "@/mastra/model";
-import { getMastraStore } from "@/mastra/storage";
+import { createModel, createEmbedder } from "@/mastra/model";
+import { getMastraStore, getMastraVector } from "@/mastra/storage";
 import { mcp } from "@/mastra/mcp";
+import { minutesAgent } from "@/mastra/agents/minutes.agent";
+import { searchAgent } from "@/mastra/agents/search.agent";
 import {
   scheduleRecallBotTool,
   getRecallBotTool,
@@ -18,12 +20,6 @@ import {
   cancelRecallBotTool,
   startRecallRecordingTool,
   stopRecallRecordingTool,
-  getRecallTranscriptTool,
-  getRecallRecordingTool,
-  summarizeRecallMeetingTool,
-  getRecallParticipantsTool,
-  listMyMeetingsTool,
-  searchMyMeetingsTool,
 } from "@/mastra/tools/recall.tool";
 import {
   listCalendarEventsTool,
@@ -42,20 +38,20 @@ import {
  * (PickDateToolUI) and injected into the request; here we only declare the
  * server-side ones. clientTools arrive via route.
  */
+// Supervisor's OWN tools — scheduling, calendar and live bot-control. These stay
+// on the supervisor (not a sub-agent) because the scheduling flow depends on the
+// pick_date / connect_calendar CLIENT tools, and clientTools are request-scoped
+// to the invoked agent — they don't reach sub-agents. The "minutes" and
+// "cross-meeting search" domains have no client tools, so they live in
+// minutesAgent / searchAgent and the supervisor delegates to them.
 const localTools = {
-  // --- Meetings (Recall.ai) ---
+  // --- Meetings (Recall.ai): scheduling + live bot control ---
   send_bot_to_meeting: scheduleRecallBotTool,
   get_bot_status: getRecallBotTool,
   list_bots: listScheduledRecallBotsTool,
   remove_bot: cancelRecallBotTool,
   start_recording: startRecallRecordingTool,
   stop_recording: stopRecallRecordingTool,
-  get_transcript: getRecallTranscriptTool,
-  get_recording: getRecallRecordingTool,
-  summarize_meeting: summarizeRecallMeetingTool,
-  get_participants: getRecallParticipantsTool,
-  list_my_meetings: listMyMeetingsTool,
-  search_my_meetings: searchMyMeetingsTool,
 
   // --- Connected calendar ---
   list_calendar_events: listCalendarEventsTool,
@@ -84,14 +80,19 @@ const localTools = {
 const MAX_COST_PER_USER = Number(process.env.MAX_COST_PER_USER_USD ?? "1.0");
 
 function buildInputProcessors(): InputProcessor[] {
-  const processors: InputProcessor[] = [
-    new CostGuardProcessor({
-      maxCost: MAX_COST_PER_USER,
-      scope: "resource",
-      window: "24h",
-      strategy: "block",
-    }),
-  ];
+  const processors: InputProcessor[] = [];
+  // DISABLE_COST_GUARD is a temporary escape hatch to isolate whether the
+  // CostGuard tripwire is silently blocking generation (start→finish, no text).
+  if (process.env.DISABLE_COST_GUARD !== "true") {
+    processors.push(
+      new CostGuardProcessor({
+        maxCost: MAX_COST_PER_USER,
+        scope: "resource",
+        window: "24h",
+        strategy: "block",
+      }),
+    );
+  }
   if (process.env.ENABLE_LLM_GUARDRAILS === "true") {
     const model = createModel();
     processors.push(
@@ -112,14 +113,22 @@ function buildInputProcessors(): InputProcessor[] {
 }
 
 /**
- * Output side: cap the generated response so a runaway generation can't burn
+ * Output side: cap the GENERATED response so a runaway generation can't burn
  * tokens unbounded. Non-LLM, cheap. 'truncate' stops emitting past the limit.
+ *
+ * countMode:"part" is REQUIRED here: the default 'cumulative' counts tokens from
+ * the start of the stream, which includes the prompt echoed through the pipeline
+ * (system prompt + tool schemas + memory ≈ thousands of tokens). With a large
+ * agent that overflows the 4000-token limit BEFORE the first output token, so
+ * truncate emits an empty response. "part" counts only the current output part,
+ * which is what "cap the generated response" actually means.
  */
 function buildOutputProcessors(): OutputProcessor[] {
   return [
     new TokenLimiter({
       limit: Number(process.env.MAX_RESPONSE_TOKENS ?? "4000"),
       strategy: "truncate",
+      countMode: "part",
     }),
   ];
 }
@@ -131,9 +140,13 @@ export const assistantAgent = new Agent({
 
 Respond in English.
 
-Capabilities:
-- Meetings (Recall.ai): send/schedule bots, record, transcribe, summarize (summarize_meeting → summary + decisions + action items + topics), list participants (get_participants).
-- Across ALL past meetings (no botId needed): list_my_meetings returns the user's past recorded meetings (botId + summary + date); search_my_meetings finds meetings matching a keyword/topic and returns a transcript snippet. Use these whenever the user asks about their meetings in general rather than one specific bot.
+You are the SUPERVISOR. You handle scheduling, calendar and live bot control yourself, and you DELEGATE two domains to specialists:
+- minutesAgent — anything about ONE specific meeting once a botId is known: summary/decisions/action items/topics, participants + speaking time, transcript, recorded media.
+- searchAgent — anything across the user's meeting HISTORY without a botId: list their meetings, find meetings by keyword/topic.
+When a request falls into one of those, delegate to the specialist rather than answering yourself. Then relay the specialist's result to the user in natural language.
+
+Capabilities you own directly:
+- Meetings (Recall.ai): send/schedule recording bots, live control (start/stop recording, remove bot).
 - Calendar (Google/Outlook): list events, schedule/unschedule bots, create meetings. If there is NO calendar connected, use connect_calendar (shows a button in the chat that opens Google consent) — NEVER send the user to "settings".
 - Picking a date/time: when you need a DAY+TIME from the user (scheduling a meeting, sending a bot in the future), call pick_date — it shows a CALENDAR + clickable time slots in the chat, already reflecting the real calendar (busy slots appear struck through and non-clickable; the user can only pick a free slot). Returns { dateIso, timeHm, datetimeIso } with a time slot GUARANTEED to be free. NEVER ask for date/time as free text; use pick_date.
 - Suggesting a free slot in text: if the user asks "what times am I free on such a day?" (without wanting to click), use get_free_slots (dateIso, timeZone) — returns the classified grid (free/busy) and freeCount. Also use it to check whether a specific time is free before create_calendar_event.
@@ -156,15 +169,12 @@ Main flows:
    - If the user wants the bot on an EVENT THAT ALREADY EXISTS on the calendar: list with list_calendar_events, find the eventId and use schedule_bot_for_event (the link comes from the event — don't ask for a URL). If the event has no meeting link, let the user know and offer to create a new one with create_calendar_event.
    - When done, confirm: title, day/time, Meet link, and that the bot was scheduled (botId).
 
-1) After a meeting (minutes):
-   - Generate the minutes: summarize_meeting (summary/decisions/action items/topics) and get_participants (list of names + speaking time).
-   - Read the transcript with get_transcript, or list the recorded media with get_recording, once processing finishes.
-   - Report the results in natural language — don't dump raw JSON.
+1) After a meeting (minutes) → DELEGATE to minutesAgent:
+   - Any "summarize this meeting / who spoke most / what were the decisions / show the transcript" request, once you have the botId (from context, or from searchAgent), goes to minutesAgent. Pass it the botId and what the user asked. Relay its answer.
 
-1b) Cross-meeting questions (about the user's meeting history, no botId given):
-   - "Which meetings did I have / show my recent meetings" → list_my_meetings.
-   - "What did we decide about X / which meeting mentioned Y" → search_my_meetings(query). Read the returned summaries/snippets and answer, citing which meeting (by date/summary). Drill into a specific hit with summarize_meeting or get_transcript (using its botId) only if you need more detail than the snippet gives.
-   - These read the user's OWN persisted meetings only — never ask for a botId here; the tools return them.
+1b) Cross-meeting questions (meeting history, no botId given) → DELEGATE to searchAgent:
+   - "Which meetings did I have / show my recent meetings", "what did we decide about X / which meeting mentioned Y" → searchAgent. It reads the user's OWN meetings, so never ask for a botId.
+   - If the user then wants full detail on ONE of those hits, take its botId and delegate to minutesAgent.
 
 2) During a live meeting:
    - Control the bot's recording: start_recording / stop_recording.
@@ -182,9 +192,7 @@ General rules:
   // when the agent runs, not on import — otherwise `next build` (page-data
   // collection) breaks without runtime envs. Defaults to Fireworks (Track 3).
   model: () => createModel(),
-  // Persistent memory in PG (schema `mastra`). No semantic recall yet (needs a
-  // vector store + embedder — deferred to avoid embedding cost/setup); this uses
-  // recent thread history plus two always-on features:
+  // Persistent memory in PG (schema `mastra`). Four features on:
   //  - generateTitle: the agent names each thread from the first user message
   //    and persists it via updateThread, so the sidebar shows real titles
   //    instead of "New Chat" (runs async, doesn't slow the response).
@@ -193,15 +201,32 @@ General rules:
   //    default meeting duration, whether their calendar is connected. This is
   //    what lets "schedule at my usual time" or "in my timezone" work without
   //    the user restating it every conversation.
-  memory: new Memory({
-    storage: getMastraStore(),
-    options: {
-      lastMessages: 20,
-      generateTitle: true,
-      workingMemory: {
-        enabled: true,
-        scope: "resource",
-        template: `# User Profile
+  //  - semanticRecall (resource-scoped): past messages are embedded (Fireworks
+  //    Qwen3-Embedding-8B) into pgvector and retrieved by MEANING, not just the
+  //    last 20. So "what did we decide about the budget?" pulls the relevant
+  //    turn back even from an old conversation. topK=5 + messageRange gives the
+  //    matched message plus surrounding context.
+  // Lazy (DynamicArgument): createEmbedder() reads FIREWORKS_API_KEY via
+  // requireEnv, which THROWS if absent. Building it here (per request) instead of
+  // at import keeps `next build` working env-free — same reason model/tools are
+  // lazy. Memory instances are cheap; storage/vector are singletons underneath.
+  memory: () =>
+    new Memory({
+      storage: getMastraStore(),
+      vector: getMastraVector(),
+      embedder: createEmbedder(),
+      options: {
+        lastMessages: 20,
+        generateTitle: true,
+        semanticRecall: {
+          topK: 5,
+          messageRange: 2,
+          scope: "resource",
+        },
+        workingMemory: {
+          enabled: true,
+          scope: "resource",
+          template: `# User Profile
 - **Name**:
 - **Timezone**: (e.g. America/Sao_Paulo / BRT -03:00)
 - **Default meeting duration**: (e.g. 30m, 1h)
@@ -209,9 +234,9 @@ General rules:
 - **Calendar**: (connected? Google/Outlook? primary email)
 - **Usual meeting times / working hours**:
 - **Other preferences**:`,
+        },
       },
-    },
-  }),
+    }),
   // DynamicArgument: combines local tools + MCP tools (Recall.ai read-only).
   tools: async () => {
     const { toolsets, errors } = await mcp.listToolsetsWithErrors();
@@ -224,6 +249,10 @@ General rules:
     );
     return { ...localTools, ...mcpTools };
   },
+  // Sub-agents: Mastra auto-generates a delegation tool per entry (using each
+  // agent's `description`). The supervisor's model decides when to hand off. Both
+  // inherit this agent's memory during delegation (they have none of their own).
+  agents: { minutesAgent, searchAgent },
   // Cost ceiling + optional prompt-injection/PII guardrails (input), response
   // token cap (output). Lazy so envs resolve at request time. See builders above.
   inputProcessors: () => buildInputProcessors(),

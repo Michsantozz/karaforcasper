@@ -1,4 +1,4 @@
-import { PostgresStore } from "@mastra/pg";
+import { PostgresStore, PgVector } from "@mastra/pg";
 
 /**
  * Shared Postgres storage for Mastra — the SAME database as the app (DATABASE_URL,
@@ -15,6 +15,7 @@ import { PostgresStore } from "@mastra/pg";
  */
 const globalForStore = globalThis as unknown as {
   __mastraStore?: PostgresStore;
+  __mastraVector?: PgVector;
 };
 
 export function getMastraStore(): PostgresStore {
@@ -32,4 +33,28 @@ export function getMastraStore(): PostgresStore {
     });
   }
   return globalForStore.__mastraStore;
+}
+
+/**
+ * Vector store for Memory semantic recall — pgvector in the SAME database
+ * (DATABASE_URL), isolated in the `mastra` schema alongside the other Mastra
+ * tables. Memory stores message embeddings here and queries them by similarity;
+ * the embedder is Fireworks Qwen3-Embedding-8B (see createEmbedder). PgVector
+ * auto-creates the index (4096-dim) on first upsert — no manual migration.
+ *
+ * Singleton for the same hot-reload/serverless reason as the store.
+ */
+export function getMastraVector(): PgVector {
+  if (!globalForStore.__mastraVector) {
+    const connectionString = process.env.DATABASE_URL;
+    if (!connectionString) {
+      throw new Error("DATABASE_URL missing — Mastra vector store cannot start.");
+    }
+    globalForStore.__mastraVector = new PgVector({
+      id: "casper-mastra-vector",
+      schemaName: "mastra",
+      connectionString,
+    });
+  }
+  return globalForStore.__mastraVector;
 }

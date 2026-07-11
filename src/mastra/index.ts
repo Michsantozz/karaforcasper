@@ -1,5 +1,7 @@
 import { Mastra } from "@mastra/core";
 import { assistantAgent } from "./agents/assistant.agent";
+import { minutesAgent } from "./agents/minutes.agent";
+import { searchAgent } from "./agents/search.agent";
 import { meetingReconcileWorkflow } from "./workflows/meeting-reconcile.workflow";
 import { meetingEnrichWorkflow } from "./workflows/meeting-enrich.workflow";
 import { autoScheduleWorkflow } from "./workflows/auto-schedule.workflow";
@@ -7,8 +9,11 @@ import { getMastraStore } from "./storage";
 import { createObservability } from "./observability";
 
 export const mastra = new Mastra({
-  // assistantAgent is the unified meeting agent (Recall.ai + calendar).
-  agents: { assistantAgent },
+  // assistantAgent is the SUPERVISOR (scheduling + calendar + bot control); it
+  // delegates to minutesAgent (per-meeting minutes) and searchAgent (cross-
+  // meeting history). Registering the sub-agents here surfaces them in the
+  // registry and their own traces/spans.
+  agents: { assistantAgent, minutesAgent, searchAgent },
   workflows: {
     meetingReconcileWorkflow,
     meetingEnrichWorkflow,

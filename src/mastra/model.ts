@@ -1,4 +1,5 @@
 import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
+import { createOpenAI } from "@ai-sdk/openai";
 
 import { requireEnv } from "@/shared/lib/env";
 
@@ -63,10 +64,12 @@ export function createBedrockModel() {
 }
 
 // Fireworks AI (AMD Hackathon Track 3 — inference runs on AMD hardware).
-// Mastra's model router speaks Fireworks' OpenAI-compatible endpoint natively;
-// authentication is via FIREWORKS_API_KEY. We return the router config object
-// (url/id/apiKey) rather than the bare string so the API key and slug come from
-// env — same lazy pattern as Bedrock (envs are only read when the agent runs).
+// `fireworks-ai` is a Mastra-registered provider, so we pass the MAGIC STRING
+// (`fireworks-ai/<model>`) and let Mastra resolve the endpoint + read the key
+// from FIREWORKS_API_KEY (the provider's apiKeyEnvVar). Passing an explicit
+// {url,apiKey} object instead made Mastra treat it as a custom provider and the
+// request silently produced an empty response (no auth applied). requireEnv
+// still asserts the key is present at request time (fail fast, not fail silent).
 const DEFAULT_FIREWORKS_MODEL = "accounts/fireworks/models/glm-5p2";
 
 export function createFireworksModel() {
@@ -85,4 +88,40 @@ export function createModel() {
   const provider = (process.env.MODEL_PROVIDER ?? "fireworks").toLowerCase();
   if (provider === "bedrock") return createBedrockModel();
   return createFireworksModel();
+}
+
+// ai-sdk LanguageModel for structured generation (generateObject/generateText).
+// Unlike createFireworksModel() — which returns Mastra's router CONFIG object —
+// this returns a real ai-sdk model via the OpenAI provider pointed at Fireworks'
+// OpenAI-compatible endpoint, so it plugs straight into `generateObject`. Used
+// by server-side one-shot LLM calls (e.g. the meeting-health insight) that don't
+// go through the Mastra agent runtime. Honors MODEL_PROVIDER=bedrock as fallback.
+export function createChatModel() {
+  const provider = (process.env.MODEL_PROVIDER ?? "fireworks").toLowerCase();
+  if (provider === "bedrock") return createBedrockModel();
+  const fireworks = createOpenAI({
+    baseURL: "https://api.fireworks.ai/inference/v1",
+    apiKey: requireEnv("FIREWORKS_API_KEY"),
+  });
+  return fireworks.chat(
+    process.env.FIREWORKS_MODEL_ID ?? DEFAULT_FIREWORKS_MODEL,
+  );
+}
+
+// Embedder for Memory semantic recall — runs on Fireworks' OpenAI-compatible
+// /embeddings endpoint via the @ai-sdk/openai provider (baseURL override), so we
+// reuse the same FIREWORKS_API_KEY. Qwen3-Embedding-8B outputs 4096-dim vectors
+// (measured against the live endpoint); PgVector auto-creates its index at that
+// dimension on first upsert. $0.10/M tokens — one embed per stored message and
+// one per recall query. Lazy for the same reason as the chat model.
+const DEFAULT_EMBEDDING_MODEL = "accounts/fireworks/models/qwen3-embedding-8b";
+
+export function createEmbedder() {
+  const fireworks = createOpenAI({
+    baseURL: "https://api.fireworks.ai/inference/v1",
+    apiKey: requireEnv("FIREWORKS_API_KEY"),
+  });
+  return fireworks.embedding(
+    process.env.FIREWORKS_EMBEDDING_MODEL_ID ?? DEFAULT_EMBEDDING_MODEL,
+  );
 }
