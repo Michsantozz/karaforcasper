@@ -359,7 +359,7 @@ function ToolCard({
   children?: React.ReactNode;
 }) {
   return (
-    <div className="my-2 rounded-[8px] bg-(--thread-frame-outer) p-1">
+    <div className="my-2 w-fit max-w-full rounded-[8px] bg-(--thread-frame-outer) p-1">
       <div className="flex items-center justify-between px-2 py-1.5">
         <span className="flex items-center gap-1.5 font-mono text-muted-foreground text-xs">
           {running ? (

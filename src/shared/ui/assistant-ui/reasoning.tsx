@@ -30,12 +30,16 @@ const ANIMATION_DURATION = 200;
 
 const ReasoningPreviewContext = createContext(false);
 
+// Frame EvilCharts — mesma linguagem visual do Composer (thread.tsx):
+// wrapper arredondado 8px sobre --thread-frame-outer, header bar mono, card
+// interno 5px com borda. `outline` é o default; `ghost`/`muted` ficam sem o
+// frame para usos embutidos (ex.: dentro de um tool-group).
 const reasoningVariants = cva("aui-reasoning-root mb-4 w-full", {
   variants: {
     variant: {
-      outline: "rounded-lg border px-3 py-2",
+      outline: "rounded-[8px] bg-(--thread-frame-outer) p-1",
       ghost: "",
-      muted: "bg-muted/50 rounded-lg px-3 py-2",
+      muted: "bg-muted/50 rounded-[5px] px-3 py-2",
     },
   },
   defaultVariants: {
@@ -177,38 +181,50 @@ function ReasoningTrigger({
 }) {
   const durationText = duration ? ` (${duration}s)` : "";
 
+  const label = `reasoning${durationText}`;
+
   return (
     <CollapsibleTrigger
       data-slot="reasoning-trigger"
       className={cn(
-        "aui-reasoning-trigger group/trigger text-muted-foreground hover:text-foreground flex max-w-[75%] origin-left items-center gap-2 py-1.5 text-sm transition-[color,scale] active:scale-[0.98]",
+        // Header bar mono no mesmo idioma da label "prompt" do Composer:
+        // uppercase, tracking-wider, muted-foreground, ícone size-3.5.
+        "aui-reasoning-trigger group/trigger text-muted-foreground hover:text-foreground flex w-full origin-left items-center gap-1.5 px-2 py-1.5 font-mono text-[11px] uppercase tracking-wider transition-[color,scale] active:scale-[0.98]",
         className,
       )}
       {...props}
     >
       <BrainIcon
         data-slot="reasoning-trigger-icon"
-        className="aui-reasoning-trigger-icon size-4 shrink-0"
+        className="aui-reasoning-trigger-icon size-3.5 shrink-0"
       />
       <span
         data-slot="reasoning-trigger-label"
         className="aui-reasoning-trigger-label-wrapper relative inline-block leading-none tabular-nums"
       >
-        <span>Reasoning{durationText}</span>
+        <span>{label}</span>
         {active ? (
           <span
             aria-hidden
             data-slot="reasoning-trigger-shimmer"
             className="aui-reasoning-trigger-shimmer shimmer pointer-events-none absolute inset-0 motion-reduce:animate-none"
           >
-            Reasoning{durationText}
+            {label}
           </span>
         ) : null}
       </span>
+      {/* Dot de atividade verde — mesmo status indicator do Composer. */}
+      {active ? (
+        <span
+          aria-hidden
+          data-slot="reasoning-trigger-dot"
+          className="aui-reasoning-trigger-dot size-1.5 shrink-0 animate-pulse rounded-[1px] bg-(--thread-accent-primary)"
+        />
+      ) : null}
       <ChevronDownIcon
         data-slot="reasoning-trigger-chevron"
         className={cn(
-          "aui-reasoning-trigger-chevron mt-0.5 size-4 shrink-0",
+          "aui-reasoning-trigger-chevron ml-auto size-3 shrink-0",
           "transition-transform duration-(--animation-duration) ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none",
           "group-data-[state=closed]/trigger:-rotate-90",
           "group-data-[state=open]/trigger:rotate-0",
@@ -237,6 +253,9 @@ function ReasoningContent({
         "data-[state=closed]:pointer-events-none",
         "data-[state=open]:duration-(--animation-duration)",
         "data-[state=closed]:duration-(--animation-duration)",
+        // No variant `outline` o conteúdo vira o card interno do frame —
+        // mesma casca (5px + borda + bg-background) do input do Composer.
+        "group-data-[variant=outline]/reasoning-root:rounded-[5px] group-data-[variant=outline]/reasoning-root:border group-data-[variant=outline]/reasoning-root:bg-background",
         className,
       )}
       {...props}
@@ -276,7 +295,7 @@ function ReasoningText({
       ref={scrollRef}
       data-slot="reasoning-text"
       className={cn(
-        "aui-reasoning-text relative z-0 max-h-64 overflow-y-auto ps-6 pt-2 pb-2 leading-relaxed text-pretty",
+        "aui-reasoning-text relative z-0 max-h-64 overflow-y-auto px-3 pt-2 pb-2 leading-relaxed text-pretty",
         "transform-gpu transition-[transform,opacity] ease-[cubic-bezier(0.32,0.72,0,1)]",
         "motion-reduce:animate-none",
         "group-data-[state=open]/collapsible-content:animate-in",
