@@ -35,6 +35,11 @@ const securityHeaders = [
             "script-src 'self' 'unsafe-inline'",
             "style-src 'self' 'unsafe-inline'",
             "img-src 'self' data: https:",
+            // Vídeo/áudio das atas vêm do object storage (MinIO/S3/R2), que pode
+            // estar em outra origem que 'self' — inclui http: pro MinIO local
+            // self-host e blob: caso o player use object URLs. Sem media-src o
+            // <video> cairia no default-src 'self' e o player não carregaria.
+            "media-src 'self' blob: http: https:",
             "font-src 'self' data:",
             // APIs externas que o cliente chama (AWS/Bedrock é server-side).
             // Ajuste conforme os hosts reais em uso.
