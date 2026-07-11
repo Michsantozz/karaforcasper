@@ -8,18 +8,27 @@ import {
   defaultDedupKey,
 } from "@/server/recall/bot-repository";
 import { summarizeMeeting } from "@/server/recall/summarize";
-import { hasBalanceForMinutes } from "@/server/casper/billing";
-import { getSession } from "@/features/auth/model/session";
+import {
+  listMeetingRecordsForUser,
+  searchMeetingRecords,
+} from "@/server/recall/meeting-repository";
+import { assertBotOwner } from "@/server/recall/ownership";
 import { withUserScope } from "@/shared/db/rls";
+import { getSession } from "@/features/auth/model/session";
 
 /**
- * Duration estimate (min) used only for the balance GATE before creating the
- * bot — the real cost is measured afterwards from the transcribed duration.
- * Deliberately conservative.
+ * Resolves the caller's session userId and asserts they own `botId`, or throws.
+ * Every tool that reads a meeting by a raw botId (transcript/recording/
+ * participants/summary/state) MUST call this before touching Recall — RLS does
+ * not cover these direct Recall reads. Fail-closed: no session → throws.
  */
-const ESTIMATED_MEETING_MINUTES = Number(
-  process.env.BILLING_ESTIMATED_MINUTES ?? 30,
-);
+async function requireBotOwner(botId: string): Promise<void> {
+  const userId = (await getSession())?.user?.id;
+  if (!userId) {
+    throw new Error("Not authenticated — cannot access meeting data.");
+  }
+  await assertBotOwner(botId, userId);
+}
 
 /**
  * "Front-desk" tools for Recall.ai bots — writes via REST.
@@ -179,24 +188,10 @@ export const scheduleRecallBotTool = createTool({
       };
     }
 
-    // Meeting owner = session user (never comes from chat). Needed for
-    // billing and for the balance gate. Persisted in the bot's metadata so
-    // the webhook/enrich know who to charge/notify.
+    // Meeting owner = session user (never comes from chat). Persisted in the
+    // bot's metadata so the webhook/enrich know who to notify.
     const session = await getSession();
     const userId = session?.user?.id ?? null;
-
-    // Balance GATE: without enough credit for an estimated meeting, refuses
-    // before creating the bot (doesn't spend Recall resources or generate a charge).
-    if (userId) {
-      const ok = await withUserScope(userId, () =>
-        hasBalanceForMinutes(userId, ESTIMATED_MEETING_MINUTES),
-      );
-      if (!ok) {
-        throw new Error(
-          "Insufficient balance to schedule the meeting. Deposit CSPR to add credits before continuing.",
-        );
-      }
-    }
 
     let bot: RecallBot;
     try {
@@ -207,12 +202,15 @@ export const scheduleRecallBotTool = createTool({
           meeting_url: input.meetingUrl,
           ...(input.joinAt ? { join_at: input.joinAt } : {}),
           ...(input.botName ? { bot_name: input.botName } : {}),
-          // Bot joins WITHOUT recording (manual start). Transcript is already
-          // configured so start_recording captures video + transcript.
+          // Bot records automatically as soon as a participant joins (Recall's
+          // default) — the scheduled meeting flow is hands-off: the user never
+          // needs to press "record" in chat. Video + streaming transcript are
+          // captured for the whole call. Manual control (start/stop/pause) still
+          // works during the call if the user wants it.
           recording_config: {
             transcript: { provider: { recallai_streaming: {} } },
             participant_events: {},
-            start_recording_on: "manual",
+            start_recording_on: "participant_join",
           },
           metadata: {
             dedup_key: dedupKey,
@@ -261,6 +259,7 @@ export const getRecallBotTool = createTool({
     joinAt: z.string().nullable().optional(),
   }),
   execute: async (input) => {
+    await requireBotOwner(input.botId);
     const bot = await recallFetch<RecallBot>({
       method: "GET",
       path: `v1/bot/${input.botId}/`,
@@ -298,6 +297,7 @@ export const getRecallTranscriptTool = createTool({
     speakers: z.array(z.string()).optional(),
   }),
   execute: async (input) => {
+    await requireBotOwner(input.botId);
     const { bot, state, segments } = await loadTranscript(input.botId);
     if (state !== "ready") {
       return { botId: bot.id, state, transcript: null };
@@ -327,6 +327,7 @@ export const getRecallRecordingTool = createTool({
     ),
   }),
   execute: async (input) => {
+    await requireBotOwner(input.botId);
     const bot = await recallFetch<RecallBot>({
       method: "GET",
       path: `v1/bot/${input.botId}/`,
@@ -386,7 +387,10 @@ export const summarizeRecallMeetingTool = createTool({
   }),
   // Delegates to the reusable server function (same logic used by the bot
   // webhook that generates the automatic minutes at the end of the meeting).
-  execute: async (input) => summarizeMeeting(input.botId, input.focus),
+  execute: async (input) => {
+    await requireBotOwner(input.botId);
+    return summarizeMeeting(input.botId, input.focus);
+  },
 });
 
 /**
@@ -419,6 +423,7 @@ export const getRecallParticipantsTool = createTool({
       .optional(),
   }),
   execute: async (input) => {
+    await requireBotOwner(input.botId);
     const bot = await recallFetch<RecallBot>({
       method: "GET",
       path: `v1/bot/${input.botId}/`,
@@ -478,6 +483,121 @@ export const getRecallParticipantsTool = createTool({
 });
 
 /** Lists bots scheduled for the future. */
+/**
+ * Cross-meeting index: lists the caller's PAST meetings (persisted minutes),
+ * most recent first. Gives the agent the botIds + summaries so it can answer
+ * "which meetings did I have?" / "the meeting yesterday about X" and then drill
+ * in with summarize_meeting / get_transcript. Reads meeting_records (not Recall,
+ * whose artifacts expire), scoped to the session user via RLS.
+ */
+export const listMyMeetingsTool = createTool({
+  id: "list_my_meetings",
+  description:
+    "Lists the current user's PAST recorded meetings (with generated minutes), most recent first. " +
+    "Use to see which meetings exist, find a meeting by date, or get a botId to drill into. " +
+    "Does NOT need a botId — it returns them.",
+  inputSchema: z.object({
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(100)
+      .optional()
+      .describe("Max meetings to return. Default 20."),
+  }),
+  outputSchema: z.object({
+    count: z.number(),
+    meetings: z.array(
+      z.object({
+        botId: z.string(),
+        status: z.string(),
+        summary: z.string().nullable(),
+        participantCount: z.number(),
+        meetingUrl: z.string().nullable(),
+        createdAt: z.string(),
+      }),
+    ),
+  }),
+  execute: async (input) => {
+    const userId = (await getSession())?.user?.id;
+    if (!userId) return { count: 0, meetings: [] };
+    // withUserScope is REQUIRED: listMeetingRecordsForUser calls scopedDb(),
+    // which fails-closed (0 rows) outside a scope. Never withSystemScope here —
+    // that would return every user's meetings.
+    const rows = await withUserScope(userId, () =>
+      listMeetingRecordsForUser(input.limit ?? 20),
+    );
+    return {
+      count: rows.length,
+      meetings: rows.map((r) => ({
+        botId: r.botId,
+        status: r.status,
+        summary: r.summary,
+        participantCount: r.participantCount,
+        meetingUrl: r.meetingUrl,
+        createdAt: r.createdAt.toISOString(),
+      })),
+    };
+  },
+});
+
+/**
+ * Cross-meeting search/Q&A: matches a query against the caller's persisted
+ * minutes (summary/overview/transcript) and returns the top meetings with a
+ * snippet. Powers "what did we decide about pricing across all my meetings?" —
+ * the agent searches, reads the hits, and answers, drilling into a specific
+ * botId only when it needs more. RLS-scoped to the session user.
+ */
+export const searchMyMeetingsTool = createTool({
+  id: "search_my_meetings",
+  description:
+    "Searches ACROSS the current user's past meetings by keyword/topic and returns matching meetings " +
+    "with a transcript snippet. Use for cross-meeting questions like 'what did we decide about pricing?' " +
+    "or 'which meeting mentioned the Q3 launch?'. Then read a hit's summary or call summarize_meeting/get_transcript " +
+    "with its botId for detail. Does NOT need a botId.",
+  inputSchema: z.object({
+    query: z.string().describe("Keyword or phrase to search for across meetings."),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(20)
+      .optional()
+      .describe("Max matching meetings to return. Default 5."),
+  }),
+  outputSchema: z.object({
+    count: z.number(),
+    hits: z.array(
+      z.object({
+        botId: z.string(),
+        summary: z.string().nullable(),
+        overview: z.string().nullable(),
+        topics: z.array(z.string()).nullable(),
+        snippet: z.string().nullable(),
+        createdAt: z.string(),
+      }),
+    ),
+  }),
+  execute: async (input) => {
+    const userId = (await getSession())?.user?.id;
+    if (!userId) return { count: 0, hits: [] };
+    const hits = await withUserScope(userId, () =>
+      searchMeetingRecords(input.query, input.limit ?? 5),
+    );
+    return {
+      count: hits.length,
+      hits: hits.map((h) => ({
+        botId: h.botId,
+        summary: h.summary,
+        overview: h.overview,
+        topics: h.topics,
+        snippet: h.snippet,
+        createdAt: h.createdAt.toISOString(),
+      })),
+    };
+  },
+});
+
 export const listScheduledRecallBotsTool = createTool({
   id: "list_scheduled_recall_bots",
   description:
@@ -541,6 +661,7 @@ export const cancelRecallBotTool = createTool({
     action: z.enum(["unscheduled", "left_call"]),
   }),
   execute: async (input) => {
+    await requireBotOwner(input.botId);
     let action: "unscheduled" | "left_call";
 
     if (input.force) {
@@ -571,9 +692,10 @@ export const cancelRecallBotTool = createTool({
 /**
  * Starts recording for a bot that's already in the call.
  *
- * This app's bot joins WITHOUT recording (start_recording_on default is not
- * applied on creation); recording starts when the user asks via chat.
- * Restarts the current recording if there already is one.
+ * Bots record automatically on participant join (start_recording_on:
+ * participant_join), so this is only for MANUAL control — e.g. restarting a
+ * recording, or starting one after a stop/pause. Restarts the current
+ * recording if there already is one.
  */
 export const startRecallRecordingTool = createTool({
   id: "start_recall_recording",
@@ -589,6 +711,7 @@ export const startRecallRecordingTool = createTool({
   }),
   outputSchema: z.object({ ok: z.boolean() }),
   execute: async (input) => {
+    await requireBotOwner(input.botId);
     const transcribe = input.transcribe ?? true;
     await recallFetch({
       method: "POST",
@@ -611,6 +734,7 @@ export const stopRecallRecordingTool = createTool({
   }),
   outputSchema: z.object({ ok: z.boolean() }),
   execute: async (input) => {
+    await requireBotOwner(input.botId);
     await recallFetch({
       method: "POST",
       path: `v1/bot/${input.botId}/stop_recording/`,
@@ -627,6 +751,7 @@ export const pauseRecallRecordingTool = createTool({
   inputSchema: z.object({ botId: z.string().describe("Bot UUID") }),
   outputSchema: z.object({ ok: z.boolean() }),
   execute: async (input) => {
+    await requireBotOwner(input.botId);
     await recallFetch({
       method: "POST",
       path: `v1/bot/${input.botId}/pause_recording/`,
@@ -642,6 +767,7 @@ export const resumeRecallRecordingTool = createTool({
   inputSchema: z.object({ botId: z.string().describe("Bot UUID") }),
   outputSchema: z.object({ ok: z.boolean() }),
   execute: async (input) => {
+    await requireBotOwner(input.botId);
     await recallFetch({
       method: "POST",
       path: `v1/bot/${input.botId}/resume_recording/`,
@@ -665,6 +791,7 @@ export const sendRecallChatMessageTool = createTool({
   }),
   outputSchema: z.object({ ok: z.boolean() }),
   execute: async (input) => {
+    await requireBotOwner(input.botId);
     await recallFetch({
       method: "POST",
       path: `v1/bot/${input.botId}/send_chat_message/`,
