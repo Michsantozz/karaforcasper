@@ -80,7 +80,16 @@ const userMsg = { role: "user", parts: [{ type: "text", text: "summarize this" }
 beforeEach(() => {
   vi.clearAllMocks();
   getSession.mockResolvedValue({ user: { id: "u1" } });
-  handleChatStream.mockResolvedValue({});
+  // handleChatStream returns a UIMessage ReadableStream — the route tee()s it
+  // (client branch + detached server drain), so the mock must be a real
+  // ReadableStream, not a bare object. An immediately-closing stream is enough.
+  handleChatStream.mockResolvedValue(
+    new ReadableStream({
+      start(controller) {
+        controller.close();
+      },
+    }),
+  );
 });
 
 describe("POST /api/chat — meeting context", () => {

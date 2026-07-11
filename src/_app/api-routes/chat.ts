@@ -192,11 +192,12 @@ export async function POST(req: Request) {
   // resume the live token stream on return (that needs a resumable-stream store,
   // e.g. Redis) — it guarantees the turn completes and is saved.
   const [clientBranch, serverBranch] = stream.tee();
-  after(async () => {
-    // Drain via getReader() (spec base, no reliance on Symbol.asyncIterator
-    // which isn't guaranteed on every runtime's ReadableStream). We don't need
-    // the chunks, just the pull that keeps the agent loop — and its per-step
-    // saves — progressing to the end.
+
+  // Drain via getReader() (spec base, no reliance on Symbol.asyncIterator which
+  // isn't guaranteed on every runtime's ReadableStream). We don't need the
+  // chunks, just the pull that keeps the agent loop — and its per-step saves —
+  // progressing to the end.
+  const drain = async () => {
     const reader = serverBranch.getReader();
     try {
       for (;;) {
@@ -209,7 +210,18 @@ export async function POST(req: Request) {
     } finally {
       reader.releaseLock();
     }
-  });
+  };
+
+  // Prefer `after()`: it keeps the drain alive past the response on the
+  // long-lived Node server (output:'standalone', nodejs runtime). `after` throws
+  // "outside a request scope" when there's no Next request context (unit tests
+  // calling POST directly) — fall back to a detached fire-and-forget so the
+  // route still works. The tee'd server branch is never left unread either way.
+  try {
+    after(drain);
+  } catch {
+    void drain();
+  }
 
   return createUIMessageStreamResponse({ stream: clientBranch });
 }
