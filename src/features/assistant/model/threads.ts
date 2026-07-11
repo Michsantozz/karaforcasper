@@ -29,11 +29,27 @@ export type ChatThread = {
 };
 
 /**
+ * Meeting-notebook threads are namespaced `meeting-<botId>` (see MeetingNotebook).
+ * They live in the SAME Mastra memory as the sidebar's chat threads, so the
+ * sidebar list must EXCLUDE them — otherwise a meeting's conversation shows up
+ * as a regular chat in the home sidebar (they're scoped to their notebook).
+ */
+export const MEETING_THREAD_PREFIX = "meeting-";
+function isMeetingThread(threadId: string): boolean {
+  return threadId.startsWith(MEETING_THREAD_PREFIX);
+}
+
+/**
  * Resolves the Memory instance that backs `assistantAgent`. Lazy-imports
  * `@/mastra` so route handlers stay light and `next build` doesn't eagerly
  * load the whole agent graph (same pattern as /api/chat).
  */
 async function getMemory(): Promise<Memory> {
+  // Serialize the store's one-time schema init so parallel memory calls on a
+  // cold store don't collide on RoutingDbClient's pinned-connection ("already
+  // has a pinned client"). Memoized — resolves instantly after the first init.
+  const { ensureMastraStoreInit } = await import("@/mastra/storage");
+  await ensureMastraStoreInit();
   const { mastra } = await import("@/mastra");
   const agent = mastra.getAgentById("assistantAgent");
   const memory = await agent.getMemory();
@@ -59,12 +75,16 @@ export async function listThreads(userId: string): Promise<ChatThread[]> {
     perPage: false,
     orderBy: { field: "updatedAt", direction: "DESC" },
   });
-  return threads.map((t) => ({
-    id: t.id,
-    title: t.title,
-    archived: isArchived(t.metadata),
-    updatedAt: t.updatedAt.toISOString(),
-  }));
+  return threads
+    // Hide meeting-notebook threads — they belong to their notebook, not the
+    // home chat sidebar.
+    .filter((t) => !isMeetingThread(t.id))
+    .map((t) => ({
+      id: t.id,
+      title: t.title,
+      archived: isArchived(t.metadata),
+      updatedAt: t.updatedAt.toISOString(),
+    }));
 }
 
 /**

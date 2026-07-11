@@ -16,6 +16,7 @@ import { PostgresStore, PgVector } from "@mastra/pg";
 const globalForStore = globalThis as unknown as {
   __mastraStore?: PostgresStore;
   __mastraVector?: PgVector;
+  __mastraStoreInit?: Promise<void>;
 };
 
 export function getMastraStore(): PostgresStore {
@@ -57,4 +58,28 @@ export function getMastraVector(): PgVector {
     });
   }
   return globalForStore.__mastraVector;
+}
+
+/**
+ * Runs `PostgresStore.init()` exactly ONCE per process, memoized as a shared
+ * promise. `init()` runs schema DDL through a single PINNED backend connection
+ * (RoutingDbClient.pin) and THROWS if a client is already pinned — so two
+ * operations that each trigger a lazy first-time init concurrently collide with
+ * "RoutingDbClient already has a pinned client". That happens as soon as a page
+ * fires parallel memory calls on a cold store (e.g. the meeting notebook's
+ * thread `initialize` + history `load` on mount). Awaiting this before the first
+ * memory op serializes init so the pin/unpin never overlap. Idempotent: after
+ * the first call it resolves instantly; on failure it clears so a retry re-inits.
+ */
+export function ensureMastraStoreInit(): Promise<void> {
+  if (!globalForStore.__mastraStoreInit) {
+    globalForStore.__mastraStoreInit = getMastraStore()
+      .init()
+      .catch((err) => {
+        // Don't cache a failed init — let the next caller retry.
+        globalForStore.__mastraStoreInit = undefined;
+        throw err;
+      });
+  }
+  return globalForStore.__mastraStoreInit;
 }

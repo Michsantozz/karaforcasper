@@ -11,11 +11,18 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 
 const generateText = vi.fn();
 
-// Memory surface used by the thread store (recall → getThreadById → updateThread).
+// Memory surface used by the thread store (recall → getThreadById → updateThread,
+// plus listThreads for the sidebar list).
 const recall = vi.fn();
 const getThreadById = vi.fn();
 const updateThread = vi.fn();
-const getMemory = vi.fn(() => ({ recall, getThreadById, updateThread }));
+const listThreadsFn = vi.fn();
+const getMemory = vi.fn(() => ({
+  recall,
+  getThreadById,
+  updateThread,
+  listThreads: listThreadsFn,
+}));
 
 vi.mock("ai", () => ({
   generateText: (...a: unknown[]) => generateText(...a),
@@ -25,6 +32,11 @@ vi.mock("@/mastra/model", () => ({ createChatModel: () => ({}) }));
 vi.mock("@/mastra", () => ({
   mastra: { getAgentById: () => ({ getMemory: () => getMemory() }) },
 }));
+// getMemory awaits the store's one-time init — stub it to a no-op so the test
+// never touches Postgres.
+vi.mock("@/mastra/storage", () => ({
+  ensureMastraStoreInit: vi.fn(async () => {}),
+}));
 // Identity converter: return the recalled messages unchanged so the test drives
 // the exact `parts` shapes it wants to assert on.
 vi.mock("@mastra/ai-sdk/ui", () => ({
@@ -32,7 +44,7 @@ vi.mock("@mastra/ai-sdk/ui", () => ({
 }));
 
 // Imported after the mocks are registered.
-const { generateThreadTitle } = await import(
+const { generateThreadTitle, listThreads } = await import(
   "@/features/assistant/model/threads"
 );
 
@@ -116,5 +128,46 @@ describe("generateThreadTitle", () => {
     generateText.mockResolvedValue({ text: "   " });
     expect(await generateThreadTitle("u1", "t1")).toBeNull();
     expect(updateThread).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * `listThreads` powers the home ThreadList sidebar. Meeting-notebook threads
+ * (`meeting-<botId>`) live in the SAME Mastra memory but belong to their
+ * notebook, so the sidebar list must EXCLUDE them — otherwise a meeting's
+ * conversation shows up as a regular chat in the home sidebar.
+ */
+describe("listThreads — hides meeting-notebook threads", () => {
+  const thread = (id: string) => ({
+    id,
+    title: id,
+    metadata: {},
+    updatedAt: new Date("2026-07-11T00:00:00Z"),
+  });
+
+  it("drops `meeting-*` threads, keeps regular chats", async () => {
+    listThreadsFn.mockResolvedValue({
+      threads: [
+        thread("chat-1"),
+        thread("meeting-bot-abc"),
+        thread("chat-2"),
+        thread("meeting-bot-xyz"),
+      ],
+    });
+
+    const out = await listThreads("u1");
+
+    expect(out.map((t) => t.id)).toEqual(["chat-1", "chat-2"]);
+    // scoped to the caller's resourceId (never leaks another user's threads).
+    expect(listThreadsFn).toHaveBeenCalledWith(
+      expect.objectContaining({ filter: { resourceId: "u1" } }),
+    );
+  });
+
+  it("returns an empty list when the user only has meeting threads", async () => {
+    listThreadsFn.mockResolvedValue({
+      threads: [thread("meeting-bot-1"), thread("meeting-bot-2")],
+    });
+    expect(await listThreads("u1")).toEqual([]);
   });
 });

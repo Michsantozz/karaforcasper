@@ -13,25 +13,25 @@ type UIMessageLike = {
 };
 
 /**
- * Builds a system message that pins the agent to the meeting the user has open,
- * so "summarize this", "who spoke most?", "what were the objections?" resolve to
- * `botId` without the user restating it. Returned as a v6 UIMessage to prepend.
+ * Builds the text that pins the agent to the meeting the user has open, so
+ * "summarize this", "who spoke most?", "what were the objections?" resolve to
+ * `botId` without the user restating it.
+ *
+ * Passed to the handler via the dedicated `system` param (a plain string) —
+ * NOT prepended to `messages`. `messages` carries UIMessages (role+parts); a
+ * system entry shaped as a UIMessage (`parts:[…]`) fails Mastra's
+ * CoreMessage conversion ("System messages must be CoreMessage format with
+ * 'role' and 'content'") and 500s the whole turn. `system` is the canonical
+ * per-request system prompt slot and appends to the agent's own instructions.
  */
-function meetingContextMessage(botId: string): UIMessageLike {
-  return {
-    role: "system",
-    parts: [
-      {
-        type: "text",
-        text:
-          `The user is currently viewing the notebook for meeting botId="${botId}". ` +
-          `When they refer to "this meeting", "this call", or ask about it without ` +
-          `naming another, use this botId with the by-bot tools (get_transcript, ` +
-          `summarize_meeting, get_participants, get_recording). Do not ask which ` +
-          `meeting they mean.`,
-      },
-    ],
-  };
+function meetingContextInstruction(botId: string): string {
+  return (
+    `The user is currently viewing the notebook for meeting botId="${botId}". ` +
+    `When they refer to "this meeting", "this call", or ask about it without ` +
+    `naming another, use this botId with the by-bot tools (get_transcript, ` +
+    `summarize_meeting, get_participants, get_recording). Do not ask which ` +
+    `meeting they mean.`
+  );
 }
 
 // Shape of what AssistantChatTransport injects into the body (assistant-ui):
@@ -120,12 +120,21 @@ export async function POST(req: Request) {
   // unowned/forged meetingBotId is silently ignored — never surfaced to the
   // agent — so this can't be used to point the agent at another tenant's bot.
   // (The by-bot tools re-check ownership anyway; this is defense in depth.)
-  const scopedMessages =
+  // Delivered via the `system` param below (a plain string appended to the
+  // agent's instructions), NOT as a message in `messages` — a system entry
+  // shaped as a UIMessage fails Mastra's CoreMessage conversion and 500s.
+  const meetingContext =
     meetingBotId && (await isBotOwner(meetingBotId, session.user.id))
-      ? [meetingContextMessage(meetingBotId), ...(messages ?? [])]
-      : messages;
+      ? meetingContextInstruction(meetingBotId)
+      : undefined;
 
   const { mastra } = await import("@/mastra");
+
+  // Serialize the store's one-time schema init before the agent touches memory —
+  // otherwise a cold store hit by this turn concurrently with the notebook's
+  // thread init/history load collides on RoutingDbClient's pinned connection.
+  const { ensureMastraStoreInit } = await import("@/mastra/storage");
+  await ensureMastraStoreInit();
 
   // Memory binding: `resource` is ALWAYS the session user id (never trusted
   // from the body — that would let a caller read another user's thread), and
@@ -142,7 +151,10 @@ export async function POST(req: Request) {
     agentId,
     params: {
       ...rest,
-      messages: scopedMessages,
+      messages,
+      // Per-request system prompt (meeting pin). Appends to the agent's own
+      // instructions; omitted when there's no owned meeting in context.
+      ...(meetingContext ? { system: meetingContext } : {}),
       ...memory,
       clientTools: toClientTools(tools),
     } as Parameters<typeof handleChatStream>[0]["params"],

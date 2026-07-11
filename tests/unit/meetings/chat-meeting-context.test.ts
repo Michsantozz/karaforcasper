@@ -3,14 +3,16 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 /**
  * POST /api/chat — meeting-context injection. The notebook sends meetingBotId so
  * the agent knows which meeting is open. Security contract:
- *  - context is injected (system message prepended) ONLY if the caller OWNS the
- *    bot — a forged/unowned meetingBotId is silently dropped, never reaching the
- *    agent (can't point it at another tenant's meeting);
+ *  - context is injected via the `system` param (a plain string appended to the
+ *    agent's instructions) ONLY if the caller OWNS the bot — a forged/unowned
+ *    meetingBotId is silently dropped, never reaching the agent (can't point it
+ *    at another tenant's meeting). It is NOT prepended to `messages`: a system
+ *    entry shaped as a UIMessage fails Mastra's CoreMessage conversion and 500s.
  *  - no session → 401, no agent call;
- *  - no meetingBotId → messages pass through untouched.
+ *  - no meetingBotId → no `system`, messages pass through untouched.
  *
- * handleChatStream/isBotOwner/session are mocked; we assert the messages handed
- * to the stream handler.
+ * handleChatStream/isBotOwner/session are mocked; we assert the `system` and
+ * `messages` handed to the stream handler.
  */
 
 const getSession = vi.fn();
@@ -39,6 +41,11 @@ vi.mock("ai", () => ({
 }));
 // The agent barrel is dynamically imported inside POST — stub it away.
 vi.mock("@/mastra", () => ({ mastra: {} }));
+// POST awaits the store's one-time schema init before touching memory — stub it
+// so the route never tries to reach Postgres.
+vi.mock("@/mastra/storage", () => ({
+  ensureMastraStoreInit: vi.fn(async () => {}),
+}));
 
 type ParamsMessages = { messages?: Array<{ role: string }> };
 function messagesPassedToHandler(): Array<{ role: string }> | undefined {
@@ -51,6 +58,13 @@ function messagesPassedToHandler(): Array<{ role: string }> | undefined {
 function agentIdPassedToHandler(): string | undefined {
   const call = handleChatStream.mock.calls[0]?.[0] as { agentId?: string };
   return call?.agentId;
+}
+
+function systemPassedToHandler(): string | undefined {
+  const call = handleChatStream.mock.calls[0]?.[0] as {
+    params: { system?: string };
+  };
+  return call?.params?.system;
 }
 
 async function post(body: unknown): Promise<Response> {
@@ -70,31 +84,36 @@ beforeEach(() => {
 });
 
 describe("POST /api/chat — meeting context", () => {
-  it("owner: prepends a system message pinning the botId", async () => {
+  it("owner: pins the botId via the `system` param, messages untouched", async () => {
     isBotOwner.mockResolvedValue(true);
     await post({ meetingBotId: "bot-1", messages: [userMsg] });
 
     expect(isBotOwner).toHaveBeenCalledWith("bot-1", "u1");
-    const msgs = messagesPassedToHandler();
-    expect(msgs?.[0].role).toBe("system");
-    expect(JSON.stringify(msgs?.[0])).toContain("bot-1");
-    // Original user message preserved after the injected context.
-    expect(msgs?.[1]).toMatchObject({ role: "user" });
-  });
-
-  it("non-owner: drops meetingBotId, no system message injected", async () => {
-    isBotOwner.mockResolvedValue(false);
-    await post({ meetingBotId: "someone-elses", messages: [userMsg] });
-
+    // Context rides on `system` (a plain string), NOT inside `messages`.
+    const system = systemPassedToHandler();
+    expect(typeof system).toBe("string");
+    expect(system).toContain("bot-1");
+    // messages carries ONLY the user turn — no system UIMessage prepended.
     const msgs = messagesPassedToHandler();
     expect(msgs).toHaveLength(1);
     expect(msgs?.[0].role).toBe("user");
   });
 
-  it("no meetingBotId: messages pass through, ownership not checked", async () => {
+  it("non-owner: drops meetingBotId, no `system` injected", async () => {
+    isBotOwner.mockResolvedValue(false);
+    await post({ meetingBotId: "someone-elses", messages: [userMsg] });
+
+    expect(systemPassedToHandler()).toBeUndefined();
+    const msgs = messagesPassedToHandler();
+    expect(msgs).toHaveLength(1);
+    expect(msgs?.[0].role).toBe("user");
+  });
+
+  it("no meetingBotId: no `system`, messages pass through, ownership not checked", async () => {
     await post({ messages: [userMsg] });
 
     expect(isBotOwner).not.toHaveBeenCalled();
+    expect(systemPassedToHandler()).toBeUndefined();
     const msgs = messagesPassedToHandler();
     expect(msgs).toHaveLength(1);
     expect(msgs?.[0].role).toBe("user");
