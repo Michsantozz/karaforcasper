@@ -199,6 +199,13 @@ services:
       S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
       S3_PUBLIC_URL: ${S3_PUBLIC_URL:-http://localhost:9200/casper-uploads}
       S3_FORCE_PATH_STYLE: "true"
+      # better-auth valida o header Origin em mutations (sign-out, sign-in) contra
+      # trustedOrigins. Em NODE_ENV=production a lista de origins de dev é vazia,
+      # então acessar o container publicado por http://localhost:3009 dá 403
+      # INVALID_ORIGIN no sign-out. Este CSV adiciona os origins locais aos
+      # confiáveis sem hardcodar host no código (src/features/auth/model/auth.ts
+      # lê AUTH_EXTRA_TRUSTED_ORIGINS). Sobrescreva via .env se a porta mudar.
+      AUTH_EXTRA_TRUSTED_ORIGINS: ${AUTH_EXTRA_TRUSTED_ORIGINS:-http://localhost:3009,http://localhost:3000}
     ports:
       - "3000:3000"
     # Readiness real (pinga Postgres). Node inline — slim não garante curl/wget.
