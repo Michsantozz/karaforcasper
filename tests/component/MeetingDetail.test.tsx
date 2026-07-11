@@ -87,10 +87,11 @@ beforeEach(() => {
 });
 
 describe("MeetingDetail — estados", () => {
-  it("loading mostra 'loading minutes'", () => {
+  it("loading mostra o skeleton com aria-label 'loading minutes'", () => {
     detail = { data: undefined, isLoading: true };
     render(<MeetingDetail botId="bot-1" />);
-    expect(screen.getByText(/loading minutes/i)).toBeInTheDocument();
+    // O loading é um skeleton anunciado por aria-label (aria-busy), não texto.
+    expect(screen.getByLabelText(/loading minutes/i)).toBeInTheDocument();
   });
 
   it("erro genérico mostra 'could not load' + botão de retry", async () => {

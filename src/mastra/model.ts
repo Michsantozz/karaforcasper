@@ -9,7 +9,7 @@ import { requireEnv } from "@/shared/lib/env";
 // re-runs DNS resolution, so a fresh attempt usually lands on a reachable IP.
 const CONNECT_RETRIES = 3;
 
-function isRetryableNetworkError(error: unknown) {
+export function isRetryableNetworkError(error: unknown) {
   if (!(error instanceof Error)) return false;
   const code =
     (error as { code?: string }).code ??
@@ -25,7 +25,7 @@ function isRetryableNetworkError(error: unknown) {
   );
 }
 
-const resilientFetch: typeof fetch = async (input, init) => {
+export const resilientFetch: typeof fetch = async (input, init) => {
   let lastError: unknown;
   for (let attempt = 0; attempt <= CONNECT_RETRIES; attempt++) {
     if (init?.signal?.aborted) {
