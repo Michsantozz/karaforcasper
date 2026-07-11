@@ -8,8 +8,8 @@
   },
   "scripts": {
     "preinstall": "npx only-allow pnpm",
-    "dev": "next dev",
-    "dev:inngest": "npx inngest-cli@latest dev -u http://localhost:3000/api/inngest",
+    "dev": "next dev -p 3001",
+    "dev:inngest": "npx inngest-cli@latest dev -u http://localhost:3001/api/inngest",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
@@ -22,9 +22,12 @@
     "test:e2e:live": "RUN_LIVE_E2E=1 playwright test",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
+    "db:migrate:dev": "DATABASE_URL=postgres://casper:casper@localhost:5433/casperagent drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
-    "db:setup": "drizzle-kit migrate"
+    "db:setup": "drizzle-kit migrate",
+    "dev:up": "docker compose -f docker-compose.dev.yml up -d && pnpm db:migrate:dev",
+    "dev:down": "docker compose -f docker-compose.dev.yml down"
   },
   "dependencies": {
     "@ai-sdk/amazon-bedrock": "4.0.119",
