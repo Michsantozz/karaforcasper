@@ -1,192 +1,210 @@
-# CasperAgent
+# Casper Agent
 
-Agente autônomo de IA na **Casper Network (Testnet)** — nascido no **Casper Agentic Buildathon 2026** e evoluído para uma plataforma de agente com **multisig**, **reuniões** e **assinatura on-chain**.
+**Casper Agent is an AI meeting assistant that schedules recording bots, captures your calls, and turns them into actionable minutes — all through chat.**
 
-O agente **percebe → decide → age** on-chain: consulta a carteira, avalia o estado e executa transações reais de CSPR no Testnet — via chat ou em loop autônomo agendado. Em volta dele, features de negócio orquestram carteiras multisig, notarização de reuniões (via Recall.ai) e fluxos de solicitação de assinatura.
+Teams lose meeting outcomes across scattered notes and chats. Casper Agent brings the whole loop into one conversational assistant: it sends recording bots to Zoom/Meet/Teams calls, transcribes and summarizes them, pushes the minutes to you when they're ready, and answers questions across your entire meeting history.
 
----
+Built for the **Casper Agentic Buildathon 2026**, the project demonstrates an autonomous AI agent connected to real meeting infrastructure (Recall.ai), a connected calendar (Google/Outlook), and durable background workflows.
 
-## O que faz
+## Demo
 
-- **Chat agêntico (gateado por login)** — converse com o agente; ele consulta saldos e transfere CSPR sob comando. O chat consome LLM e expõe tools on-chain, então exige sessão autenticada (o `/api/chat` também rejeita sem sessão — defesa em profundidade).
-- **Transações reais on-chain** — cada transferência é uma `Transaction` nativa assinada e submetida ao Casper Testnet.
-- **Loop autônomo** — workflow em cron (Inngest) onde o agente avalia o estado e decide sozinho se age, sem humano no loop.
-- **Multisig** — criação/manutenção de carteiras multi-assinatura e coleta de assinaturas.
-- **Reuniões** — bots do Recall.ai (Zoom/Meet/Teams) gravam reuniões; o agente pode notarizar/ancorar o resultado on-chain. Calendar V2 multi-usuário via OAuth Google.
-- **Solicitações de assinatura** — fluxo de pedido → assinatura de um usuário (`/sign/[id]`).
-- **Notificações** — entrega de eventos de domínio (webhooks Recall via Svix).
+- App: https://casper.careglyph.com
+- Repo: https://github.com/Michsantozz/karaforcasper
 
-## Stack
+## What It Does
 
-| Camada | Tecnologia |
+- **Send a bot to any meeting**: schedule a recording bot for a Zoom/Google Meet/Teams call — now or in the future — and control it live (start/stop/pause recording, screenshare, chat, audio/video output).
+- **Schedule from chat**: "schedule a meeting Thursday at 2pm" creates the Google Calendar event, generates the Meet link, and attaches the recording bot in one shot. A calendar picker in the chat only offers free slots.
+- **Automatic minutes ("push")**: when the transcript is ready, a webhook fires the minutes generation (summary + decisions + action items + topics + participants), and the bot owner gets an in-app notification linking to the notebook — no need to come back and ask.
+- **Meeting notebook**: a player/karaoke view syncing the recording, timestamped transcript, decisions, action items, moments, and soundbites.
+- **Cross-meeting search**: ask about your meeting history without naming a bot — `list_my_meetings` and `search_my_meetings` find past meetings by keyword/topic and cite which meeting the answer came from.
+- **Multimodal chat**: attach images/PDFs; the vision model reads them inline.
+- **Multi-thread chat**: a sidebar of persistent conversations, each backed by the agent's own memory.
+- **Multi-tenant & secure**: every meeting, thread, and upload is scoped to the authenticated user (Postgres RLS + ownership checks). Webhooks are Svix-signed and fail-closed.
+
+## How It Works
+
+The agent is a single Mastra agent (`assistantAgent`) exposing meeting and calendar tools over an assistant-ui chat. Reads come from the Recall.ai MCP (read-only) and REST; writes (create/schedule/control bots) go through app tools with per-user deduplication in Postgres.
+
+### 1. Schedule a meeting with a recording bot (most common flow)
+
+1. The agent calls `pick_date` — a calendar with clickable free slots renders in the chat.
+2. It calls `create_calendar_event` with the chosen time, `withMeet=true`, `sendBot=true`.
+3. Google Calendar event + Meet link + recording bot are created in one call.
+
+### 2. After the meeting (automatic minutes)
+
+1. Recall fires the `transcript.done` webhook (Svix-verified) to `/api/webhooks/recall/bot`.
+2. The record is enqueued (idempotent) and enrichment runs: `summarizeMeeting` produces summary, decisions, action items, topics, participants, soundbites.
+3. The minutes persist to `meeting_records`; the owner gets an in-app notification.
+4. A reconcile cron (Inngest) reprocesses anything that failed — the webhook never has to redeliver.
+
+### 3. During a live meeting
+
+Control the bot from chat: `start/stop/pause/resume_recording`, `send_chat_message`, `start/stop_screenshare`, `output_audio` (mp3 alerts), `output_video` (image), `remove_bot`.
+
+### 4. Cross-meeting questions
+
+"What did we decide about X?" → `search_my_meetings` returns matching meetings + transcript snippets, scoped to the user's own records only.
+
+## Tech Stack
+
+| Layer | Technology |
 |---|---|
-| Frontend / chat | Next.js 16 (App Router + RSC) + assistant-ui (streaming AI SDK v6) |
-| Orquestração de agente | Mastra (`Agent` + `tools` + `Workflow`) |
-| LLM | AWS Bedrock — modelo via `BEDROCK_MODEL_ID` |
-| Blockchain | `casper-js-sdk` v5 (Testnet) |
-| Loop autônomo | Inngest (cron workflow) |
-| Reuniões / calendário | Recall.ai (REST + MCP) |
-| Persistência | Postgres + Drizzle ORM |
+| App | Next.js 16, React 19, App Router + RSC |
+| Agent framework | Mastra (agents, tools, workflows) |
+| LLM | Fireworks AI (default, vision-capable) or AWS Bedrock |
+| Meeting infrastructure | Recall.ai (REST + MCP), Google Calendar OAuth |
+| Chat UI | assistant-ui, Tailwind / shadcn-style components |
 | Auth | better-auth |
+| Database | Postgres, Drizzle ORM (RLS multi-tenant) |
+| Background workflows | Inngest (crons, reconcile loop) |
+| Object storage | S3 / MinIO (chat image + file attachments) |
+| Email | Resend (transactional "minutes ready") |
 
----
+## Project Structure
 
-## Arquitetura
-
-Arquitetura **feature-based colocada com o App Router** — `app/` cuida só de rotas; toda a lógica vive em `features/`, `mastra/`, `server/`, `shared/`. A fronteira entre camadas é **imposta por ESLint** (`eslint-plugin-boundaries`): violar quebra `pnpm lint`. Ver [`CLAUDE.md`](./CLAUDE.md) para a diretriz completa.
-
-```
+```txt
 src/
-├── app/           # rotas apenas (pages + route handlers) — cascas finas que delegam
-├── features/      # lógica de negócio por domínio (ui/ model/ [api/] + index.ts)
-│   ├── assistant/     # orquestrador do chat (pode importar qualquer slice)
-│   ├── auth/          # sessão (cross-cutting) + shell de navegação
-│   ├── wallet/        # carteira do agente (pode importar multisig)
-│   ├── multisig/      # carteiras multi-assinatura
-│   └── meetings/      # reuniões Recall.ai + calendário
-├── mastra/        # o agente: agents/ tools/ workflows/ (server-side)
-├── server/        # server-only: casper/ (RPC, keys, tx, signature, notifications) · recall/ (bots, calendar)
-└── shared/        # genérico, leaf: ui/ (shadcn + assistant-ui) · lib/ · db/
+├── app/                   # Next.js routes and route handlers (thin shells)
+├── features/
+│   ├── assistant/         # Main AI chat UI + thread store
+│   ├── auth/              # Session and app shell
+│   ├── meetings/          # Recall/calendar UI, meeting notebook, clips
+│   └── notifications/     # In-app notification bell
+├── mastra/
+│   ├── agents/            # assistantAgent (the meeting assistant)
+│   ├── tools/             # recall, calendar tools
+│   └── workflows/         # auto-schedule, meeting-reconcile
+├── server/
+│   ├── recall/            # Recall.ai, calendar, OAuth, meeting records
+│   └── storage/           # S3 upload
+└── shared/                # DB (schema, RLS), UI primitives, utils
 ```
 
-Cada slice de feature expõe uma API pública via `index.ts` (barrel) — importe pelo barrel, não fure para os internos de outro slice. **Signature** (solicitação de assinatura) e **notifications** vivem hoje como lógica server-only em `server/casper/` + route handlers em `app/api/`; ainda não têm slice de feature com UI própria.
+## Key Files
 
-Fluxo do agente:
+- `src/mastra/agents/assistant.agent.ts` — the meeting assistant, its tools and instructions.
+- `src/mastra/tools/recall.tool.ts` — send/control bots, transcript, summarize, cross-meeting search.
+- `src/mastra/tools/calendar.tool.ts` — list events, schedule bots, create meetings, free-slot lookup.
+- `src/server/recall/summarize.ts` — turns a transcript into structured minutes.
+- `src/server/recall/enrich.ts` — durable enrichment run after a meeting.
+- `src/app/api/webhooks/recall/bot/route.ts` — Svix-verified webhook that triggers the minutes push.
+- `src/app/api/chat/route.ts` — chat entrypoint (auth + ownership + memory binding).
+- `src/features/assistant/model/threads.ts` — per-user chat thread store (Mastra memory).
 
-```
-chat / cron
-   │
-   ▼
-Mastra Agent (Bedrock) ── tools ──► casper.tool · recall.tool · signature-request.tool · calendar.tool
-   │                                        │
-   ▼                                        ▼
-assistant-ui (UI + ToolUI)      server/casper → RpcClient.putTransaction() → Casper Testnet (tx real)
-```
+## Local Setup
 
-### Arquivos-chave
-
-- `src/server/casper/` — client RPC, signer, transfer, multisig, tx-store, transfer-policy
-- `src/server/recall/` — bots, calendars, google-oauth
-- `src/mastra/agents/` — `casper.agent.ts` · `assistant.agent.ts` · `meeting.agent.ts`
-- `src/mastra/tools/` — tools que o LLM chama (casper, recall, calendar, signature-request, meeting-chain)
-- `src/mastra/workflows/` — `autonomous.workflow.ts` (loop) · `multisig-maintenance.workflow.ts`
-- `src/app/api/chat/route.ts` — endpoint de chat (streaming)
-- `src/features/assistant/ui/Assistant.tsx` — UI do chat + render das tx
-
-### Rotas
-
-`/` (chat gateado) · `/multisig` · `/multisig/[id]` · `/sign/[id]` · `/meetings` · showcases (`/casper-showcase`, `/calendar-showcase`, `/wallet-test`).
-
-### Leituras e escritas (RSC / client-server)
-
-- **Leituras** — RSC e route handlers leem direto de `server/*`; UI client lê via hooks TanStack Query em `features/<domain>/model/` (nunca importa `server/`).
-- **Escritas** — a maior parte passa por **route handlers** em `app/api/*` (o bridge que toca `server/*`): webhooks (Recall/Svix), callbacks OAuth e mutações chamadas pelo client via `fetch`. Server Actions são usadas onde a mutação pertence claramente a um slice. Ambos são idioma válido; a regra é: client nunca importa `server/` direto.
-
----
-
-## Setup
-
-### 1. Dependências
+### 1. Install
 
 ```bash
-pnpm install     # pnpm é obrigatório (only-allow pnpm no preinstall)
+pnpm install
 ```
 
-### 2. Variáveis de ambiente
+Requires **Node >= 24** and **pnpm** (enforced via `only-allow pnpm`).
+
+### 2. Environment
 
 ```bash
 cp .env.example .env.local
 ```
 
-Preencha em `.env.local`:
+Required groups (see `.env.example` for the full annotated list):
 
-- **Bedrock (obrigatório)** — `BEDROCK_REGION`, `BEDROCK_MODEL_ID`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`
-- **Casper** — `CASPER_NODE_URL` / `CASPER_CHAIN_NAME` (já vêm com defaults de Testnet)
-- **Chave do agente** — `CASPER_AGENT_SECRET_KEY_PATH` (default `~/.casper/keys/agent-secret.pem`)
-- **Postgres** — `DATABASE_URL` (Drizzle: dedup Recall, mapeamento user→calendar, auth)
-- **Recall.ai (reuniões)** — `RECALL_API_KEY`, `RECALL_REGION`, `RECALL_WEBHOOK_SECRET` (Svix)
-- **Calendar OAuth (Google)** — `OAUTH_STATE_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URI`
+- **Database**: `DATABASE_URL` (Postgres — better-auth + Mastra memory + Drizzle).
+- **Auth**: `BETTER_AUTH_URL`, `NEXT_PUBLIC_APP_URL`.
+- **LLM**: `MODEL_PROVIDER` (`fireworks` default | `bedrock`). For Fireworks: `FIREWORKS_API_KEY`, `FIREWORKS_MODEL_ID`. For Bedrock: `BEDROCK_REGION`, `BEDROCK_MODEL_ID`, AWS credentials.
+- **Meetings**: `RECALL_API_KEY`, `RECALL_REGION`, `RECALL_WEBHOOK_SECRET` (Svix `whsec_...`).
+- **Calendar OAuth**: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URI`, `OAUTH_STATE_SECRET`.
+- **Object storage** (chat attachments): `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_PUBLIC_URL` (MinIO defaults ship in docker-compose).
+- **Multi-instance**: `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY` (stable across replicas).
+- **Email** (optional): `RESEND_API_KEY`, `EMAIL_FROM` — without it, email is a no-op (in-app bell only).
 
-### 3. Banco de dados
+### 3. Database
 
 ```bash
-pnpm db:migrate     # aplica migrations Drizzle (alias de db:setup)
+pnpm db:migrate
 ```
 
-### 4. Gerar a carteira do agente
+### 4. Recall webhooks
+
+Configure two endpoints in the Recall dashboard (same Svix secret):
+
+- Calendar events → `{APP_URL}/api/webhooks/recall`
+- Bot / transcript → `{APP_URL}/api/webhooks/recall/bot` (subscribe to `transcript.done` — this is what generates the minutes and notifies the owner)
+
+### 5. Run
 
 ```bash
-pnpm tsx scripts/gen-key.ts
+pnpm dev
 ```
 
-Cria `~/.casper/keys/agent-secret.pem` (ED25519, `chmod 600`) e imprime a **public key**. Nunca mora na raiz do projeto; em prod use secret manager.
-
-### 5. Fundar no faucet do Testnet
-
-Copie a public key impressa e funde em **https://testnet.cspr.live/tools/faucet**. Sem fundos, o agente não paga gas.
-
-### 6. Rodar
+The autonomous workflows need the Inngest dev server:
 
 ```bash
-pnpm dev                # app em http://localhost:3000
-pnpm dev:inngest        # (opcional) loop autônomo local
+pnpm dev:inngest   # inngest-cli dev -u http://localhost:3000/api/inngest
 ```
 
----
-
-## Comandos
+Production-style local run:
 
 ```bash
-pnpm dev            # dev server
-pnpm build          # build de produção (valida RSC/bundler)
-pnpm typecheck      # tsc --noEmit
-pnpm lint           # eslint (inclui regras de fronteira de arquitetura)
-pnpm test           # vitest (unit + component, hermético)
-pnpm db:migrate     # migrations drizzle
+pnpm build
+pnpm start
 ```
 
-Antes de fechar qualquer mudança de código: rode `pnpm typecheck` **e** `pnpm lint`. Ambos devem passar.
-
----
-
-## Testes
-
-Hermético por padrão — unit/component rodam offline (MSW bloqueia rede). Integration e e2e são **opt-in** atrás de flags de env; alguns batem em serviços reais (Casper Testnet, Bedrock, Recall). Detalhes em [`tests/README.md`](./tests/README.md).
-
-| Camada | Runner | Onde | Env |
-|--------|--------|------|-----|
-| unit | Vitest (node) | `tests/unit/**/*.test.ts(x)` | hermético |
-| component | Vitest (jsdom) | `tests/component/**/*.test.tsx` | hermético |
-| integration | Vitest (node, serial) | `tests/integration/**/*.integration.test.ts` | opt-in `RUN_LIVE_E2E=1` |
-| e2e | Playwright | `tests/e2e/*.spec.ts` | opt-in `RUN_LIVE_E2E=1` |
+Or the full self-host stack (Postgres + MinIO + Inngest + app):
 
 ```bash
-pnpm test              # unit + component (hermético, rode a qualquer hora)
+cp .env.example .env   # fill the [SECRET] values
+docker compose up -d --build
+```
+
+## Commands
+
+```bash
+pnpm dev                 # local dev server
+pnpm dev:inngest         # Inngest dev server (autonomous workflows)
+pnpm build               # production build
+pnpm start               # run the built app
+pnpm typecheck           # TypeScript check
+pnpm lint                # ESLint (includes architecture boundary rules)
+pnpm test                # Vitest
+pnpm test:unit           # unit tests
+pnpm test:component      # component tests
+pnpm test:e2e            # Playwright tests
+pnpm db:migrate          # Drizzle migrations
+pnpm db:studio           # Drizzle Studio
+```
+
+## Tests
+
+Most tests are hermetic by default (mocked Recall/Bedrock/DB). Live external flows and E2E are opt-in.
+
+```bash
 pnpm test:unit
 pnpm test:component
-pnpm test:integration                 # self-skip sem RUN_LIVE_E2E=1
-RUN_LIVE_E2E=1 pnpm test:integration  # round-trip real na Testnet
-pnpm exec playwright install chromium # uma vez
-pnpm test:e2e                          # specs de UI herméticos
-pnpm test:e2e:live                     # RUN_LIVE_E2E=1 — agente + tx reais
+pnpm test:integration
+RUN_LIVE_E2E=1 pnpm test:e2e:live
 ```
 
-> E2E LIVE submete um Native Transfer real na Testnet e gasta gas em CSPR — a chave do agente precisa estar fundada.
+Live tests consume external API credits (Recall, LLM).
 
----
+## Security Notes
 
-## Segurança
+- Every route is auth-gated; user ids come from the session, never from the request body.
+- Meetings, chat threads, and uploads are scoped per user via Postgres RLS (`withUserScope`) and explicit ownership checks (`assertBotOwner`) — cross-tenant reads 404, they never leak.
+- Webhooks are Svix-signed (HMAC-SHA256, timing-safe, anti-replay) and **fail-closed**: no secret configured → 500, invalid signature → 401.
+- Chat `meetingBotId` is honored only if the caller owns the bot; a forged id is silently ignored.
+- Uploads are MIME-allowlisted, size-capped (10 MB), and stored under a user-namespaced key.
+- `.env*` and `*.pem` are gitignored; production deployments should use a secret manager.
 
-- `~/.casper/keys/agent-secret.pem` e `.env.local` **nunca** são commitados (`.gitignore`).
-- Em produção, use um secret manager (não arquivo local).
-- O loop autônomo move fundos sem confirmação humana — ajuste a política (`transfer-policy.ts` + prompt do agente) antes de usar com valores reais.
-- Não re-serialize um deploy/tx Casper após `setSignature` (o nó rejeita com -32016).
-- Transferência mínima na rede: **2.5 CSPR** (abaixo disso o nó recusa com -32016).
+## Architecture
 
----
+The codebase uses a **feature-based architecture colocated with the App Router**, with layer boundaries enforced by ESLint (`eslint-plugin-boundaries`). `app/` owns routing only; business logic lives in `features/<domain>/`; server-only code (Recall, storage) lives in `server/`; generic UI/DB/utils in `shared/`. See `CLAUDE.md` for the full boundary rules.
 
-## Buildathon
+## Buildathon Fit
 
-- **Componente on-chain gerando transações**: ✅ `transfer_cspr` (Native Transfer no Testnet)
-- **Agentic AI**: ✅ agente percebe/decide/age, em chat e em cron autônomo
-- **Repo público + README**: este documento
+- **AI Agent**: one assistant plans and calls tools across meetings and calendar, with persistent memory.
+- **Autonomy**: durable Inngest workflows schedule bots and reconcile minutes without a human in the loop.
+- **Real infrastructure**: live Recall.ai bots on real Zoom/Meet/Teams calls, real Google Calendar OAuth.
+- **Multimodal**: image/PDF attachments read by a vision model in chat.

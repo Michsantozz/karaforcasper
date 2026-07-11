@@ -42,6 +42,48 @@ services:
         condition: service_healthy
     restart: "no"
 
+  # MinIO: object storage S3-compatível (uploads de imagem/attachments do chat).
+  # console em :9001, API S3 em :9000. Bucket criado pelo job `minio-init`.
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    # Host ports offset to 92xx: 9000/9001 are commonly taken by another local
+    # MinIO. Container stays on 9000/9001 internally (compose network + init use
+    # those); only the host mapping is shifted.
+    ports:
+      - "9200:9000"
+      - "9201:9001"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Job one-shot: cria o bucket e o deixa com leitura pública (imagens servidas
+  # por URL direta pro modelo de visão). Encerra após configurar.
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      S3_BUCKET: ${S3_BUCKET:-casper-uploads}
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 $$MINIO_ROOT_USER $$MINIO_ROOT_PASSWORD &&
+      mc mb --ignore-existing local/$$S3_BUCKET &&
+      mc anonymous set download local/$$S3_BUCKET
+      "
+    restart: "no"
+
   # Servidor Inngest: registra o endpoint /api/inngest do app e executa o cron
   # do loop autônomo + workflows. Sem ele, o agente NÃO é autônomo.
   inngest:
@@ -50,6 +92,11 @@ services:
     command: ["inngest", "start"]
     environment:
       INNGEST_DEV: "0"
+      # `inngest start` (prod) authenticates apps with these. MUST match the keys
+      # the app/SDK uses below, or event delivery + step callbacks fail closed.
+      # Both are [SECRET] — supply via .env (see .env.example).
+      INNGEST_EVENT_KEY: ${INNGEST_EVENT_KEY:?set INNGEST_EVENT_KEY in .env}
+      INNGEST_SIGNING_KEY: ${INNGEST_SIGNING_KEY:?set INNGEST_SIGNING_KEY in .env}
     ports:
       - "8288:8288"
     depends_on:
@@ -70,6 +117,15 @@ services:
       DATABASE_URL: postgres://casper:${POSTGRES_PASSWORD:-casper}@db:5432/casperagent
       INNGEST_BASE_URL: http://inngest:8288
       INNGEST_DEV: "0"
+      # Storage S3 (MinIO). Endpoint interno via rede do compose; a URL pública
+      # (S3_PUBLIC_URL) é o que vai no image part servido ao browser/modelo.
+      S3_ENDPOINT: http://minio:9000
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_BUCKET: ${S3_BUCKET:-casper-uploads}
+      S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      S3_PUBLIC_URL: ${S3_PUBLIC_URL:-http://localhost:9200/casper-uploads}
+      S3_FORCE_PATH_STYLE: "true"
     ports:
       - "3000:3000"
     # Readiness real (pinga Postgres). Node inline — slim não garante curl/wget.
@@ -90,6 +146,9 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
 
 volumes:
   pgdata:
+  miniodata:

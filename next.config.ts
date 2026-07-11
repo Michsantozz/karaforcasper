@@ -10,7 +10,7 @@ const isProd = process.env.NODE_ENV === "production";
  *
  * A CSP restritiva só entra em produção: em dev o Next injeta eval/inline p/ HMR
  * e uma CSP dura quebra o WebSocket de recarga. `frame-ancestors 'none'` protege
- * o popup de assinatura da Casper Wallet contra clickjacking.
+ * contra clickjacking.
  */
 const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
@@ -36,8 +36,8 @@ const securityHeaders = [
             "style-src 'self' 'unsafe-inline'",
             "img-src 'self' data: https:",
             "font-src 'self' data:",
-            // APIs externas que o cliente chama (RPC Casper, explorer, AWS/Bedrock
-            // é server-side). Ajuste conforme os hosts reais em uso.
+            // APIs externas que o cliente chama (AWS/Bedrock é server-side).
+            // Ajuste conforme os hosts reais em uso.
             "connect-src 'self' https: wss:",
             "frame-ancestors 'none'",
             "base-uri 'self'",
@@ -69,9 +69,8 @@ const nextConfig: NextConfig = {
   // roda atrás de túnel (Cloudflare) sob outro domínio — sem isso o Next bloqueia
   // cross-origin e o WebSocket de HMR falha (502).
   allowedDevOrigins: ["casper.ultraself.com.br"],
-  // casper-js-sdk e libs de cripto rodam só no server; nunca empacotar no client bundle.
+  // Libs pesadas que rodam só no server; nunca empacotar no client bundle.
   serverExternalPackages: [
-    "casper-js-sdk",
     "@mastra/core",
     "@mastra/memory",
     "@mastra/pg",
