@@ -4,16 +4,17 @@ import { Webhook } from "svix";
 /**
  * Webhook de BOT do Recall (/api/webhooks/recall/bot) — fecha o loop pós-reunião.
  * Cobrimos a borda de segurança (gate Svix, mesma cripto do runtime) E a máquina
- * de reação: só transcript.done enfileira a ata + dispara o enrich; outros
- * eventos são ack sem efeito. Dono resolvido por metadata do payload OU pelo repo.
+ * de reação: só transcript.done enfileira a ata + DISPARA o workflow durável
+ * meeting-enrich via inngest.send (não bloqueia no LLM); outros eventos são ack
+ * sem efeito. Dono resolvido por metadata do payload OU pelo repo.
  *
- * Libs server-only (repo/enqueue/enrich/RLS) são mockadas para isolar a rota.
+ * Libs server-only (repo/enqueue/RLS) + o client Inngest são mockadas p/ isolar a rota.
  */
 
 const findBotByBotId = vi.fn();
 const botOwnerUserId = vi.fn();
 const enqueueMeetingRecord = vi.fn();
-const enrichMeeting = vi.fn();
+const inngestSend = vi.fn();
 
 vi.mock("@/server/recall/bot-repository", () => ({
   findBotByBotId: (...a: unknown[]) => findBotByBotId(...a),
@@ -22,8 +23,8 @@ vi.mock("@/server/recall/bot-repository", () => ({
 vi.mock("@/server/recall/meeting-repository", () => ({
   enqueueMeetingRecord: (...a: unknown[]) => enqueueMeetingRecord(...a),
 }));
-vi.mock("@/server/recall/enrich", () => ({
-  enrichMeeting: (...a: unknown[]) => enrichMeeting(...a),
+vi.mock("@/inngest/client", () => ({
+  inngest: { send: (...a: unknown[]) => inngestSend(...a) },
 }));
 vi.mock("@/shared/db/rls", () => ({
   withSystemScope: (fn: () => unknown) => fn(),
@@ -55,7 +56,7 @@ beforeEach(() => {
   findBotByBotId.mockReset();
   botOwnerUserId.mockReset();
   enqueueMeetingRecord.mockReset();
-  enrichMeeting.mockReset();
+  inngestSend.mockReset();
   process.env.RECALL_WEBHOOK_SECRET = SECRET;
 });
 
@@ -102,11 +103,11 @@ describe("POST /api/webhooks/recall/bot — gate Svix", () => {
 });
 
 describe("POST /api/webhooks/recall/bot — reação por evento", () => {
-  it("transcript.done: enfileira a ata e dispara o enrich (200)", async () => {
+  it("transcript.done: enfileira a ata e dispara o workflow meeting-enrich (200)", async () => {
     findBotByBotId.mockResolvedValue({ meetingUrl: "https://meet/x" });
     botOwnerUserId.mockReturnValue("owner-1");
     enqueueMeetingRecord.mockResolvedValue(undefined);
-    enrichMeeting.mockResolvedValue({ state: "done" });
+    inngestSend.mockResolvedValue({ ids: ["evt-1"] });
 
     const { POST } = await import("@/app/api/webhooks/recall/bot/route");
     const res = await POST(
@@ -119,16 +120,20 @@ describe("POST /api/webhooks/recall/bot — reação por evento", () => {
       userId: "owner-1",
       meetingUrl: "https://meet/x",
     });
-    expect(enrichMeeting).toHaveBeenCalledWith("bot-9");
-    const json = (await res.json()) as { enrich: string };
-    expect(json.enrich).toBe("done");
+    // Dispara o evento do workflow durável com o shape que @mastra/inngest espera.
+    expect(inngestSend).toHaveBeenCalledWith({
+      name: "workflow.meeting-enrich",
+      data: { inputData: { botId: "bot-9" } },
+    });
+    const json = (await res.json()) as { dispatched: string };
+    expect(json.dispatched).toBe("meeting-enrich");
   });
 
   it("prefere metadata.user_id do payload sobre o dono do repo", async () => {
     findBotByBotId.mockResolvedValue({ meetingUrl: null });
     botOwnerUserId.mockReturnValue("owner-repo");
     enqueueMeetingRecord.mockResolvedValue(undefined);
-    enrichMeeting.mockResolvedValue({ state: "done" });
+    inngestSend.mockResolvedValue({ ids: ["evt-1"] });
 
     const { POST } = await import("@/app/api/webhooks/recall/bot/route");
     await POST(
@@ -143,11 +148,13 @@ describe("POST /api/webhooks/recall/bot — reação por evento", () => {
     );
   });
 
-  it("enrich que rejeita não vira 5xx (fica pending p/ reconcile)", async () => {
+  it("send do evento que rejeita não vira 5xx (fica pending p/ reconcile)", async () => {
     findBotByBotId.mockResolvedValue({ meetingUrl: null });
     botOwnerUserId.mockReturnValue("owner-1");
     enqueueMeetingRecord.mockResolvedValue(undefined);
-    enrichMeeting.mockRejectedValue(new Error("LLM timeout"));
+    // Falha ao despachar o evento: a rota engole (o cron reconcile é a rede de
+    // segurança), a ata já está pending, e NÃO deve retornar 5xx.
+    inngestSend.mockRejectedValue(new Error("inngest unreachable"));
 
     const { POST } = await import("@/app/api/webhooks/recall/bot/route");
     const res = await POST(
@@ -155,8 +162,9 @@ describe("POST /api/webhooks/recall/bot — reação por evento", () => {
     );
 
     expect(res.status).toBe(200);
-    const json = (await res.json()) as { enrich: string };
-    expect(json.enrich).toBe("processing");
+    expect(enqueueMeetingRecord).toHaveBeenCalled();
+    const json = (await res.json()) as { dispatched: string };
+    expect(json.dispatched).toBe("meeting-enrich");
   });
 
   it("transcript.done sem bot id: ack sem enfileirar", async () => {

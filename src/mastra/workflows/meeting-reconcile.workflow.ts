@@ -13,7 +13,8 @@ import { createWorkflow, createStep } from "@/inngest/client";
  * Runs every 5 min. staleMs=5min: only touches rows stuck long enough,
  * avoiding a race with the enrichment triggered by the webhook.
  */
-const reconcile = createStep({
+// Exported for unit testing the step logic in isolation (see tests/unit/workflows).
+export const reconcile = createStep({
   id: "meeting-reconcile",
   inputSchema: z.object({}),
   outputSchema: z.object({

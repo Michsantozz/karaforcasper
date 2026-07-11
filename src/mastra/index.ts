@@ -1,6 +1,7 @@
 import { Mastra } from "@mastra/core";
 import { assistantAgent } from "./agents/assistant.agent";
 import { meetingReconcileWorkflow } from "./workflows/meeting-reconcile.workflow";
+import { meetingEnrichWorkflow } from "./workflows/meeting-enrich.workflow";
 import { autoScheduleWorkflow } from "./workflows/auto-schedule.workflow";
 import { getMastraStore } from "./storage";
 
@@ -9,6 +10,7 @@ export const mastra = new Mastra({
   agents: { assistantAgent },
   workflows: {
     meetingReconcileWorkflow,
+    meetingEnrichWorkflow,
     autoScheduleWorkflow,
   },
   // Persists traces, telemetry and workflow state in the app's PG (schema

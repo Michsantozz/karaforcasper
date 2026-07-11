@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 import { Webhook, WebhookVerificationError } from "svix";
 import { findBotByBotId, botOwnerUserId } from "@/server/recall/bot-repository";
 import { enqueueMeetingRecord } from "@/server/recall/meeting-repository";
-import { enrichMeeting } from "@/server/recall/enrich";
 import { withSystemScope } from "@/shared/db/rls";
+import { inngest } from "@/inngest/client";
 
 /**
  * Recall BOT webhook (status/artifact change, delivered via Svix) — channel
@@ -73,9 +73,9 @@ export async function POST(req: Request) {
     const userId = payloadUser ?? botOwnerUserId(row);
 
     // ENQUEUES the minutes (idempotent) instead of generating them synchronously
-    // here. Generation lives in the durable worker (enrichMeeting) — with retry
-    // via the reconcile cron if it fails. We persist to meeting_records so we
-    // don't re-fetch from Recall (which expires) or re-pay the LLM on every read.
+    // here. Generation lives in the durable meeting-enrich workflow — persisted to
+    // meeting_records so we don't re-fetch from Recall (which expires) or re-pay
+    // the LLM on every read.
     await withSystemScope(() =>
       enqueueMeetingRecord({
         botId,
@@ -84,15 +84,18 @@ export async function POST(req: Request) {
       }),
     );
 
-    // Fires the enrichment best-effort on the happy path (low latency). If it
-    // fails/is still processing, we do NOT return 5xx: the row stays pending and
-    // the reconciliation cron reprocesses it — the webhook doesn't need to redeliver.
-    const result = await enrichMeeting(botId).catch((err) => ({
-      state: "processing" as const,
-      error: err instanceof Error ? err.message : "unknown",
-    }));
+    // Hands enrichment to the durable meeting-enrich workflow (event-driven) and
+    // returns immediately — the webhook never blocks on the LLM/media work. If the
+    // send fails, we do NOT return 5xx: the row is already pending, so the reconcile
+    // cron reprocesses it. `data.inputData` is the shape the Mastra workflow start
+    // event expects (see @mastra/inngest). runId is generated server-side if absent.
+    await inngest
+      .send({ name: "workflow.meeting-enrich", data: { inputData: { botId } } })
+      .catch(() => {
+        // Swallowed on purpose: the reconcile cron is the safety net.
+      });
 
-    return NextResponse.json({ ok: true, botId, enrich: result.state });
+    return NextResponse.json({ ok: true, botId, dispatched: "meeting-enrich" });
   } catch (err) {
     const message = err instanceof Error ? err.message : "unknown error";
     // 5xx makes Svix redeliver (useful if the enqueue fails transiently).

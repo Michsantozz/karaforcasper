@@ -12,7 +12,8 @@ import { createWorkflow, createStep } from "@/inngest/client";
  *
  * Runs every 10 min.
  */
-const scan = createStep({
+// Exported for unit testing the step logic in isolation (see tests/unit/workflows).
+export const scan = createStep({
   id: "auto-schedule",
   inputSchema: z.object({}),
   outputSchema: z.object({
