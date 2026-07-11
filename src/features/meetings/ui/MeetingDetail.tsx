@@ -1,24 +1,106 @@
 "use client";
 
 /**
- * Meeting detail surface: video player + "karaoke" transcript (the spoken
- * word is highlighted in sync with the playhead) + AI notes (summary,
- * sections, moments, decisions, action items, talk shares).
+ * Meeting notebook (real data) — post-meeting surface casada com a identidade
+ * EvilCharts/terminal do assistant: frame outer + header mono uppercase, inner
+ * card `border bg-background`, pulse dots, accents oklch primary/secondary.
  *
- * Fireflies/Gong-style, no external dependencies: native HTML5 player, sync
- * via the `timeupdate` event. Clicking a word/section/moment seeks the video.
+ * Fonte: useMeetingDetail(botId) → GET /api/meetings/:botId (minutes + video +
+ * transcript word-level persistidos em meeting_records). Diferente do mock, o
+ * player toca o mp4 REAL (video_mixed, HTML5 nativo, sync via `timeupdate`) e o
+ * transcript é o karaoke real (palavra ativa destacada). Clicar palavra /
+ * seção / momento / soundbite dá seek no vídeo.
+ *
+ * Layout de 2 colunas dentro do painel esquerdo (o Thread real vive à direita,
+ * montado pela página via AssistantSidebar). Sem dependências externas de
+ * player.
  */
 
 import { useMemo, useRef, useState } from "react";
 import {
+  FileTextIcon,
+  SparklesIcon,
+  ListChecksIcon,
+  HashIcon,
+  UsersIcon,
+  ClockIcon,
+  CheckIcon,
+  ZapIcon,
+  MessageCircleQuestionIcon,
+  ShieldAlertIcon,
+  BookmarkIcon,
+  ScissorsIcon,
+  QuoteIcon,
+  SearchIcon,
+  type LucideIcon,
+} from "lucide-react";
+import { cn } from "@/shared/lib/utils";
+import {
   useMeetingDetail,
+  HttpError,
   type MeetingDetailResponse,
+  type MeetingMoment,
+  type MeetingSoundbite,
 } from "@/features/meetings/model/queries";
+import { useClip, type ClipState } from "@/features/meetings/model/useClip";
+
+/* ── helpers ──────────────────────────────────────────────────────── */
+
+/** Deterministic oklch color per speaker (stable across renders). */
+const SPEAKER_HUES = [150, 8, 250, 70, 300, 190];
+function speakerColor(index: number): string {
+  const hue = SPEAKER_HUES[index % SPEAKER_HUES.length];
+  return `oklch(0.65 0.15 ${hue})`;
+}
+
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+function fmt(s: number): string {
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return `${m}:${sec.toString().padStart(2, "0")}`;
+}
+
+/** kebab-case a label for a download filename. */
+function slug(label: string): string {
+  return (
+    label
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 40) || "moment"
+  );
+}
+
+const MOMENT_ICON: Record<MeetingMoment["kind"], LucideIcon> = {
+  topic: HashIcon,
+  action: ZapIcon,
+  question: MessageCircleQuestionIcon,
+  objection: ShieldAlertIcon,
+};
+
+/* ── root ─────────────────────────────────────────────────────────── */
 
 export function MeetingDetail({ botId }: { botId: string }) {
-  const { data, isLoading, error } = useMeetingDetail(botId);
+  const { data, isLoading, error, refetch, isRefetching } =
+    useMeetingDetail(botId);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [currentTime, setCurrentTime] = useState(0);
+  const [time, setTime] = useState(0);
+  const [transcriptQuery, setTranscriptQuery] = useState("");
+  const clip = useClip();
+
+  // Speaker index map (stable order = order of first appearance).
+  const speakerIndex = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const utt of data?.transcript ?? []) {
+      if (!map.has(utt.speaker)) map.set(utt.speaker, map.size);
+    }
+    return map;
+  }, [data?.transcript]);
 
   function seek(seconds: number | null) {
     if (seconds == null || !videoRef.current) return;
@@ -27,38 +109,137 @@ export function MeetingDetail({ botId }: { botId: string }) {
   }
 
   if (isLoading) {
-    return <div className="p-6 text-sm text-muted-foreground">Loading minutes…</div>;
+    return (
+      <Shell>
+        <div className="flex flex-1 items-center justify-center font-mono text-xs uppercase tracking-wider text-muted-foreground">
+          <span className="mr-2 size-1.5 animate-pulse rounded-[1px] bg-(--thread-accent-primary)" />
+          loading minutes…
+        </div>
+      </Shell>
+    );
   }
   if (error || !data) {
+    const status = error instanceof HttpError ? error.status : 0;
+    const { text, canRetry } =
+      status === 404
+        ? { text: "meeting not found — it may have been removed", canRetry: false }
+        : status === 401
+          ? { text: "session expired — sign in again to view this meeting", canRetry: false }
+          : { text: "could not load this meeting", canRetry: true };
     return (
-      <div className="p-6 text-sm text-destructive">
-        Could not load this meeting.
-      </div>
+      <Shell>
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 px-4 text-center">
+          <p className="font-mono text-xs text-(--thread-accent-secondary)">
+            {text}
+          </p>
+          {canRetry && (
+            <button
+              type="button"
+              onClick={() => refetch()}
+              disabled={isRefetching}
+              className="rounded-[5px] border bg-background px-3 py-1.5 font-mono text-[11px] uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+            >
+              {isRefetching ? "retrying…" : "retry"}
+            </button>
+          )}
+        </div>
+      </Shell>
     );
   }
 
-  return (
-    <div className="grid gap-6 p-4 lg:grid-cols-[1fr_380px]">
-      {/* Main column: player + karaoke transcript */}
-      <div className="flex flex-col gap-4">
-        <VideoPanel
-          videoUrl={data.videoUrl}
-          transcriptState={data.transcriptState}
-          videoRef={videoRef}
-          onTime={setCurrentTime}
-        />
-        <TranscriptPanel
-          data={data}
-          currentTime={currentTime}
-          onSeek={seek}
-        />
-      </div>
+  const speakers = [...speakerIndex.keys()];
 
-      {/* Side column: AI notes */}
-      <NotesPanel data={data} onSeek={seek} />
+  return (
+    <Shell>
+      {/* top bar */}
+      <header className="flex shrink-0 items-center justify-between rounded-[8px] border bg-background px-4 py-2.5">
+        <div className="flex items-center gap-3">
+          <span className="flex size-8 items-center justify-center rounded-[5px] border bg-background">
+            <FileTextIcon className="size-4 text-(--thread-accent-primary)" />
+          </span>
+          <div className="flex flex-col">
+            <span className="flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
+              <span
+                aria-hidden
+                className="size-1.5 animate-pulse rounded-[1px] bg-(--thread-accent-primary)"
+              />
+              notebook · recall.ai
+            </span>
+            <h1 className="max-w-md truncate text-sm font-semibold tracking-tight">
+              {data.summary?.split(/(?<=[.!?])\s/)[0] ?? "Meeting notebook"}
+            </h1>
+          </div>
+        </div>
+        <div className="flex items-center gap-4 font-mono text-[11px] text-muted-foreground">
+          <Meta icon={ClockIcon} v={new Date(data.createdAt).toLocaleDateString()} />
+          {speakers.length > 0 && (
+            <Meta icon={UsersIcon} v={`${speakers.length} speakers`} />
+          )}
+        </div>
+      </header>
+
+      {/* 2 columns on desktop; stacks vertically on small screens. */}
+      <div className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row">
+        {/* LEFT — player + transcript */}
+        <section className="flex min-h-0 flex-[1.4] flex-col gap-1 rounded-[8px] bg-(--thread-frame-outer) p-1">
+          <PanelLabel icon={FileTextIcon}>meeting / transcript</PanelLabel>
+
+          {/* speaker legend */}
+          {speakers.length > 0 && (
+            <div className="flex flex-wrap items-center gap-3 border-b border-dashed border-border px-3 py-2">
+              {speakers.map((name, i) => (
+                <span
+                  key={name}
+                  className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground"
+                >
+                  <span
+                    aria-hidden
+                    className="size-2 rounded-[1px]"
+                    style={{ background: speakerColor(i) }}
+                  />
+                  {name}
+                </span>
+              ))}
+            </div>
+          )}
+
+          <VideoPanel
+            videoUrl={data.videoUrl}
+            transcriptState={data.transcriptState}
+            videoRef={videoRef}
+            onTime={setTime}
+          />
+
+          <TranscriptPanel
+            data={data}
+            currentTime={time}
+            speakerIndex={speakerIndex}
+            onSeek={seek}
+            query={transcriptQuery}
+            onQueryChange={setTranscriptQuery}
+          />
+        </section>
+
+        {/* RIGHT — AI panels */}
+        <aside className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
+          <NotesPanels data={data} onSeek={seek} clip={clip} />
+        </aside>
+      </div>
+    </Shell>
+  );
+}
+
+/* ── shell ────────────────────────────────────────────────────────── */
+
+function Shell({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex h-full w-full flex-col gap-3 overflow-hidden bg-(--thread-frame-outer) p-4 font-sans text-foreground">
+      {children}
     </div>
   );
 }
+
+/* ── video (real mp4) ─────────────────────────────────────────────── */
 
 function VideoPanel({
   videoUrl,
@@ -73,10 +254,10 @@ function VideoPanel({
 }) {
   if (!videoUrl) {
     return (
-      <div className="flex aspect-video items-center justify-center rounded-lg border bg-muted/30 text-sm text-muted-foreground">
+      <div className="flex aspect-video max-h-56 w-full items-center justify-center rounded-[5px] border bg-black/90 font-mono text-[11px] uppercase tracking-wider text-white/60">
         {transcriptState === "processing"
-          ? "Recording still being processed…"
-          : "No video available for this meeting."}
+          ? "recording still processing…"
+          : "no video for this meeting"}
       </div>
     );
   }
@@ -85,206 +266,512 @@ function VideoPanel({
       ref={videoRef}
       src={videoUrl}
       controls
-      className="aspect-video w-full rounded-lg bg-black"
+      className="aspect-video max-h-56 w-full rounded-[5px] border bg-black"
       onTimeUpdate={(e) => onTime(e.currentTarget.currentTime)}
     />
   );
 }
 
+/* ── transcript (karaoke) ─────────────────────────────────────────── */
+
 function TranscriptPanel({
   data,
   currentTime,
+  speakerIndex,
   onSeek,
+  query,
+  onQueryChange,
 }: {
   data: MeetingDetailResponse;
   currentTime: number;
+  speakerIndex: Map<string, number>;
   onSeek: (s: number | null) => void;
+  query: string;
+  onQueryChange: (q: string) => void;
 }) {
+  const q = query.trim().toLowerCase();
+
+  // Filter utterances to those containing the query (search within transcript).
+  const utterances = useMemo(() => {
+    if (!q) return data.transcript;
+    return data.transcript.filter((utt) =>
+      utt.words.some((w) => w.text.toLowerCase().includes(q)),
+    );
+  }, [data.transcript, q]);
+
   if (data.transcript.length === 0) {
     return (
-      <div className="rounded-lg border p-4 text-sm text-muted-foreground">
+      <div className="mt-1 flex min-h-0 flex-1 items-center justify-center rounded-[5px] border bg-background px-3 text-center font-mono text-[11px] text-muted-foreground">
         {data.transcriptState === "processing"
-          ? "Transcript processing — it will appear here once ready."
-          : "No transcript for this meeting."}
+          ? "transcript processing — appears here once ready"
+          : "no transcript for this meeting"}
       </div>
     );
   }
+
   return (
-    <div className="max-h-[420px] overflow-y-auto rounded-lg border p-4">
-      <h3 className="mb-3 text-sm font-semibold">Transcript</h3>
-      <div className="space-y-3 text-sm leading-relaxed">
-        {data.transcript.map((utt, i) => (
-          <p key={i}>
-            <button
-              type="button"
-              onClick={() => onSeek(utt.start)}
-              className="mr-1 font-medium text-primary hover:underline"
-            >
-              {utt.speaker}:
-            </button>
-            {utt.words.map((w, j) => {
-              const active =
-                w.start != null &&
-                w.end != null &&
-                currentTime >= w.start &&
-                currentTime < w.end;
-              return (
+    <div className="mt-1 flex min-h-0 flex-1 flex-col rounded-[5px] border bg-background">
+      {/* transcript search */}
+      <label className="flex items-center gap-1.5 border-b border-dashed border-border px-3 py-2">
+        <SearchIcon className="size-3.5 text-muted-foreground" />
+        <input
+          value={query}
+          onChange={(e) => onQueryChange(e.target.value)}
+          placeholder="search transcript…"
+          aria-label="Search transcript"
+          className="w-full bg-transparent font-mono text-[11px] outline-none placeholder:text-muted-foreground/70"
+        />
+      </label>
+
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {utterances.length === 0 ? (
+          <div className="flex items-center justify-center px-3 py-8 text-center font-mono text-[11px] text-muted-foreground">
+            no lines match “{query}”
+          </div>
+        ) : (
+          utterances.map((utt, i) => {
+            const idx = speakerIndex.get(utt.speaker) ?? 0;
+            const color = speakerColor(idx);
+            return (
+              <div
+                key={i}
+                className="flex gap-3 border-l-2 border-l-transparent px-3 py-2.5"
+              >
                 <span
-                  key={j}
-                  onClick={() => onSeek(w.start)}
-                  className={
-                    active
-                      ? "cursor-pointer rounded bg-primary/20 font-medium text-foreground"
-                      : "cursor-pointer text-muted-foreground hover:text-foreground"
-                  }
+                  className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-[5px] font-mono text-[10px] font-semibold text-background"
+                  style={{ background: color }}
                 >
-                  {w.text}{" "}
+                  {initials(utt.speaker)}
                 </span>
-              );
-            })}
-          </p>
-        ))}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-[11px] font-medium">
+                      {utt.speaker}
+                    </span>
+                    {utt.start != null && (
+                      <button
+                        type="button"
+                        onClick={() => onSeek(utt.start)}
+                        className="font-mono text-[10px] tabular-nums hover:underline"
+                        style={{ color }}
+                      >
+                        {fmt(utt.start)}
+                      </button>
+                    )}
+                  </div>
+                  <p className="mt-0.5 text-sm leading-relaxed">
+                    {utt.words.map((w, j) => {
+                      const active =
+                        w.start != null &&
+                        w.end != null &&
+                        currentTime >= w.start &&
+                        currentTime < w.end;
+                      const matches = q && w.text.toLowerCase().includes(q);
+                      // Each word is keyboard-operable: role=button + tabIndex +
+                      // Enter/Space seek the player (not just mouse click).
+                      return (
+                        <span
+                          key={j}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => onSeek(w.start)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              onSeek(w.start);
+                            }
+                          }}
+                          className={cn(
+                            "cursor-pointer rounded outline-none focus-visible:ring-1 focus-visible:ring-(--thread-accent-primary)",
+                            active
+                              ? "bg-(--thread-accent-primary-soft) font-medium text-foreground"
+                              : "text-muted-foreground hover:text-foreground",
+                            matches && !active &&
+                              "bg-[oklch(0.7_0.15_70)]/25 text-foreground",
+                          )}
+                        >
+                          {w.text}{" "}
+                        </span>
+                      );
+                    })}
+                  </p>
+                </div>
+              </div>
+            );
+          })
+        )}
       </div>
     </div>
   );
 }
 
-function NotesPanel({
+/* ── AI panels ────────────────────────────────────────────────────── */
+
+function NotesPanels({
   data,
   onSeek,
+  clip,
 }: {
   data: MeetingDetailResponse;
   onSeek: (s: number | null) => void;
+  clip: ReturnType<typeof useClip>;
 }) {
   const sortedShares = useMemo(
     () => [...data.talkShares].sort((a, b) => b.share - a.share),
     [data.talkShares],
   );
 
-  return (
-    <div className="flex max-h-[860px] flex-col gap-5 overflow-y-auto rounded-lg border p-4">
-      {data.summary && (
-        <section>
-          <h3 className="mb-1 text-sm font-semibold">Summary</h3>
-          <p className="text-sm text-muted-foreground">{data.summary}</p>
-        </section>
-      )}
+  const canClip = Boolean(data.videoUrl);
 
-      {data.overview && (
-        <section>
-          <h3 className="mb-1 text-sm font-semibold">Overview</h3>
-          <p className="text-sm text-muted-foreground">{data.overview}</p>
-        </section>
+  return (
+    <>
+      {data.summary && (
+        <Panel icon={SparklesIcon} label="ai / summary" tone="success">
+          <p className="text-sm leading-relaxed">{data.summary}</p>
+          {data.overview && (
+            <p className="mt-2 border-t border-dashed border-border pt-2 text-sm leading-relaxed text-muted-foreground">
+              {data.overview}
+            </p>
+          )}
+        </Panel>
       )}
 
       {data.moments.length > 0 && (
-        <section>
-          <h3 className="mb-2 text-sm font-semibold">Key Moments</h3>
-          <ul className="space-y-1">
-            {data.moments.map((m, i) => (
-              <li key={i} className="flex items-center gap-2 text-sm">
-                <span className={`rounded px-1.5 py-0.5 text-xs ${momentColor(m.kind)}`}>
-                  {momentLabel(m.kind)}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => onSeek(m.atSeconds)}
-                  className="text-left text-muted-foreground hover:text-foreground hover:underline"
+        <Panel icon={BookmarkIcon} label="ai / key moments">
+          <div className="flex flex-col gap-1.5">
+            {data.moments.map((m, i) => {
+              const Icon = MOMENT_ICON[m.kind];
+              const id = `moment-${i}`;
+              return (
+                <div
+                  key={i}
+                  className="flex items-center gap-2 rounded-[5px] border bg-background pr-1 transition-colors hover:bg-muted/40"
                 >
-                  {m.label}
-                </button>
-              </li>
+                  <button
+                    type="button"
+                    onClick={() => onSeek(m.atSeconds)}
+                    disabled={m.atSeconds == null}
+                    className="flex min-w-0 flex-1 items-center gap-2.5 px-2.5 py-2 text-left disabled:cursor-default"
+                  >
+                    <Icon
+                      className={cn("size-3.5 shrink-0", momentColor(m.kind))}
+                    />
+                    <span className="min-w-0 flex-1 truncate text-sm">
+                      {m.label}
+                    </span>
+                    {m.atSeconds != null && (
+                      <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
+                        {fmt(m.atSeconds)}
+                      </span>
+                    )}
+                  </button>
+                  {canClip && m.atSeconds != null && (
+                    <ClipButton
+                      id={id}
+                      clip={clip}
+                      videoUrl={data.videoUrl!}
+                      // ~16s window centered a bit before the moment.
+                      start={Math.max(0, m.atSeconds - 4)}
+                      end={m.atSeconds + 12}
+                      filename={`clip-${slug(m.label)}`}
+                    />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </Panel>
+      )}
+
+      {data.soundbites.length > 0 && (
+        <Panel icon={ScissorsIcon} label="ai / soundbites" tone="success">
+          <div className="flex flex-col gap-1.5">
+            {data.soundbites.map((sb, i) => (
+              <SoundbiteRow
+                key={i}
+                id={`soundbite-${i}`}
+                sb={sb}
+                clip={clip}
+                videoUrl={canClip ? data.videoUrl : null}
+                onSeek={onSeek}
+              />
             ))}
-          </ul>
-        </section>
+          </div>
+        </Panel>
       )}
 
       {data.sections.length > 0 && (
-        <section>
-          <h3 className="mb-2 text-sm font-semibold">Sections</h3>
-          <div className="space-y-3">
+        <Panel icon={FileTextIcon} label="ai / sections">
+          <div className="flex flex-col gap-3">
             {data.sections.map((s, i) => (
               <div key={i}>
                 <button
                   type="button"
                   onClick={() => onSeek(s.startSeconds)}
-                  className="text-sm font-medium hover:underline"
+                  className="flex items-center gap-2 text-sm font-medium hover:underline"
                 >
+                  {s.startSeconds != null && (
+                    <span className="font-mono text-[10px] tabular-nums text-(--thread-accent-primary)">
+                      {fmt(s.startSeconds)}
+                    </span>
+                  )}
                   {s.title}
                 </button>
-                <ul className="ml-4 list-disc text-sm text-muted-foreground">
+                <ul className="ml-3 mt-1 flex flex-col gap-1">
                   {s.bullets.map((b, j) => (
-                    <li key={j}>{b}</li>
+                    <li
+                      key={j}
+                      className="flex gap-2 text-sm leading-relaxed text-muted-foreground"
+                    >
+                      <span
+                        aria-hidden
+                        className="mt-2 size-1 shrink-0 rounded-[1px] bg-muted-foreground/50"
+                      />
+                      {b}
+                    </li>
                   ))}
                 </ul>
               </div>
             ))}
           </div>
-        </section>
+        </Panel>
       )}
 
       {data.decisions.length > 0 && (
-        <section>
-          <h3 className="mb-2 text-sm font-semibold">Decisions</h3>
-          <ul className="ml-4 list-disc space-y-1 text-sm text-muted-foreground">
+        <Panel icon={CheckIcon} label="ai / decisions">
+          <ul className="flex flex-col gap-1.5">
             {data.decisions.map((d, i) => (
-              <li key={i}>{d}</li>
+              <li
+                key={i}
+                className="flex items-start gap-2 rounded-[5px] border bg-background px-2.5 py-1.5 text-sm"
+              >
+                <CheckIcon className="mt-0.5 size-3.5 shrink-0 text-(--thread-accent-primary)" />
+                <span className="min-w-0">{d}</span>
+              </li>
             ))}
           </ul>
-        </section>
+        </Panel>
       )}
 
       {data.actionItems.length > 0 && (
-        <section>
-          <h3 className="mb-2 text-sm font-semibold">Action items</h3>
-          <ul className="space-y-1 text-sm">
+        <Panel icon={ListChecksIcon} label="ai / action items">
+          <ul className="flex flex-col gap-1.5">
             {data.actionItems.map((a, i) => (
-              <li key={i} className="text-muted-foreground">
-                {a.task}
+              <li
+                key={i}
+                className="flex items-start justify-between gap-3 rounded-[5px] border bg-background px-2.5 py-1.5"
+              >
+                <span className="min-w-0 flex-1 text-sm">{a.task}</span>
                 {a.owner && (
-                  <span className="ml-1 text-xs text-primary">@{a.owner}</span>
+                  <span className="shrink-0 rounded-[4px] bg-(--thread-accent-primary-soft) px-1.5 py-0.5 font-mono text-[10px] text-(--thread-accent-primary)">
+                    {a.owner}
+                  </span>
                 )}
               </li>
             ))}
           </ul>
-        </section>
+        </Panel>
+      )}
+
+      {data.topics.length > 0 && (
+        <Panel icon={HashIcon} label="ai / keywords">
+          <div className="flex flex-wrap gap-1.5">
+            {data.topics.map((t) => (
+              <span
+                key={t}
+                className="rounded-[5px] border bg-background px-2 py-0.5 font-mono text-[11px] text-muted-foreground"
+              >
+                {t}
+              </span>
+            ))}
+          </div>
+        </Panel>
       )}
 
       {sortedShares.length > 0 && (
-        <section>
-          <h3 className="mb-2 text-sm font-semibold">Talk Time</h3>
-          <div className="space-y-2">
+        <Panel icon={UsersIcon} label="ai / talk time">
+          <div className="flex flex-col gap-2">
             {sortedShares.map((p, i) => (
               <div key={i}>
-                <div className="flex justify-between text-xs text-muted-foreground">
+                <div className="flex justify-between font-mono text-[11px] text-muted-foreground">
                   <span>{p.name}</span>
-                  <span>{Math.round(p.share * 100)}%</span>
+                  <span className="tabular-nums">
+                    {Math.round(p.share * 100)}%
+                  </span>
                 </div>
-                <div className="h-1.5 rounded-full bg-muted">
+                <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted">
                   <div
-                    className="h-1.5 rounded-full bg-primary"
+                    className="h-full rounded-full bg-(--thread-accent-primary)"
                     style={{ width: `${Math.round(p.share * 100)}%` }}
                   />
                 </div>
               </div>
             ))}
           </div>
-        </section>
+        </Panel>
+      )}
+    </>
+  );
+}
+
+function momentColor(kind: MeetingMoment["kind"]): string {
+  return {
+    topic: "text-(--thread-accent-primary)",
+    action: "text-(--thread-accent-primary)",
+    question: "text-[oklch(0.7_0.15_70)]",
+    objection: "text-(--thread-accent-secondary)",
+  }[kind];
+}
+
+/* ── soundbite row (curated highlight + exact-range clip) ────────── */
+
+function SoundbiteRow({
+  id,
+  sb,
+  clip,
+  videoUrl,
+  onSeek,
+}: {
+  id: string;
+  sb: MeetingSoundbite;
+  clip: ReturnType<typeof useClip>;
+  videoUrl: string | null;
+  onSeek: (s: number | null) => void;
+}) {
+  const dur = Math.round(sb.endSeconds - sb.startSeconds);
+  return (
+    <div className="flex items-center gap-2 rounded-[5px] border bg-background pr-1 transition-colors hover:bg-muted/40">
+      <button
+        type="button"
+        onClick={() => onSeek(sb.startSeconds)}
+        className="flex min-w-0 flex-1 items-center gap-2.5 px-2.5 py-2 text-left"
+      >
+        <QuoteIcon className="size-3.5 shrink-0 text-(--thread-accent-primary)" />
+        <span className="min-w-0 flex-1 truncate text-sm">{sb.label}</span>
+        <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
+          {fmt(sb.startSeconds)} · {dur}s
+        </span>
+      </button>
+      {videoUrl && (
+        <ClipButton
+          id={id}
+          clip={clip}
+          videoUrl={videoUrl}
+          noun="soundbite"
+          // Exact curated range — no heuristic window.
+          start={sb.startSeconds}
+          end={sb.endSeconds}
+          filename={`soundbite-${slug(sb.label)}`}
+        />
       )}
     </div>
   );
 }
 
-function momentLabel(kind: MeetingDetailResponse["moments"][number]["kind"]) {
-  return { topic: "Topic", action: "Action", question: "Question", objection: "Objection" }[
-    kind
-  ];
+/* ── clip button (mediabunny soundbite) ──────────────────────────── */
+
+function ClipButton({
+  id,
+  clip,
+  videoUrl,
+  start,
+  end,
+  filename,
+  noun = "moment",
+}: {
+  id: string;
+  clip: ReturnType<typeof useClip>;
+  videoUrl: string;
+  start: number;
+  end: number;
+  filename: string;
+  /** What is being clipped, for the aria-label (e.g. "moment", "soundbite"). */
+  noun?: string;
+}) {
+  const busy = clip.state.status === "clipping" && clip.state.id === id;
+  const failed = clip.state.status === "error" && clip.state.id === id;
+  const pct = busy ? Math.round((clip.state as ClipStateClipping).progress * 100) : 0;
+
+  return (
+    <button
+      type="button"
+      aria-label={failed ? `Clip failed — retry ${noun}` : `Clip this ${noun}`}
+      title={failed ? "Clip failed — click to retry" : "Clip to mp4"}
+      onClick={() => clip.run({ id, videoUrl, start, end, filename })}
+      className={cn(
+        "flex size-7 shrink-0 items-center justify-center rounded-[5px] font-mono text-[9px] tabular-nums transition-colors",
+        failed
+          ? "text-(--thread-accent-secondary) hover:bg-muted/60"
+          : "text-muted-foreground hover:bg-muted/60 hover:text-(--thread-accent-primary)",
+      )}
+    >
+      {busy ? (
+        <span className="tabular-nums">{pct}</span>
+      ) : (
+        <ScissorsIcon className="size-3.5" />
+      )}
+    </button>
+  );
 }
-function momentColor(kind: MeetingDetailResponse["moments"][number]["kind"]) {
-  return {
-    topic: "bg-blue-500/15 text-blue-600 dark:text-blue-400",
-    action: "bg-green-500/15 text-green-600 dark:text-green-400",
-    question: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
-    objection: "bg-red-500/15 text-red-600 dark:text-red-400",
-  }[kind];
+
+/** Narrowing helper: the clipping variant of ClipState. */
+type ClipStateClipping = Extract<ClipState, { status: "clipping" }>;
+
+/* ── visual primitives (casadas com ToolCard/Row do assistant) ────── */
+
+function Meta({ icon: Icon, v }: { icon: LucideIcon; v: string }) {
+  return (
+    <span className="flex items-center gap-1.5">
+      <Icon className="size-3" />
+      {v}
+    </span>
+  );
+}
+
+function PanelLabel({
+  icon: Icon,
+  children,
+}: {
+  icon: LucideIcon;
+  children: React.ReactNode;
+}) {
+  return (
+    <span className="flex items-center gap-1.5 px-2 py-1.5 font-mono text-xs uppercase tracking-wider text-muted-foreground">
+      <Icon className="size-3.5" />
+      {children}
+    </span>
+  );
+}
+
+function Panel({
+  icon: Icon,
+  label,
+  tone = "default",
+  children,
+}: {
+  icon: LucideIcon;
+  label: string;
+  tone?: "default" | "success";
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-[8px] bg-(--thread-frame-outer) p-1">
+      <div className="flex items-center justify-between px-2 py-1.5">
+        <span className="flex items-center gap-1.5 font-mono text-xs uppercase tracking-wider text-muted-foreground">
+          <Icon className="size-3.5" />
+          {label}
+        </span>
+        {tone === "success" && (
+          <span className="flex items-center gap-1 font-mono text-[10px] text-(--thread-accent-primary)">
+            <span
+              aria-hidden
+              className="size-1.5 animate-pulse rounded-[1px] bg-(--thread-accent-primary)"
+            />
+            generated
+          </span>
+        )}
+      </div>
+      <div className="rounded-[5px] border bg-background p-3">{children}</div>
+    </div>
+  );
 }

@@ -101,9 +101,17 @@ export interface MeetingDetailResponse {
   createdAt: string;
 }
 
+/** HTTP error that carries the status so the UI can branch (404 vs 401 vs 5xx). */
+export class HttpError extends Error {
+  constructor(readonly status: number, url: string) {
+    super(`GET ${url} → ${status}`);
+    this.name = "HttpError";
+  }
+}
+
 async function getJson<T>(url: string): Promise<T> {
   const res = await fetch(url, { cache: "no-store" });
-  if (!res.ok) throw new Error(`GET ${url} → ${res.status}`);
+  if (!res.ok) throw new HttpError(res.status, url);
   return res.json() as Promise<T>;
 }
 
@@ -158,6 +166,13 @@ export function useMeetingDetail(botId: string) {
     queryKey: ["meeting", botId] as const,
     queryFn: () => getJson<MeetingDetailResponse>(`/api/meetings/${botId}`),
     enabled: Boolean(botId),
+    // Don't retry client errors (404 not found / 401 unauthenticated) — they
+    // won't fix themselves; only retry transient/5xx failures.
+    retry: (count, err) => {
+      const status = err instanceof HttpError ? err.status : 0;
+      if (status === 404 || status === 401) return false;
+      return count < 2;
+    },
     refetchInterval: (query) =>
       query.state.data?.transcriptState === "processing" ? 15_000 : false,
   });
