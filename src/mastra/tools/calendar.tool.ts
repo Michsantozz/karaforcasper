@@ -49,10 +49,29 @@ async function assertOwnedCalendar(
   }
 }
 
+/**
+ * Event title from the raw provider payload. Recall doesn't promote the title
+ * to a top-level field, but the list endpoint DOES return `raw` for every
+ * event, so the title is already in hand — no per-event get_calendar_event
+ * needed. Google puts it in `raw.summary`, Outlook in `raw.subject`.
+ */
+function eventTitle(e: CalendarEvent): string | null {
+  const raw = e.raw ?? {};
+  const summary = raw.summary;
+  const subject = raw.subject;
+  if (typeof summary === "string" && summary.trim()) return summary;
+  if (typeof subject === "string" && subject.trim()) return subject;
+  return null;
+}
+
 function projectEvent(e: CalendarEvent) {
   return {
     eventId: e.id,
     calendarId: e.calendar_id,
+    // Title comes free with the list (raw.summary/raw.subject). Exposing it
+    // here is what stops the agent from firing one get_calendar_event per event
+    // just to learn each event's name.
+    title: eventTitle(e),
     startTime: e.start_time,
     endTime: e.end_time,
     meetingUrl: e.meeting_url,
@@ -66,7 +85,9 @@ export const listCalendarEventsTool = createTool({
   id: "list_calendar_events",
   description:
     "Lists the upcoming events from the user's connected calendars (Google/Outlook). " +
-    "Shows the time, the meeting link, and how many bots are already scheduled for each event. " +
+    "Each event already includes its title, time, meeting link, and how many bots are " +
+    "scheduled — enough to present the agenda directly. Do NOT call get_calendar_event " +
+    "per event just to get titles; they are already here. " +
     "Use it so the user can choose which meeting to put the bot on.",
   inputSchema: z.object({
     calendarId: z
@@ -80,6 +101,7 @@ export const listCalendarEventsTool = createTool({
       z.object({
         eventId: z.string(),
         calendarId: z.string(),
+        title: z.string().nullable(),
         startTime: z.string(),
         endTime: z.string(),
         meetingUrl: z.string().nullable(),

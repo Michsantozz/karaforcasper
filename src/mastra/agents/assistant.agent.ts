@@ -253,7 +253,14 @@ General rules:
       (acc, serverTools) => Object.assign(acc, serverTools),
       {},
     );
-    return { ...localTools, ...mcpTools };
+    // localTools win name collisions with the MCP. The Recall MCP exposes its
+    // own `list_calendar_events` (raw snake_case payload, NO event title, plus a
+    // per-event get_calendar_event) — if it spread last it would shadow our
+    // curated `listCalendarEventsTool`, which is user-scoped and already returns
+    // each event's `title` from the list. That shadowing is exactly what made
+    // the agent fire one get_calendar_event per event just to learn titles. MCP
+    // tools only FILL GAPS (read-only helpers we don't wrap); ours take priority.
+    return { ...mcpTools, ...localTools };
   },
   // Sub-agents: Mastra auto-generates a delegation tool per entry (using each
   // agent's `description`). The supervisor's model decides when to hand off. Both

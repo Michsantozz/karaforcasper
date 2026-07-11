@@ -1,7 +1,7 @@
 import { handleChatStream } from "@mastra/ai-sdk";
 import { createUIMessageStreamResponse, jsonSchema, tool } from "ai";
 import type { JSONSchema7 } from "ai";
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { getSession } from "@/features/auth/model/session";
 import { isBotOwner } from "@/server/recall/ownership";
 import { checkRateLimit, rateLimitedResponse } from "@/shared/lib/rate-limit";
@@ -157,6 +157,13 @@ export async function POST(req: Request) {
       ...(meetingContext ? { system: meetingContext } : {}),
       ...memory,
       clientTools: toClientTools(tools),
+      // Persist the turn to memory incrementally (per step) instead of only
+      // once the whole stream is consumed. This is what makes the detached
+      // drain below actually recoverable: if the user navigates away and the
+      // client aborts, whatever the agent produced up to the last completed
+      // step is already saved to the thread — nothing needs the final chunk to
+      // be flushed. No-op without memory (stateless turn / no threadId).
+      ...(threadId ? { savePerStep: true } : {}),
     } as Parameters<typeof handleChatStream>[0]["params"],
     version: "v6",
     // handleChatStream masks stream errors by default (start→finish, no text).
@@ -170,5 +177,39 @@ export async function POST(req: Request) {
       return message;
     },
   } as Parameters<typeof handleChatStream>[0]);
-  return createUIMessageStreamResponse({ stream });
+
+  // Detached generation: the UIMessage stream is lazy — it only advances while
+  // something pulls from it. When the user leaves the page / switches tabs, the
+  // client aborts the fetch and Next closes the response, so the branch wired to
+  // the HTTP body stops being pulled and generation would freeze mid-turn (the
+  // reported bug: the answer never lands). We tee() the stream: one branch feeds
+  // the client as before; the other is drained server-side to completion,
+  // independent of the client. That keeps the agent loop running to the end so
+  // its steps get persisted (savePerStep above) — on return, the thread history
+  // refetch shows the full answer. `after()` runs the drain after the response
+  // is sent and, on our long-lived Node server (output:'standalone', nodejs
+  // runtime), keeps the work alive past the client disconnect. This does NOT
+  // resume the live token stream on return (that needs a resumable-stream store,
+  // e.g. Redis) — it guarantees the turn completes and is saved.
+  const [clientBranch, serverBranch] = stream.tee();
+  after(async () => {
+    // Drain via getReader() (spec base, no reliance on Symbol.asyncIterator
+    // which isn't guaranteed on every runtime's ReadableStream). We don't need
+    // the chunks, just the pull that keeps the agent loop — and its per-step
+    // saves — progressing to the end.
+    const reader = serverBranch.getReader();
+    try {
+      for (;;) {
+        const { done } = await reader.read();
+        if (done) break;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("[chat] detached drain error:", message);
+    } finally {
+      reader.releaseLock();
+    }
+  });
+
+  return createUIMessageStreamResponse({ stream: clientBranch });
 }
