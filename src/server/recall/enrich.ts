@@ -9,6 +9,8 @@ import {
   requeueMeetingRecord,
 } from "@/server/recall/meeting-repository";
 import { captureMeetingMedia } from "@/server/recall/media";
+import { computeMeetingDynamics } from "@/server/recall/dynamics";
+import { generateMeetingHealthInsight } from "@/server/recall/dynamics-insight";
 import { botOwnerUserId, findBotByBotId } from "@/server/recall/bot-repository";
 import { createNotification } from "@/server/notifications";
 import { emailMeetingSummaryReady } from "@/server/email";
@@ -72,6 +74,16 @@ export async function enrichMeeting(botId: string): Promise<EnrichResult> {
     // db transaction (network/upload); nulls if not ready or storage is off.
     const media = await captureMeetingMedia(botId, claimed.userId);
 
+    // Team-dynamics / meeting-health metrics from the word-level transcript
+    // (pure timestamp math, no LLM/audio). Null when timestamps are missing.
+    const dynamics = computeMeetingDynamics(media.transcriptStruct);
+    // One Fireworks call turns the metrics into a manager-facing insight +
+    // semantic moment labels. Best-effort — null on failure, never blocks.
+    const dynamicsInsight = await generateMeetingHealthInsight(
+      dynamics,
+      media.transcriptStruct,
+    );
+
     await withSystemScope(async () => {
       await completeMeetingRecord(botId, {
         userId: claimed.userId,
@@ -88,6 +100,8 @@ export async function enrichMeeting(botId: string): Promise<EnrichResult> {
         talkShares: summary.talkShares ?? [],
         transcriptStruct: media.transcriptStruct,
         videoUrl: media.videoUrl,
+        dynamics,
+        dynamicsInsight,
       });
     });
 

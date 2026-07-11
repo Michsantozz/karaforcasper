@@ -1,6 +1,11 @@
 import "server-only";
 import { recallFetch } from "@/server/recall/client";
 import { findMeetingRecord } from "@/server/recall/meeting-repository";
+import {
+  computeMeetingDynamics,
+  type MeetingDynamics,
+} from "@/server/recall/dynamics";
+import type { MeetingHealthInsight } from "@/server/recall/dynamics-insight";
 import type { MeetingRecordRow } from "@/shared/db/schema";
 
 /**
@@ -37,6 +42,10 @@ export interface MeetingDetail {
   transcriptState: "ready" | "processing" | "none";
   /** Meeting length in seconds, derived from the transcript timeline. Null if unknown. */
   durationSeconds: number | null;
+  /** Team-dynamics / meeting-health metrics. Null if unavailable (no timestamps). */
+  dynamics: MeetingDynamics | null;
+  /** LLM meeting-health insight. Only when persisted at enrichment (no on-read fallback). */
+  dynamicsInsight: MeetingHealthInsight | null;
 }
 
 /**
@@ -96,6 +105,10 @@ export async function getMeetingDetail(botId: string): Promise<MeetingDetail> {
       videoUrl: record?.videoUrl ?? null,
       transcriptState: "ready",
       durationSeconds: deriveDurationSeconds(persistedTranscript),
+      // Persisted metric wins; legacy rows (enriched before dynamics existed)
+      // fall back to computing it on the fly from the stored transcript.
+      dynamics: record?.dynamics ?? computeMeetingDynamics(persistedTranscript),
+      dynamicsInsight: record?.dynamicsInsight ?? null,
     };
   }
 
@@ -140,6 +153,8 @@ export async function getMeetingDetail(botId: string): Promise<MeetingDetail> {
     videoUrl,
     transcriptState,
     durationSeconds: deriveDurationSeconds(transcript),
+    dynamics: record?.dynamics ?? computeMeetingDynamics(transcript),
+    dynamicsInsight: record?.dynamicsInsight ?? null,
   };
 }
 

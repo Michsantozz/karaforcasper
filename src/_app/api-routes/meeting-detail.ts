@@ -41,6 +41,8 @@ export async function GET(
     moments: r.moments ?? [],
     soundbites: r.soundbites ?? [],
     talkShares: r.talkShares ?? [],
+    dynamics: detail.dynamics,
+    dynamicsInsight: detail.dynamicsInsight,
     videoUrl: detail.videoUrl,
     transcript: detail.transcript,
     transcriptState: detail.transcriptState,

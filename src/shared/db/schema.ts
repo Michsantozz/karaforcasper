@@ -201,6 +201,52 @@ export const meetingRecords = pgTable(
       Array<{ name: string; share: number }>
     >(),
     /**
+     * Team-dynamics / meeting-health metrics derived from the word-level
+     * transcript (who dominated, interruptions, silences, monologues, balance,
+     * + rankable human moments). No LLM/audio — pure timestamp math. Shape
+     * mirrors MeetingDynamics in server/recall/dynamics.ts. Null for legacy rows
+     * or transcripts without timestamps.
+     */
+    dynamics: jsonb("dynamics").$type<{
+      participants: Array<{
+        name: string;
+        talkShare: number;
+        talkSeconds: number;
+        turns: number;
+        interruptionsMade: number;
+        interruptionsReceived: number;
+        longestTurnSeconds: number;
+      }>;
+      totalTalkSeconds: number;
+      turnCount: number;
+      interruptions: number;
+      silenceSeconds: number;
+      balance: number;
+      moments: Array<{
+        kind: "interruption" | "monologue" | "silence";
+        atSeconds: number;
+        durationSeconds: number;
+        label: string;
+      }>;
+    }>(),
+    /**
+     * LLM meeting-health INSIGHT over the dynamics metrics: a manager-facing
+     * read of HOW the team interacted + semantic re-labels of each timing moment
+     * with an emotional tone. One Fireworks call at enrichment. Shape mirrors
+     * MeetingHealthInsight in server/recall/dynamics-insight.ts. Null when
+     * dynamics is absent or the LLM call failed (best-effort).
+     */
+    dynamicsInsight: jsonb("dynamics_insight").$type<{
+      summary: string;
+      headline: string;
+      moments: Array<{
+        atSeconds: number;
+        kind: "interruption" | "monologue" | "silence";
+        label: string;
+        tone: "tense" | "energized" | "flat" | "neutral";
+      }>;
+    }>(),
+    /**
      * Word-level transcript with timestamps, persisted so the notebook's
      * karaoke/seek survive Recall's artifact expiry. Shape mirrors the UI's
      * TranscriptUtteranceView. Null for legacy rows (falls back to Recall).

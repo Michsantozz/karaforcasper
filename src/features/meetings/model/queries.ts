@@ -84,6 +84,48 @@ export interface MeetingTalkShare {
   share: number;
 }
 
+export interface DynamicsParticipant {
+  name: string;
+  talkShare: number;
+  talkSeconds: number;
+  turns: number;
+  interruptionsMade: number;
+  interruptionsReceived: number;
+  longestTurnSeconds: number;
+}
+
+export interface DynamicsMoment {
+  kind: "interruption" | "monologue" | "silence";
+  atSeconds: number;
+  durationSeconds: number;
+  label: string;
+}
+
+/** Team-dynamics / meeting-health metrics (mirrors server dynamics.ts). */
+export interface MeetingDynamics {
+  participants: DynamicsParticipant[];
+  totalTalkSeconds: number;
+  turnCount: number;
+  interruptions: number;
+  silenceSeconds: number;
+  balance: number;
+  moments: DynamicsMoment[];
+}
+
+export interface InsightMoment {
+  atSeconds: number;
+  kind: "interruption" | "monologue" | "silence";
+  label: string;
+  tone: "tense" | "energized" | "flat" | "neutral";
+}
+
+/** LLM meeting-health insight (mirrors server dynamics-insight.ts). */
+export interface MeetingHealthInsight {
+  summary: string;
+  headline: string;
+  moments: InsightMoment[];
+}
+
 export interface MeetingDetailResponse {
   botId: string;
   status: string;
@@ -97,6 +139,10 @@ export interface MeetingDetailResponse {
   moments: MeetingMoment[];
   soundbites: MeetingSoundbite[];
   talkShares: MeetingTalkShare[];
+  /** Team-dynamics / meeting-health metrics. Null if unavailable (no timestamps). */
+  dynamics: MeetingDynamics | null;
+  /** LLM meeting-health insight. Null if not generated. */
+  dynamicsInsight: MeetingHealthInsight | null;
   videoUrl: string | null;
   transcript: TranscriptUtterance[];
   transcriptState: "ready" | "processing" | "none";

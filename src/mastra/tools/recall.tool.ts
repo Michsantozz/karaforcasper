@@ -790,3 +790,85 @@ export const stopRecallRecordingTool = createTool({
   },
 });
 
+/**
+ * Reads the team-dynamics / meeting-health metrics for a recorded meeting:
+ * who dominated the conversation, interruptions, silences, monologues, and how
+ * balanced the participation was — the "how the team interacted" layer, distinct
+ * from the minutes ("what was said"). Computed during enrichment from the
+ * word-level transcript, so it's read straight from our persisted record.
+ */
+export const getMeetingDynamicsTool = createTool({
+  id: "get_meeting_dynamics",
+  description:
+    "Reads team-dynamics / meeting-health metrics for a meeting, by botId: " +
+    "talk-time share per person, who interrupted whom, silences, monologues, " +
+    "turn-taking, and an overall participation balance (0..1). Use for " +
+    "'how did the team interact', 'who dominated', 'was it balanced', " +
+    "'any tension' questions — not for what was decided (that's summarize).",
+  inputSchema: z.object({
+    botId: z.string().describe("UUID of the bot that recorded the meeting"),
+  }),
+  outputSchema: z.object({
+    botId: z.string(),
+    available: z.boolean(),
+    dynamics: z
+      .object({
+        participants: z.array(
+          z.object({
+            name: z.string(),
+            talkShare: z.number(),
+            talkSeconds: z.number(),
+            turns: z.number(),
+            interruptionsMade: z.number(),
+            interruptionsReceived: z.number(),
+            longestTurnSeconds: z.number(),
+          }),
+        ),
+        totalTalkSeconds: z.number(),
+        turnCount: z.number(),
+        interruptions: z.number(),
+        silenceSeconds: z.number(),
+        balance: z.number(),
+        moments: z.array(
+          z.object({
+            kind: z.enum(["interruption", "monologue", "silence"]),
+            atSeconds: z.number(),
+            durationSeconds: z.number(),
+            label: z.string(),
+          }),
+        ),
+      })
+      .nullable(),
+    // LLM meeting-health read (headline + manager-facing summary + toned
+    // moment labels) — the answer to "how did the team interact".
+    insight: z
+      .object({
+        headline: z.string(),
+        summary: z.string(),
+        moments: z.array(
+          z.object({
+            atSeconds: z.number(),
+            kind: z.enum(["interruption", "monologue", "silence"]),
+            label: z.string(),
+            tone: z.enum(["tense", "energized", "flat", "neutral"]),
+          }),
+        ),
+      })
+      .nullable(),
+  }),
+  execute: async (input) => {
+    const userId = await requireBotOwner(input.botId);
+    const record = await withUserScope(userId, () =>
+      findMeetingRecord(input.botId),
+    );
+    const dynamics = record?.dynamics ?? null;
+    const insight = record?.dynamicsInsight ?? null;
+    return {
+      botId: input.botId,
+      available: dynamics != null,
+      dynamics,
+      insight,
+    };
+  },
+});
+

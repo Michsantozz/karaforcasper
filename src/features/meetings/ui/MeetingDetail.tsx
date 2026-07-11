@@ -37,6 +37,10 @@ import {
   ScissorsIcon,
   QuoteIcon,
   SearchIcon,
+  ActivityIcon,
+  MicOffIcon,
+  RadioIcon,
+  FlameIcon,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/shared/lib/utils";
@@ -46,8 +50,11 @@ import {
   type MeetingDetailResponse,
   type MeetingMoment,
   type MeetingSoundbite,
+  type MeetingDynamics,
+  type MeetingHealthInsight,
 } from "@/features/meetings/model/queries";
 import { useClip, type ClipState } from "@/features/meetings/model/useClip";
+import { useTensionAnalysis } from "@/features/meetings/model/useTensionAnalysis";
 import { setMeetingShare } from "@/features/meetings/api/actions";
 
 /* ── helpers ──────────────────────────────────────────────────────── */
@@ -126,14 +133,7 @@ export function MeetingDetail({ botId }: { botId: string }) {
   }
 
   if (isLoading) {
-    return (
-      <Shell>
-        <div className="flex flex-1 items-center justify-center font-mono text-xs uppercase tracking-wider text-muted-foreground">
-          <span className="mr-2 size-1.5 animate-pulse rounded-[1px] bg-(--thread-accent-primary)" />
-          loading minutes…
-        </div>
-      </Shell>
-    );
+    return <MeetingDetailSkeleton />;
   }
   if (error || !data) {
     const status = error instanceof HttpError ? error.status : 0;
@@ -257,6 +257,81 @@ function Shell({ children }: { children: React.ReactNode }) {
     <div className="flex h-full w-full flex-col gap-3 overflow-hidden bg-(--thread-frame-outer) p-4 font-sans text-foreground">
       {children}
     </div>
+  );
+}
+
+/* ── loading skeleton ─────────────────────────────────────────────── */
+
+/** Bloco base do skeleton (pulse + bg-muted), casando com o padrão do app. */
+function SkeletonBar({ className }: { className?: string }) {
+  return (
+    <span
+      aria-hidden
+      className={cn("block animate-pulse rounded bg-muted", className)}
+    />
+  );
+}
+
+/**
+ * Skeleton do notebook — espelha o layout real (header + player + transcript à
+ * esquerda, painéis de IA à direita) enquanto useMeetingDetail resolve. Vive
+ * dentro do mesmo Shell, então o frame não pisca ao trocar por conteúdo.
+ */
+function MeetingDetailSkeleton() {
+  return (
+    <Shell>
+      <div aria-busy aria-label="loading minutes" className="contents">
+        {/* top bar */}
+        <header className="flex shrink-0 items-center justify-between rounded-[8px] border bg-background px-4 py-2.5">
+          <div className="flex items-center gap-3">
+            <SkeletonBar className="size-8 shrink-0 rounded-[5px]" />
+            <div className="flex flex-col gap-1.5">
+              <SkeletonBar className="h-2.5 w-36" />
+              <SkeletonBar className="h-3.5 w-52" />
+            </div>
+          </div>
+          <div className="flex items-center gap-4">
+            <SkeletonBar className="h-3 w-20" />
+            <SkeletonBar className="h-3 w-14" />
+            <SkeletonBar className="h-6 w-16 rounded-[5px]" />
+          </div>
+        </header>
+
+        <div className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row">
+          {/* LEFT — player + transcript */}
+          <section className="flex min-h-0 flex-[1.4] flex-col gap-1 rounded-[8px] bg-(--thread-frame-outer) p-1">
+            <SkeletonBar className="mx-3 my-2 h-2.5 w-40" />
+            <SkeletonBar className="aspect-video max-h-64 w-full rounded-[5px]" />
+            <div className="mt-1 space-y-4 px-3 py-3">
+              {[0, 1, 2, 3].map((i) => (
+                <div key={i} className="flex flex-col gap-1.5">
+                  <SkeletonBar className="h-2.5 w-24" />
+                  <SkeletonBar className="h-3 w-full" />
+                  <SkeletonBar className="h-3 w-4/5" />
+                </div>
+              ))}
+            </div>
+          </section>
+
+          {/* RIGHT — AI panels */}
+          <aside className="flex min-h-0 flex-1 flex-col gap-3">
+            {[0, 1, 2].map((i) => (
+              <div
+                key={i}
+                className="rounded-[8px] bg-(--thread-frame-outer) p-1"
+              >
+                <SkeletonBar className="mx-3 my-2 h-2.5 w-28" />
+                <div className="space-y-2 rounded-[5px] border bg-background px-3 py-2.5">
+                  <SkeletonBar className="h-3 w-full" />
+                  <SkeletonBar className="h-3 w-11/12" />
+                  <SkeletonBar className="h-3 w-3/4" />
+                </div>
+              </div>
+            ))}
+          </aside>
+        </div>
+      </div>
+    </Shell>
   );
 }
 
@@ -772,6 +847,15 @@ function NotesPanels({
         </Panel>
       )}
 
+      {data.dynamics && (
+        <DynamicsPanel
+          dynamics={data.dynamics}
+          insight={data.dynamicsInsight}
+          videoUrl={canClip ? data.videoUrl : null}
+          onSeek={onSeek}
+        />
+      )}
+
       {sortedShares.length > 0 && (
         <Panel icon={UsersIcon} label="ai / talk time">
           <div className="flex flex-col gap-2">
@@ -795,6 +879,228 @@ function NotesPanels({
         </Panel>
       )}
     </>
+  );
+}
+
+/* ── team dynamics / meeting-health dashboard ───────────────────── */
+
+const DYNAMICS_MOMENT_ICON: Record<
+  MeetingDynamics["moments"][number]["kind"],
+  LucideIcon
+> = {
+  interruption: ZapIcon,
+  monologue: RadioIcon,
+  silence: MicOffIcon,
+};
+
+/** Emotional tone → text color for an LLM-labeled moment. */
+function toneColor(tone: MeetingHealthInsight["moments"][number]["tone"]): string {
+  return {
+    tense: "text-(--thread-accent-secondary)",
+    energized: "text-[oklch(0.7_0.15_70)]",
+    flat: "text-muted-foreground",
+    neutral: "text-muted-foreground",
+  }[tone];
+}
+
+function DynamicsPanel({
+  dynamics,
+  insight,
+  videoUrl,
+  onSeek,
+}: {
+  dynamics: MeetingDynamics;
+  insight: MeetingHealthInsight | null;
+  videoUrl: string | null;
+  onSeek: (s: number | null) => void;
+}) {
+  const { participants, balance, interruptions, silenceSeconds, moments } =
+    dynamics;
+  const tension = useTensionAnalysis();
+  const tenseByAt =
+    tension.state.status === "done" ? tension.state.result.byAt : null;
+  // Balance drives the headline read: even floor vs one-person-dominated.
+  const balancePct = Math.round(balance * 100);
+  const balanceLabel =
+    balancePct >= 70 ? "balanced" : balancePct >= 40 ? "uneven" : "dominated";
+  const balanceTone =
+    balancePct >= 70
+      ? "text-(--thread-accent-primary)"
+      : balancePct >= 40
+        ? "text-[oklch(0.7_0.15_70)]"
+        : "text-(--thread-accent-secondary)";
+
+  // Prefer the LLM's semantic read of each moment; fall back to the raw timing
+  // label. Matched by rounded second (how the insight carries continuity).
+  const insightByAt = new Map(
+    (insight?.moments ?? []).map((m) => [Math.round(m.atSeconds), m]),
+  );
+
+  return (
+    <Panel icon={ActivityIcon} label="ai / team dynamics" tone="success">
+      <div className="flex flex-col gap-3">
+        {/* LLM meeting-health read — the coaching layer over the raw metrics */}
+        {insight && (
+          <div>
+            <p className="text-sm font-semibold leading-snug">
+              {insight.headline}
+            </p>
+            <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+              {insight.summary}
+            </p>
+          </div>
+        )}
+
+        {/* headline stats */}
+        <div
+          className={cn(
+            "grid grid-cols-3 gap-2",
+            insight && "border-t border-dashed border-border pt-2",
+          )}
+        >
+          <Stat
+            label="balance"
+            value={`${balancePct}%`}
+            hint={balanceLabel}
+            tone={balanceTone}
+          />
+          <Stat label="interruptions" value={String(interruptions)} />
+          <Stat label="silence" value={`${Math.round(silenceSeconds)}s`} />
+        </div>
+
+        {/* per-participant behavior */}
+        <div className="flex flex-col gap-2 border-t border-dashed border-border pt-2">
+          {participants.map((p, i) => (
+            <div key={i}>
+              <div className="flex justify-between font-mono text-[11px] text-muted-foreground">
+                <span className="truncate">{p.name}</span>
+                <span className="tabular-nums">
+                  {Math.round(p.talkShare * 100)}%
+                </span>
+              </div>
+              <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full rounded-full bg-(--thread-accent-primary)"
+                  style={{ width: `${Math.round(p.talkShare * 100)}%` }}
+                />
+              </div>
+              {(p.interruptionsMade > 0 || p.longestTurnSeconds >= 90) && (
+                <div className="mt-0.5 flex gap-2 font-mono text-[10px] text-muted-foreground">
+                  {p.interruptionsMade > 0 && (
+                    <span>{p.interruptionsMade}× interrupted others</span>
+                  )}
+                  {p.longestTurnSeconds >= 90 && (
+                    <span>
+                      {Math.round(p.longestTurnSeconds)}s longest turn
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {/* human moments — jump to the tension/monologue/dead-air points */}
+        {moments.length > 0 && (
+          <div className="flex flex-col gap-1.5 border-t border-dashed border-border pt-2">
+            {/* on-demand acoustic tension analysis (prosody over the audio) */}
+            {videoUrl && (
+              <div className="flex items-center justify-between">
+                <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                  moments
+                </span>
+                <button
+                  type="button"
+                  onClick={() => tension.run(videoUrl, moments)}
+                  disabled={tension.state.status === "analyzing"}
+                  className="flex items-center gap-1.5 rounded-[4px] border bg-background px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground transition-colors hover:bg-muted/40 disabled:opacity-60"
+                >
+                  {tension.state.status === "analyzing" ? (
+                    <>
+                      <Loader2Icon className="size-3 animate-spin" />
+                      {Math.round(tension.state.progress * 100)}%
+                    </>
+                  ) : (
+                    <>
+                      <FlameIcon className="size-3" />
+                      {tenseByAt ? "re-analyze" : "analyze tension"}
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+            {tension.state.status === "error" && (
+              <p className="font-mono text-[10px] text-(--thread-accent-secondary)">
+                {tension.state.message}
+              </p>
+            )}
+            {moments.map((m, i) => {
+              const Icon = DYNAMICS_MOMENT_ICON[m.kind];
+              const read = insightByAt.get(Math.round(m.atSeconds));
+              const label = read?.label ?? m.label;
+              const tense = tenseByAt?.get(Math.round(m.atSeconds));
+              const color = tense?.isTense
+                ? "text-(--thread-accent-secondary)"
+                : read
+                  ? toneColor(read.tone)
+                  : m.kind === "interruption"
+                    ? "text-(--thread-accent-secondary)"
+                    : m.kind === "monologue"
+                      ? "text-[oklch(0.7_0.15_70)]"
+                      : "text-muted-foreground";
+              return (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => onSeek(m.atSeconds)}
+                  className="flex items-center gap-2.5 rounded-[5px] border bg-background px-2.5 py-1.5 text-left transition-colors hover:bg-muted/40"
+                >
+                  <Icon className={cn("size-3.5 shrink-0", color)} />
+                  <span className="min-w-0 flex-1 truncate text-sm">
+                    {label}
+                  </span>
+                  {tense?.isTense && (
+                    <span className="flex shrink-0 items-center gap-1 rounded-[4px] bg-(--thread-accent-secondary)/15 px-1.5 py-0.5 font-mono text-[9px] uppercase text-(--thread-accent-secondary)">
+                      <FlameIcon className="size-2.5" />
+                      tense
+                    </span>
+                  )}
+                  <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
+                    {fmt(m.atSeconds)}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  hint,
+  tone,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  tone?: string;
+}) {
+  return (
+    <div className="rounded-[5px] border bg-background px-2 py-1.5">
+      <div className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
+        {label}
+      </div>
+      <div className={cn("mt-0.5 text-sm font-semibold tabular-nums", tone)}>
+        {value}
+      </div>
+      {hint && (
+        <div className="font-mono text-[9px] text-muted-foreground">{hint}</div>
+      )}
+    </div>
   );
 }
 
