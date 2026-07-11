@@ -16,7 +16,7 @@ const jetbrainsMono = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: "Casper Agent",
-  description: "Autonomous agent on the Casper Network — Buildathon 2026",
+  description: "AI meeting assistant — schedule, record, and summarize your meetings",
 };
 
 export default function RootLayout({
@@ -30,7 +30,7 @@ export default function RootLayout({
       suppressHydrationWarning
       className={cn("font-sans", geist.variable, jetbrainsMono.variable)}
     >
-      <body>
+      <body suppressHydrationWarning>
         <ThemeProvider
           attribute="class"
           defaultTheme="dark"
