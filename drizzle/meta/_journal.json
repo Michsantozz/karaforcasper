@@ -64,6 +64,34 @@
       "when": 1783454600000,
       "tag": "0008_rls_multitenant",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1783719223752,
+      "tag": "0009_moaning_mathemanic",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1783732264778,
+      "tag": "0010_hard_the_initiative",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1783732545240,
+      "tag": "0011_ambitious_inhumans",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1783734940240,
+      "tag": "0012_familiar_doctor_faustus",
+      "breakpoints": true
     }
   ]
 }

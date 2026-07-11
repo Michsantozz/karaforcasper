@@ -8,9 +8,9 @@ import {
   listStuckMeetingRecords,
   requeueMeetingRecord,
 } from "@/server/recall/meeting-repository";
+import { captureMeetingMedia } from "@/server/recall/media";
 import { botOwnerUserId, findBotByBotId } from "@/server/recall/bot-repository";
-import { createNotification } from "@/server/casper/notifications";
-import { recordUsage } from "@/server/casper/billing";
+import { createNotification } from "@/server/notifications";
 import { emailMeetingSummaryReady } from "@/server/email";
 import { withSystemScope } from "@/shared/db/rls";
 
@@ -67,6 +67,11 @@ export async function enrichMeeting(botId: string): Promise<EnrichResult> {
       return { state: "failed", error: "empty transcript" };
     }
 
+    // Durable capture (word-level transcript + video → our storage) so the
+    // notebook survives Recall's artifact expiry. Best-effort and OUTSIDE the
+    // db transaction (network/upload); nulls if not ready or storage is off.
+    const media = await captureMeetingMedia(botId, claimed.userId);
+
     await withSystemScope(async () => {
       await completeMeetingRecord(botId, {
         userId: claimed.userId,
@@ -79,20 +84,11 @@ export async function enrichMeeting(botId: string): Promise<EnrichResult> {
         topics: summary.topics ?? [],
         sections: summary.sections ?? [],
         moments: summary.moments ?? [],
+        soundbites: summary.soundbites ?? [],
         talkShares: summary.talkShares ?? [],
+        transcriptStruct: media.transcriptStruct,
+        videoUrl: media.videoUrl,
       });
-
-      // Metering: debits usage (idempotent by botId). There's only someone to
-      // bill if the owner is known; without an owner, the minutes are generated
-      // but not billed. In the same transaction as complete: minutes persisted
-      // ⇔ usage debited, atomically.
-      if (claimed.userId && typeof summary.durationMinutes === "number") {
-        await recordUsage({
-          botId,
-          userId: claimed.userId,
-          minutes: summary.durationMinutes,
-        });
-      }
     });
 
     const notified = await notifyOwner(botId, claimed.userId, summary);
@@ -134,10 +130,12 @@ async function notifyOwner(
     createNotification({
       userId,
       type: "meeting_summary_ready",
-      message: `Meeting minutes ready${detail}. Open to review and act on-chain.`,
+      message: `Meeting minutes ready${detail}. Open to review.`,
+      // Deep link straight to this meeting's notebook.
+      link: `/meetings/${botId}`,
     }),
   );
-  await emailMeetingSummaryReady({ userId, detail });
+  await emailMeetingSummaryReady({ userId, detail, botId });
   return true;
 }
 

@@ -6,12 +6,11 @@ import type { MeetingRecordRow } from "@/shared/db/schema";
 /**
  * Meeting detail for the UI (player + karaoke).
  *
- * Joins:
- *  - the persisted MINUTES (meeting_records) — summary, sections, moments, talk-shares;
- *  - the structured TRANSCRIPT with per-word timestamps — fetched on-demand from
- *    Recall (the one persisted in meeting_records is plain text, no timestamps,
- *    and karaoke needs the times to sync with the playhead);
- *  - the mixed VIDEO URL (signed, expires) — for the player.
+ * DURABLE-FIRST: reads the persisted MINUTES + structured transcript + video URL
+ * from meeting_records (captured by the enrichment worker into durable storage).
+ * Only if those are absent (legacy rows enriched before durable capture, or a
+ * capture that hasn't run yet) does it FALL BACK to Recall's signed artifacts,
+ * which expire. So a notebook keeps its karaoke/seek/video after Recall expiry.
  *
  * The caller must run within an RLS scope (meeting_records is tenant-scoped).
  */
@@ -66,6 +65,21 @@ type RawSegment = {
 export async function getMeetingDetail(botId: string): Promise<MeetingDetail> {
   const record = await findMeetingRecord(botId);
 
+  // Durable path: everything the notebook needs is persisted → no Recall call.
+  const persistedTranscript = record?.transcriptStruct;
+  if (persistedTranscript && persistedTranscript.length > 0) {
+    return {
+      botId,
+      record,
+      transcript: persistedTranscript,
+      videoUrl: record?.videoUrl ?? null,
+      transcriptState: "ready",
+    };
+  }
+
+  // Fallback: fetch Recall's (expiring) signed artifacts. Used for legacy rows
+  // and while the meeting is still processing. A persisted videoUrl, if any,
+  // still wins over the signed one.
   const bot = await recallFetch<RecallBot>({
     method: "GET",
     path: `v1/bot/${botId}/`,
@@ -73,10 +87,11 @@ export async function getMeetingDetail(botId: string): Promise<MeetingDetail> {
 
   const shortcuts = bot?.recordings?.[0]?.media_shortcuts;
 
-  // Video: only if ready (signed URL, expires in hours).
+  // Video: durable URL if we have one, else Recall's signed URL (expires).
   const video = shortcuts?.video_mixed;
-  const videoUrl =
+  const signedVideoUrl =
     video?.status?.code === "done" ? (video.data?.download_url ?? null) : null;
+  const videoUrl = record?.videoUrl ?? signedVideoUrl;
 
   // Structured transcript with timestamps.
   const transcriptArtifact = shortcuts?.transcript;
