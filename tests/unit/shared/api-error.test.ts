@@ -5,6 +5,7 @@ import {
   unauthorized,
   notFound,
 } from "@/shared/lib/api-error";
+import * as Sentry from "@sentry/nextjs";
 
 /**
  * api-error (finding E): central handlers that keep raw exception messages off
@@ -12,11 +13,18 @@ import {
  *  - serverError logs the FULL error server-side but returns only a generic
  *    code — never err.message/stack (which can carry upstream hostnames/URLs);
  *  - status/code are configurable, with sane defaults;
+ *  - serverError forwards the FULL error to Sentry with tag/code/fingerprint;
  *  - badRequest returns a KNOWN, safe detail only when explicitly provided.
  */
 
+// Mock Sentry so no SDK side-effects run and we can assert the capture call.
+vi.mock("@sentry/nextjs", () => ({
+  captureException: vi.fn(),
+}));
+
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.mocked(Sentry.captureException).mockClear();
 });
 
 async function body(res: Response) {
@@ -66,6 +74,31 @@ describe("serverError", () => {
     expect(await body(serverError("tag", "raw string", "weird"))).toEqual({
       error: "weird",
     });
+  });
+
+  it("forwards the full error to Sentry with handler tag + code fingerprint", () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const err = new Error("boom");
+    serverError("enrich-webhook", err, "enrich_failed");
+
+    expect(Sentry.captureException).toHaveBeenCalledOnce();
+    const [captured, ctx] = vi.mocked(Sentry.captureException).mock.calls[0];
+    // The REAL error object reaches Sentry (grouping needs the stack), unlike
+    // the generic body the client gets.
+    expect(captured).toBe(err);
+    expect(ctx).toMatchObject({
+      tags: { handler: "enrich-webhook", code: "enrich_failed" },
+      fingerprint: ["{{ default }}", "enrich_failed"],
+    });
+  });
+
+  it("captures non-Error throwables too (still reported, not swallowed)", () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    serverError("tag", "raw string failure", "weird");
+    expect(Sentry.captureException).toHaveBeenCalledOnce();
+    expect(vi.mocked(Sentry.captureException).mock.calls[0][0]).toBe(
+      "raw string failure",
+    );
   });
 });
 

@@ -143,3 +143,26 @@ describe("validateEnv — conditional secrets", () => {
     await expect(validate()).resolves.toBeTruthy();
   });
 });
+
+describe("validateEnv — Sentry (optional)", () => {
+  it("passes with no SENTRY_DSN (error tracking off)", async () => {
+    Object.assign(process.env, baseValidEnv());
+    const env = await validate();
+    expect(env.SENTRY_DSN).toBeUndefined();
+  });
+
+  it("accepts a valid DSN url + environment tag", async () => {
+    Object.assign(process.env, baseValidEnv(), {
+      SENTRY_DSN: "https://abc@o123.ingest.sentry.io/456",
+      SENTRY_ENVIRONMENT: "production",
+    });
+    const env = await validate();
+    expect(env.SENTRY_DSN).toBe("https://abc@o123.ingest.sentry.io/456");
+    expect(env.SENTRY_ENVIRONMENT).toBe("production");
+  });
+
+  it("rejects a malformed DSN (not a url)", async () => {
+    Object.assign(process.env, baseValidEnv(), { SENTRY_DSN: "not-a-dsn" });
+    await expect(validate()).rejects.toThrow(/SENTRY_DSN/);
+  });
+});

@@ -19,6 +19,10 @@ export async function register() {
   // Skip during `next build` — route imports run without the runtime env.
   if (process.env.NEXT_PHASE === "phase-production-build") return;
 
+  // Sentry server init — no-op unless SENTRY_DSN is set (see the config file).
+  // Loaded first so any error in the steps below is already captured.
+  await import("./sentry.server.config");
+
   const { validateEnv } = await import("@/shared/lib/env-schema");
   validateEnv();
 
@@ -34,3 +38,9 @@ export async function register() {
   const { assertRlsHardening } = await import("@/shared/db/rls");
   await assertRlsHardening().catch(() => {});
 }
+
+// Next calls this on any uncaught error from Server Components, route handlers,
+// middleware, and Server Actions → forwards them to Sentry (no-op when the SDK
+// wasn't initialized, i.e. no SENTRY_DSN). This is what closes the "silent
+// failure in a request path" gap without touching each handler.
+export { captureRequestError as onRequestError } from "@sentry/nextjs";

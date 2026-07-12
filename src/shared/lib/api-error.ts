@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import * as Sentry from "@sentry/nextjs";
 
 /**
  * Central error handling for route handlers (finding E).
@@ -26,9 +27,16 @@ export function serverError(
   code = "internal_error",
   status = 500,
 ): NextResponse {
-  // Full error (incl. stack) stays on the server. Swap console for your logger
-  // (Sentry, etc.) — the point is it does NOT cross the response boundary.
+  // Full error (incl. stack) stays on the server — it does NOT cross the
+  // response boundary. console keeps local/dev visibility; Sentry adds grouping
+  // + alerting in prod (no-op when SENTRY_DSN is unset). `tag` marks the origin
+  // handler and `code` is a stable slug we fingerprint on, so the same failure
+  // groups into one issue instead of scattering by stack noise.
   console.error(`[${tag}]`, err);
+  Sentry.captureException(err, {
+    tags: { handler: tag, code },
+    fingerprint: ["{{ default }}", code],
+  });
   return NextResponse.json({ error: code }, { status });
 }
 

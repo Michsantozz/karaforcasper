@@ -60,6 +60,19 @@ const togglesSchema = z.object({
   // Optional: absent → tokens stored as-is (dev), present → AES-256-GCM.
   ACCOUNT_TOKEN_ENCRYPTION_KEY: z.string().optional(),
   ACCOUNT_TOKEN_ENCRYPTION_KEY_FALLBACK: z.string().optional(),
+  // Langfuse observability export — ships the agent traces + token/cost/latency
+  // metrics Mastra already emits to the Langfuse dashboard. Optional and
+  // all-or-nothing: absent → traces stay in PG only (MastraStorageExporter);
+  // both keys present → LangfuseExporter is added (see mastra/observability.ts).
+  LANGFUSE_PUBLIC_KEY: z.string().optional(),
+  LANGFUSE_SECRET_KEY: z.string().optional(),
+  LANGFUSE_BASE_URL: z.url().optional(),
+  // Sentry error tracking — grouping + alerting for the cron/webhook/enrich
+  // paths that today only console.error into stdout. Optional: absent → the SDK
+  // is never initialized (pure no-op, see sentry.server.config.ts). Set the DSN
+  // to turn it on; SENTRY_ENVIRONMENT is a cosmetic tag defaulting to NODE_ENV.
+  SENTRY_DSN: z.url().optional(),
+  SENTRY_ENVIRONMENT: z.string().optional(),
 });
 
 type Toggles = z.infer<typeof togglesSchema>;
@@ -136,6 +149,13 @@ function refine(env: NodeJS.ProcessEnv, toggles: Toggles, ctx: z.RefinementCtx) 
   // Recall: if you set the API key you almost certainly want the webhook secret.
   if (toggles.RECALL_API_KEY) {
     require("RECALL_WEBHOOK_SECRET", "when RECALL_API_KEY is set");
+  }
+
+  // Langfuse: all-or-nothing. A lone key is a misconfiguration that would
+  // silently fail to export — the exporter needs both to authenticate.
+  if (toggles.LANGFUSE_PUBLIC_KEY || toggles.LANGFUSE_SECRET_KEY) {
+    require("LANGFUSE_PUBLIC_KEY", "when Langfuse export is configured");
+    require("LANGFUSE_SECRET_KEY", "when Langfuse export is configured");
   }
 }
 

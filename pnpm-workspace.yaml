@@ -20,6 +20,9 @@ allowBuilds:
   edgedriver: false
   geckodriver: false
   msw: false
+  # postinstall baixa um binário usado só p/ upload de sourcemaps (não usamos —
+  # sem withSentryConfig). O runtime capture do @sentry/nextjs não depende dele.
+  "@sentry/cli": false
 
 # Força versões corrigidas de deps TRANSITIVAS com CVE conhecido (pnpm audit).
 # Nenhuma é dep direta — todas entram via árvore (discord.js, mastra, drizzle-kit,
