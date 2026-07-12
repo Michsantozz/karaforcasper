@@ -43,9 +43,19 @@ export const meetingBackfillWorkflow = createWorkflow({
     enqueued: z.number(),
     pages: z.number(),
   }),
+  // Mastra-inngest cron contract: declare `steps` + a static `inputData` so the
+  // scheduled run has real input. Without inputData the cron fires with
+  // `input: undefined`, which mis-plans a duplicated update step ("Duplicate
+  // step ID … across parallel chains") and never runs. `inputData: {}` matches
+  // the empty schema.
+  steps: [backfill],
+  inputData: {},
   cron: "*/15 * * * *",
   // Serialize runs so a slow scan can't overlap the next tick and double-scan.
   concurrency: { limit: 1 },
+  // Belt-and-suspenders: keep default input validation off for the empty-input
+  // cron so a stray undefined can never re-trip the validation failure.
+  options: { validateInputs: false },
 }).then(backfill);
 
 meetingBackfillWorkflow.commit();

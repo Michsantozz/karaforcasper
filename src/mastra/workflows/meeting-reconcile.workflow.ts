@@ -38,11 +38,22 @@ export const meetingReconcileWorkflow = createWorkflow({
     done: z.number(),
     stillPending: z.number(),
   }),
+  // The Mastra-inngest cron contract (per the official inngest guide): a
+  // scheduled workflow must declare its `steps` AND a static `inputData`.
+  // Without inputData the cron fires with `input: undefined`, which the engine
+  // both fails to validate ("Step input validation failed") and mis-plans into
+  // a duplicated update step ("Duplicate step ID … across parallel chains") —
+  // so the cron never actually runs. `inputData: {}` satisfies the empty schema.
+  steps: [reconcile],
+  inputData: {},
   cron: "*/5 * * * *",
   // Serializes runs: reconcile sweeps every stuck row and can outlast the 5-min
   // tick. concurrency:1 makes Inngest queue the next tick instead of running two
   // sweeps in parallel (which would double-claim the same records).
   concurrency: { limit: 1 },
+  // Belt-and-suspenders: keep default input validation off for the empty-input
+  // cron so a stray undefined can never re-trip the validation failure.
+  options: { validateInputs: false },
 }).then(reconcile);
 
 meetingReconcileWorkflow.commit();

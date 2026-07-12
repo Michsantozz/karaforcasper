@@ -33,10 +33,20 @@ export const autoScheduleWorkflow = createWorkflow({
     calendars: z.number(),
     scheduled: z.number(),
   }),
+  // Mastra-inngest cron contract: declare `steps` + a static `inputData` so the
+  // scheduled run has real input. Without inputData the cron fires with
+  // `input: undefined`, which mis-plans a duplicated update step ("Duplicate
+  // step ID … across parallel chains") and never runs. `inputData: {}` matches
+  // the empty schema.
+  steps: [scan],
+  inputData: {},
   cron: "*/10 * * * *",
   // Serializes runs: a slow scan must never overlap the next tick (10 min is
   // shorter than a full scan under load). Inngest queues the next run instead.
   concurrency: { limit: 1 },
+  // Belt-and-suspenders: keep default input validation off for the empty-input
+  // cron so a stray undefined can never re-trip the validation failure.
+  options: { validateInputs: false },
 }).then(scan);
 
 autoScheduleWorkflow.commit();
