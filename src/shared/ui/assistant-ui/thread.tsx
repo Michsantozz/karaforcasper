@@ -193,10 +193,10 @@ const ThreadWelcome: FC = () => {
         meeting assistant · recall.ai
       </span>
       <h1 className="aui-thread-welcome-message-inner fade-in slide-in-from-bottom-1 animate-in fill-mode-both text-2xl font-semibold tracking-tight duration-200">
-        Run your meetings on autopilot.
+        Ask Casper to sit in your next meeting.
       </h1>
       <p className="aui-thread-welcome-subtitle fade-in slide-in-from-bottom-1 animate-in fill-mode-both text-sm text-muted-foreground duration-300">
-        Schedule, record, transcribe, and summarize — decisions and action items, ready when the call ends.
+        It books the call, records it, and hands you the minutes. Then it tells you how the room actually went.
       </p>
     </div>
   );
