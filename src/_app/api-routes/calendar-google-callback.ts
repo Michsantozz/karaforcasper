@@ -14,7 +14,7 @@ import {
   findCalendarByEmail,
   saveCalendarMapping,
 } from "@/server/recall/calendar-repository";
-import { verifyOAuthState } from "@/server/recall/oauth-state";
+import { verifyOAuthState, consumeOAuthNonce } from "@/server/recall/oauth-state";
 import { getSession } from "@/features/auth/model/session";
 import { appPublicUrl } from "@/shared/lib/config";
 import { withUserScope } from "@/shared/db/rls";
@@ -50,8 +50,10 @@ export async function GET(req: Request) {
 
   // userId comes from the signed and verified state — not the raw query param.
   let userId: string;
+  let nonce: string;
+  let expMs: number;
   try {
-    userId = verifyOAuthState(state);
+    ({ userId, nonce, expMs } = verifyOAuthState(state));
   } catch (err) {
     const reason = err instanceof Error ? err.message : "invalid_state";
     return NextResponse.json({ error: reason }, { status: 403 });
@@ -64,6 +66,18 @@ export async function GET(req: Request) {
   const session = await getSession();
   if (!session?.user?.id || session.user.id !== userId) {
     return NextResponse.json({ error: "session_mismatch" }, { status: 403 });
+  }
+
+  // Single-use: consume the state's nonce so the same signed state can't be
+  // replayed within its 10min window (even by its own owner). Done AFTER the
+  // session check on purpose — an unauthenticated/mismatched caller must not be
+  // able to burn the victim's nonce and DoS their legitimate link. A replay
+  // (nonce already consumed) throws → 403.
+  try {
+    await consumeOAuthNonce(nonce, expMs);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : "state_replayed";
+    return NextResponse.json({ error: reason }, { status: 403 });
   }
 
   // Absolute URLs from the VALIDATED public app URL — NEVER the request origin.

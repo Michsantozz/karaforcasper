@@ -341,3 +341,28 @@ export const rateLimitApp = pgTable("rate_limit_app", {
 });
 
 export type RateLimitAppRow = typeof rateLimitApp.$inferSelect;
+
+/**
+ * Consumed OAuth `state` nonces — makes a signed calendar-OAuth `state`
+ * SINGLE-USE (blocks replay within its 10min validity window).
+ *
+ * The `state` is HMAC-signed and session-bound (see server/recall/oauth-state.ts
+ * + calendar-google-callback.ts), which already stops forgery and cross-browser
+ * replay. This closes the residual vector: the SAME user replaying their OWN
+ * still-valid `state` to drive a second calendar link. On callback we INSERT the
+ * nonce; a conflict means it was already consumed → reject. No user_id column and
+ * no RLS: a nonce is a random 128-bit token, globally unique, not tenant data.
+ * `expiresAt` mirrors the state TTL so a periodic sweep can reclaim old rows.
+ */
+export const oauthStateNonce = pgTable("oauth_state_nonce", {
+  /** The random nonce embedded in the signed state. PK → INSERT conflict = replay. */
+  nonce: text("nonce").primaryKey(),
+  /** When the owning state expires; rows past this are safe to sweep. */
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  /** When the nonce was consumed (audit/debug). */
+  consumedAt: timestamp("consumed_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export type OAuthStateNonceRow = typeof oauthStateNonce.$inferSelect;

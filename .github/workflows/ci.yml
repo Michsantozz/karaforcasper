@@ -27,7 +27,9 @@ jobs:
     # espelha docker-compose.dev.
     services:
       postgres:
-        image: postgres:17-alpine
+        # pgvector/pgvector:pg17 espelha o db de compose (Postgres 17 + extensão
+        # `vector`): migrations que criam índices vector rodam igual no CI.
+        image: pgvector/pgvector:pg17
         env:
           POSTGRES_USER: casper
           POSTGRES_PASSWORD: casper

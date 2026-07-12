@@ -21,7 +21,9 @@ name: casperagent-dev
 
 services:
   db:
-    image: postgres:17-alpine
+    # pgvector/pgvector:pg17: Postgres 17 + extensão `vector` (Mastra semantic
+    # recall). A imagem oficial postgres:17-alpine não traz pgvector.
+    image: pgvector/pgvector:pg17
     restart: unless-stopped
     environment:
       POSTGRES_USER: casper

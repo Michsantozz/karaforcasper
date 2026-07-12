@@ -23,7 +23,8 @@ describe("signOAuthState / verifyOAuthState", () => {
       "@/server/recall/oauth-state"
     );
     const state = signOAuthState("user-42");
-    expect(verifyOAuthState(state)).toBe("user-42");
+    // verifyOAuthState devolve { userId, nonce, expMs } (nonce p/ single-use).
+    expect(verifyOAuthState(state).userId).toBe("user-42");
   });
 
   it("bloqueia state forjado (troca do userId sem o secret)", async () => {

@@ -10,6 +10,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 const exchangeCode = vi.fn();
 const fetchUserEmail = vi.fn();
 const verifyOAuthState = vi.fn();
+const consumeOAuthNonce = vi.fn();
 const findCalendarByEmail = vi.fn();
 const createCalendar = vi.fn();
 const reconnectCalendar = vi.fn();
@@ -33,7 +34,16 @@ vi.mock("@/server/recall/calendar-repository", () => ({
 }));
 vi.mock("@/server/recall/oauth-state", () => ({
   verifyOAuthState: (...a: unknown[]) => verifyOAuthState(...a),
+  consumeOAuthNonce: (...a: unknown[]) => consumeOAuthNonce(...a),
 }));
+
+// verifyOAuthState now returns { userId, nonce, expMs }; tests only care about
+// userId, so this wraps a userId into the full shape the route destructures.
+const verified = (userId: string) => ({
+  userId,
+  nonce: "test-nonce",
+  expMs: Date.now() + 600_000,
+});
 // The callback binds the flow to the current session (audit fix #7): the
 // logged-in user must match the state's userId. Default: session = "u1".
 const getSession = vi.fn();
@@ -64,7 +74,8 @@ const call = (qs: string) =>
 beforeEach(() => {
   vi.clearAllMocks();
   trace.length = 0;
-  verifyOAuthState.mockReturnValue("u1");
+  verifyOAuthState.mockReturnValue(verified("u1"));
+  consumeOAuthNonce.mockResolvedValue(undefined);
   getSession.mockResolvedValue({ user: { id: "u1" } });
   exchangeCode.mockResolvedValue({ refreshToken: "rt", accessToken: "at" });
   fetchUserEmail.mockResolvedValue("user@x.com");
@@ -106,7 +117,7 @@ describe("calendar OAuth callback — validation", () => {
 
 describe("calendar OAuth callback — linking uses the VERIFIED userId", () => {
   it("persists the mapping under the userId from the signed state, not the query", async () => {
-    verifyOAuthState.mockReturnValue("real-user");
+    verifyOAuthState.mockReturnValue(verified("real-user"));
     getSession.mockResolvedValue({ user: { id: "real-user" } });
     const res = await call("?code=abc&state=signed&user_id=attacker");
     expect(res.status).toBe(307); // redirect
@@ -116,7 +127,7 @@ describe("calendar OAuth callback — linking uses the VERIFIED userId", () => {
   });
 
   it("403 when the session user does NOT match the state userId (replay in another session)", async () => {
-    verifyOAuthState.mockReturnValue("victim");
+    verifyOAuthState.mockReturnValue(verified("victim"));
     getSession.mockResolvedValue({ user: { id: "attacker" } });
     const res = await call("?code=abc&state=signed-for-victim");
     expect(res.status).toBe(403);
@@ -139,7 +150,7 @@ describe("calendar OAuth callback — linking uses the VERIFIED userId", () => {
   });
 
   it("reconnects (dedup) the caller's OWN existing calendar instead of duplicating", async () => {
-    verifyOAuthState.mockReturnValue("u1");
+    verifyOAuthState.mockReturnValue(verified("u1"));
     findCalendarByEmail.mockResolvedValue({
       recallCalendarId: "existing",
       userId: "u1", // owned by the same user → safe to reconnect (token refresh)
@@ -155,7 +166,7 @@ describe("calendar OAuth callback — linking uses the VERIFIED userId", () => {
     // VICTIM; reconnecting it would PATCH the victim's Recall calendar with this
     // caller's refresh token and reassign the row. The callback must create a
     // fresh calendar for the caller instead.
-    verifyOAuthState.mockReturnValue("attacker");
+    verifyOAuthState.mockReturnValue(verified("attacker"));
     getSession.mockResolvedValue({ user: { id: "attacker" } });
     findCalendarByEmail.mockResolvedValue({
       recallCalendarId: "victim-cal",
@@ -228,5 +239,27 @@ describe("calendar OAuth callback — linking uses the VERIFIED userId", () => {
     expect(res.status).toBe(307);
     expect(createCalendar).toHaveBeenCalledOnce();
     expect(deleteCalendar).not.toHaveBeenCalled();
+  });
+
+  it("403 on a replayed state (nonce already consumed) — no token exchange", async () => {
+    // The signature is valid and the session matches, but the nonce was already
+    // used: consumeOAuthNonce throws state_replayed. The callback must reject
+    // before touching the provider, so a replayed link never runs.
+    consumeOAuthNonce.mockRejectedValue(new Error("state_replayed"));
+    const res = await call("?code=abc&state=signed");
+    expect(res.status).toBe(403);
+    expect(exchangeCode).not.toHaveBeenCalled();
+    expect(saveCalendarMapping).not.toHaveBeenCalled();
+  });
+
+  it("consumes the nonce AFTER the session check — an unauthenticated caller can't burn it", async () => {
+    // Session mismatch must short-circuit BEFORE the nonce is consumed; otherwise
+    // an attacker replaying the victim's state in their own browser would burn
+    // the victim's nonce and DoS the victim's legitimate link.
+    getSession.mockResolvedValue({ user: { id: "attacker" } });
+    verifyOAuthState.mockReturnValue(verified("victim"));
+    const res = await call("?code=abc&state=signed-for-victim");
+    expect(res.status).toBe(403);
+    expect(consumeOAuthNonce).not.toHaveBeenCalled();
   });
 });

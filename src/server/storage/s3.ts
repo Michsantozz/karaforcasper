@@ -237,8 +237,19 @@ export async function uploadObjectStream(input: {
   return { url: `${publicBase()}/${key}`, key, contentType: input.contentType };
 }
 
-/** Default TTL (seconds) for presigned GET URLs handed to the vision provider. */
-const PRESIGN_TTL_SECONDS = 900; // 15 min
+/**
+ * Default TTL (seconds) for presigned GET URLs handed to the vision provider.
+ *
+ * 6h, not 15min: the URL is signed at upload time (attachment `send`), but the
+ * provider only fetches it when the agent actually reaches the vision step —
+ * which can be well after send on a long multi-step turn, a retry, or a queued
+ * request. A 15min link expired mid-turn and the image 403'd, and nothing
+ * re-signs it (the client adapter drops the returned `key`). A turn never
+ * outlives 6h, so this always covers it while the link stays short-lived — a
+ * leak still expires the same day instead of granting durable, session-less
+ * access to a private-bucket object.
+ */
+const PRESIGN_TTL_SECONDS = 6 * 60 * 60; // 6h
 
 let presignClient: S3Client | null = null;
 

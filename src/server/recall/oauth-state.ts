@@ -1,5 +1,7 @@
 import "server-only";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { sql } from "drizzle-orm";
+import { db } from "@/shared/db";
 
 /**
  * Signed `state` for calendar OAuth (CSRF / account-linking).
@@ -36,11 +38,21 @@ export function signOAuthState(userId: string): string {
   return Buffer.from(`${payload}.${sig}`).toString("base64url");
 }
 
+/** The verified, still-valid contents of a signed OAuth `state`. */
+export type VerifiedOAuthState = {
+  userId: string;
+  /** Random per-flow nonce — consume it (consumeOAuthNonce) to enforce single-use. */
+  nonce: string;
+  /** State expiry (epoch millis); used as the nonce row's sweep deadline. */
+  expMs: number;
+};
+
 /**
- * Validates the callback's `state` and returns the embedded userId. Throws if
- * the signature doesn't match (timing-safe comparison) or the token has expired.
+ * Validates the callback's `state` and returns the embedded userId + nonce + exp.
+ * Throws if the signature doesn't match (timing-safe comparison) or the token has
+ * expired. Signature/expiry only — call consumeOAuthNonce to enforce single-use.
  */
-export function verifyOAuthState(state: string): string {
+export function verifyOAuthState(state: string): VerifiedOAuthState {
   let decoded: string;
   try {
     decoded = Buffer.from(state, "base64url").toString("utf8");
@@ -59,9 +71,37 @@ export function verifyOAuthState(state: string): string {
     throw new Error("invalid_state");
   }
 
-  if (!Number.isFinite(Number(exp)) || Date.now() > Number(exp)) {
+  const expMs = Number(exp);
+  if (!Number.isFinite(expMs) || Date.now() > expMs) {
     throw new Error("state_expired");
   }
 
-  return userId;
+  return { userId, nonce, expMs };
+}
+
+/**
+ * Consumes the state's nonce, making the whole `state` SINGLE-USE. The signature
+ * proves the state is authentic and unexpired; this proves it hasn't been used
+ * before — closing the replay window where the same user re-submits their own
+ * still-valid `state` to link a second calendar.
+ *
+ * Atomic: INSERT the nonce; a unique-violation on the PK means it was already
+ * consumed → replay → throw `state_replayed`. One statement, no read-then-write
+ * race between two concurrent callbacks carrying the same state.
+ */
+export async function consumeOAuthNonce(
+  nonce: string,
+  expMs: number,
+): Promise<void> {
+  const expiresAt = new Date(expMs);
+  const rows = await db.execute<{ nonce: string }>(sql`
+    INSERT INTO oauth_state_nonce (nonce, expires_at)
+    VALUES (${nonce}, ${expiresAt.toISOString()})
+    ON CONFLICT (nonce) DO NOTHING
+    RETURNING nonce
+  `);
+  // No row returned → the nonce already existed → this is a replay.
+  if (rows.rows.length === 0) {
+    throw new Error("state_replayed");
+  }
 }

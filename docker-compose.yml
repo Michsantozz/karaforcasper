@@ -23,7 +23,10 @@ x-logging: &default-logging
 
 services:
   db:
-    image: postgres:17-alpine
+    # pgvector/pgvector:pg17 = Postgres 17 com a extensão `vector` já compilada.
+    # Mastra semantic recall (memória por similaridade de embeddings) precisa dela;
+    # a imagem oficial postgres:17-alpine NÃO traz pgvector e o recall degrada.
+    image: pgvector/pgvector:pg17
     restart: unless-stopped
     logging: *default-logging
     environment:
