@@ -148,7 +148,7 @@ jobs:
       # CRITICAL/HIGH com fix disponível; ignora unfixed pra não travar por vuln
       # sem patch upstream. (audit fix #9)
       - name: Trivy image scan
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.28.0
         with:
           image-ref: casperagent:ci
           format: table
