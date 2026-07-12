@@ -110,18 +110,69 @@ export function createChatModel() {
 
 // Embedder for Memory semantic recall — runs on Fireworks' OpenAI-compatible
 // /embeddings endpoint via the @ai-sdk/openai provider (baseURL override), so we
-// reuse the same FIREWORKS_API_KEY. Qwen3-Embedding-8B outputs 4096-dim vectors
-// (measured against the live endpoint); PgVector auto-creates its index at that
-// dimension on first upsert. $0.10/M tokens — one embed per stored message and
-// one per recall query. Lazy for the same reason as the chat model.
+// reuse the same FIREWORKS_API_KEY. $0.10/M tokens — one embed per stored message
+// and one per recall query. Lazy for the same reason as the chat model.
 const DEFAULT_EMBEDDING_MODEL = "accounts/fireworks/models/qwen3-embedding-8b";
+
+// Qwen3-Embedding-8B natively outputs 4096-dim vectors, but pgvector CANNOT index
+// beyond 2000 dims (the cap applies to every index type — ivfflat AND hnsw — for
+// the `vector` type). Mastra's Memory always creates its index without a config,
+// so PgVector tries the default index at the embedder's native dimension and
+// fails ("column cannot have more than 2000 dimensions"). That failure aborts the
+// per-turn memory save, the step never completes, Mastra re-runs it, and the
+// whole answer regenerates in an infinite loop (the chat-loop bug).
+//
+// Fix: Qwen3-Embedding supports Matryoshka (MRL) truncation via the `dimensions`
+// request param (verified against the live Fireworks endpoint) — the first N
+// components carry the most information, so a truncated vector keeps most of the
+// model's quality. We truncate to 1024 dims, which is comfortably indexable, and
+// the resulting index name becomes `memory_messages_1024`. Keep this in sync with
+// MEMORY_EMBEDDING_DIMENSION in src/mastra/storage.ts.
+const EMBEDDING_DIMENSIONS = 1024;
 
 export function createEmbedder() {
   const fireworks = createOpenAI({
     baseURL: "https://api.fireworks.ai/inference/v1",
     apiKey: requireEnv("FIREWORKS_API_KEY"),
   });
-  return fireworks.embedding(
+  const base = fireworks.embedding(
     process.env.FIREWORKS_EMBEDDING_MODEL_ID ?? DEFAULT_EMBEDDING_MODEL,
   );
+
+  // Inject `dimensions` into every embed call. The @ai-sdk/openai model reads it
+  // from providerOptions.openai.dimensions in doEmbed and forwards it to the
+  // /embeddings request body. Mastra's Memory calls doEmbed itself (we don't own
+  // the call site), so we wrap the model to merge the option in — preserving any
+  // providerOptions Memory passes. Everything else delegates to the base model.
+  return {
+    ...base,
+    async doEmbed(options: Parameters<typeof base.doEmbed>[0]) {
+      const result = await base.doEmbed({
+        ...options,
+        providerOptions: {
+          ...options.providerOptions,
+          openai: {
+            ...options.providerOptions?.openai,
+            dimensions: EMBEDDING_DIMENSIONS,
+          },
+        },
+      });
+      // Fail-fast guard: Mastra names/creates the pgvector index from the ACTUAL
+      // returned vector length (embeddings[0].length), NOT our requested
+      // `dimensions`. If Fireworks ever ignores the param (model swap via
+      // FIREWORKS_EMBEDDING_MODEL_ID, API change, fallback), a wrong-sized vector
+      // would silently build a different index — and if it exceeds 2000 dims,
+      // reopen the exact chat-loop bug this truncation was added to fix. Assert
+      // the contract loudly instead of drifting silently.
+      const got = result.embeddings[0]?.length;
+      if (got !== undefined && got !== EMBEDDING_DIMENSIONS) {
+        throw new Error(
+          `Embedder returned ${got}-dim vectors; expected ${EMBEDDING_DIMENSIONS}. ` +
+            `The Fireworks 'dimensions' truncation was not honored — refusing to ` +
+            `build a mismatched pgvector index (see src/mastra/storage.ts).`,
+        );
+      }
+      return result;
+    },
+  };
 }

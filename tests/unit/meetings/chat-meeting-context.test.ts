@@ -41,10 +41,13 @@ vi.mock("ai", () => ({
 }));
 // The agent barrel is dynamically imported inside POST — stub it away.
 vi.mock("@/mastra", () => ({ mastra: {} }));
-// POST awaits the store's one-time schema init before touching memory — stub it
-// so the route never tries to reach Postgres.
+// POST awaits the store's one-time schema init, the vector-index pre-creation,
+// and the per-user resource pre-create before touching memory — stub all three so
+// the route never reaches Postgres.
 vi.mock("@/mastra/storage", () => ({
   ensureMastraStoreInit: vi.fn(async () => {}),
+  ensureMastraVectorIndex: vi.fn(async () => {}),
+  ensureMastraResource: vi.fn(async () => {}),
 }));
 
 type ParamsMessages = { messages?: Array<{ role: string }> };

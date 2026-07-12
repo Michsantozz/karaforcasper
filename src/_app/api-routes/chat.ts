@@ -147,8 +147,12 @@ export async function POST(req: Request) {
   // Serialize the store's one-time schema init before the agent touches memory —
   // otherwise a cold store hit by this turn concurrently with the notebook's
   // thread init/history load collides on RoutingDbClient's pinned connection.
-  const { ensureMastraStoreInit } = await import("@/mastra/storage");
-  await ensureMastraStoreInit();
+  // ensureMastraVectorIndex pre-creates the 1024-dim embedding index as HNSW
+  // BEFORE Memory would auto-create it as ivfflat (which fails past 2000 dims and
+  // loops the whole turn) — see src/mastra/storage.ts.
+  const { ensureMastraStoreInit, ensureMastraVectorIndex, ensureMastraResource } =
+    await import("@/mastra/storage");
+  await Promise.all([ensureMastraStoreInit(), ensureMastraVectorIndex()]);
 
   // Memory binding: `resource` is ALWAYS the session user id (never trusted
   // from the body — that would let a caller read another user's thread), and
@@ -158,6 +162,11 @@ export async function POST(req: Request) {
   const memory = threadId
     ? { memory: { thread: threadId, resource: session.user.id } }
     : {};
+
+  // Pre-create the user's working-memory resource row so Mastra's own resource
+  // write is a safe UPDATE, never a racing INSERT that violates the PK and loops
+  // the turn (see ensureMastraResource). Only when memory is active for this turn.
+  if (threadId) await ensureMastraResource(session.user.id);
 
   // version:'v6' required — assistant-ui types against AI SDK v6.
   const stream = await handleChatStream({

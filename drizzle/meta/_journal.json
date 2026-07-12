@@ -162,6 +162,13 @@
       "when": 1783830200000,
       "tag": "0022_mastra_schema_ownership",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1783833532000,
+      "tag": "0023_pgvector_extension_backfill",
+      "breakpoints": true
     }
   ]
 }

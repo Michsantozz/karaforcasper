@@ -10,7 +10,7 @@ import {
   useChatRuntime,
   AssistantChatTransport,
 } from "@assistant-ui/react-ai-sdk";
-import { lastAssistantMessageIsCompleteWithToolCalls } from "ai";
+import { shouldResumeAfterClientTool } from "@/features/assistant/model/resume-predicate";
 import { PlusIcon, XIcon } from "lucide-react";
 import { toast } from "sonner";
 import { GoogleCalendarIcon } from "@/shared/ui/google-calendar-icon";
@@ -67,9 +67,10 @@ function useChatThreadRuntime() {
   return useChatRuntime({
     transport,
     adapters: { attachments, feedback },
-    // After a frontend tool returns its result, automatically resend to the
-    // agent so it continues the flow without needing a new message.
-    sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
+    // After a CLIENT tool returns its result, automatically resend to the agent
+    // so it continues the flow. Scoped to client tools only — the stock
+    // predicate also fired on the agent's server tools and looped the turn.
+    sendAutomaticallyWhen: shouldResumeAfterClientTool,
   });
 }
 

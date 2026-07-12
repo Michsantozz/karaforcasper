@@ -13,7 +13,13 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
  */
 
 const createOpenAI = vi.fn();
-const embedding = vi.fn((id: string) => ({ id }));
+// The base model exposes doEmbed; our wrapper delegates to it after injecting the
+// `dimensions` provider option. Capture what doEmbed is actually called with.
+const baseDoEmbed = vi.fn(async (_options: unknown) => ({
+  embeddings: [] as number[][],
+  usage: { tokens: 0 },
+}));
+const embedding = vi.fn((id: string) => ({ id, doEmbed: baseDoEmbed }));
 
 vi.mock("@ai-sdk/openai", () => ({
   createOpenAI: (cfg: unknown) => {
@@ -63,5 +69,63 @@ describe("createEmbedder", () => {
     delete process.env.FIREWORKS_API_KEY;
     const { createEmbedder } = await import("@/mastra/model");
     expect(() => createEmbedder()).toThrow(/FIREWORKS_API_KEY/);
+  });
+
+  // Qwen3 natively emits 4096-dim vectors, which pgvector can't index (2000 cap) —
+  // that failed every memory save and looped the chat. The embedder truncates to
+  // 1024 via MRL by injecting providerOptions.openai.dimensions on EVERY doEmbed
+  // call. This is the regression guard for that truncation.
+  it("injects dimensions=1024 into every doEmbed call", async () => {
+    const { createEmbedder } = await import("@/mastra/model");
+    const model = createEmbedder();
+    await model.doEmbed({ values: ["hello"] });
+    expect(baseDoEmbed).toHaveBeenCalledTimes(1);
+    const passed = baseDoEmbed.mock.calls[0][0] as {
+      providerOptions?: { openai?: { dimensions?: number } };
+    };
+    expect(passed?.providerOptions?.openai?.dimensions).toBe(1024);
+  });
+
+  it("preserves caller-supplied providerOptions while adding dimensions", async () => {
+    const { createEmbedder } = await import("@/mastra/model");
+    const model = createEmbedder();
+    await model.doEmbed({
+      values: ["hi"],
+      providerOptions: { openai: { user: "u-1" } },
+    });
+    const passed = baseDoEmbed.mock.calls[0][0] as {
+      providerOptions?: { openai?: { dimensions?: number; user?: string } };
+    };
+    // Both the injected dimension and the caller's own option survive.
+    expect(passed.providerOptions?.openai).toMatchObject({
+      dimensions: 1024,
+      user: "u-1",
+    });
+  });
+
+  // Guard: Mastra builds the pgvector index from the ACTUAL returned length. If
+  // the provider ignores `dimensions` and returns a wrong-sized vector, we must
+  // fail loudly rather than silently build a mismatched index (which, past 2000
+  // dims, reopens the chat-loop bug).
+  it("throws if the provider returns a vector of the wrong dimension", async () => {
+    baseDoEmbed.mockResolvedValueOnce({
+      embeddings: [new Array(4096).fill(0)],
+      usage: { tokens: 1 },
+    });
+    const { createEmbedder } = await import("@/mastra/model");
+    const model = createEmbedder();
+    await expect(model.doEmbed({ values: ["x"] })).rejects.toThrow(/4096-dim/);
+  });
+
+  it("accepts a correctly-sized 1024-dim vector", async () => {
+    baseDoEmbed.mockResolvedValueOnce({
+      embeddings: [new Array(1024).fill(0)],
+      usage: { tokens: 1 },
+    });
+    const { createEmbedder } = await import("@/mastra/model");
+    const model = createEmbedder();
+    await expect(model.doEmbed({ values: ["x"] })).resolves.toMatchObject({
+      embeddings: [expect.any(Array)],
+    });
   });
 });
