@@ -169,6 +169,13 @@
       "when": 1783833532000,
       "tag": "0023_pgvector_extension_backfill",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1783833600000,
+      "tag": "0024_persistence_audit_fixes",
+      "breakpoints": true
     }
   ]
 }

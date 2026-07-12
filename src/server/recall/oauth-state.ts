@@ -105,3 +105,17 @@ export async function consumeOAuthNonce(
     throw new Error("state_replayed");
   }
 }
+
+/**
+ * Reclaims consumed/expired nonce rows. Each OAuth callback inserts one row that
+ * is dead weight the moment its state's 10-min TTL passes — the replay window is
+ * closed by then. Without a sweep the table only grows. A periodic cron calls
+ * this; deleting past expires_at is safe (a still-valid nonce is never swept).
+ * Returns the number of rows removed. Backed by oauth_state_nonce_expires_at_idx.
+ */
+export async function sweepExpiredOAuthNonces(): Promise<number> {
+  const result = await db.execute(sql`
+    DELETE FROM oauth_state_nonce WHERE expires_at < now()
+  `);
+  return result.rowCount ?? 0;
+}

@@ -147,10 +147,32 @@ export interface MeetingPageQuery {
   query?: string;
   /** Filter to a single record status (done/processing/pending/failed). */
   status?: MeetingRecordStatus;
-  /** Keyset cursor: return rows strictly OLDER than this ISO createdAt. */
+  /**
+   * Opaque keyset cursor: `${createdAtIso}|${botId}`. Returns rows ordered
+   * strictly AFTER it (older createdAt, or same createdAt + smaller botId). The
+   * botId tiebreaker makes the boundary stable when two rows share createdAt
+   * (webhooks landing in the same tick) — a createdAt-only cursor would skip or
+   * repeat rows at the page edge.
+   */
   cursor?: string;
   /** Page size (clamped 1..100 by the caller). Default 30. */
   limit?: number;
+}
+
+/** Cursor codec: (createdAt, botId) ⇄ `${iso}|${botId}`. */
+const CURSOR_SEP = "|";
+function encodeCursor(createdAt: Date, botId: string): string {
+  return `${createdAt.toISOString()}${CURSOR_SEP}${botId}`;
+}
+function decodeCursor(
+  cursor: string,
+): { createdAt: Date; botId: string } | null {
+  const sep = cursor.indexOf(CURSOR_SEP);
+  if (sep < 0) return null;
+  const createdAt = new Date(cursor.slice(0, sep));
+  const botId = cursor.slice(sep + 1);
+  if (Number.isNaN(createdAt.getTime()) || !botId) return null;
+  return { createdAt, botId };
 }
 
 /**
@@ -181,8 +203,24 @@ export async function listMeetingRecordsPage(
     );
   }
   if (input.status) conds.push(eq(meetingRecords.status, input.status));
-  // Keyset: next page = rows strictly older than the last createdAt seen.
-  if (input.cursor) conds.push(lt(meetingRecords.createdAt, new Date(input.cursor)));
+  // Keyset: next page = rows ordered strictly after the composite cursor.
+  // Row-value comparison `(created_at, bot_id) < (c, b)` matches the ORDER BY
+  // (created_at DESC, bot_id DESC) and is a single index range scan.
+  if (input.cursor) {
+    const decoded = decodeCursor(input.cursor);
+    if (decoded) {
+      conds.push(
+        sql`(${meetingRecords.createdAt}, ${meetingRecords.botId}) < (${decoded.createdAt}, ${decoded.botId})`,
+      );
+    } else {
+      // Legacy createdAt-only cursor (pre-tiebreaker links in flight): fall back
+      // to the old strictly-older-than semantics so existing pagination doesn't 500.
+      const legacy = new Date(input.cursor);
+      if (!Number.isNaN(legacy.getTime())) {
+        conds.push(lt(meetingRecords.createdAt, legacy));
+      }
+    }
+  }
 
   // Fetch limit+1 to know whether a further page exists without a count query.
   const rows = await scopedDb()
@@ -201,7 +239,9 @@ export async function listMeetingRecordsPage(
     })
     .from(meetingRecords)
     .where(conds.length ? and(...conds) : undefined)
-    .orderBy(desc(meetingRecords.createdAt))
+    // botId tiebreaker keeps the order total (and matches the keyset predicate),
+    // so pages never skip/repeat rows that share createdAt.
+    .orderBy(desc(meetingRecords.createdAt), desc(meetingRecords.botId))
     .limit(limit + 1);
 
   const hasMore = rows.length > limit;
@@ -213,9 +253,8 @@ export async function listMeetingRecordsPage(
       durationSeconds: deriveListDuration({ moments, sections, soundbites }),
     }),
   );
-  const nextCursor = hasMore
-    ? page[page.length - 1].createdAt.toISOString()
-    : null;
+  const last = page[page.length - 1];
+  const nextCursor = hasMore && last ? encodeCursor(last.createdAt, last.botId) : null;
 
   return { items, nextCursor };
 }

@@ -42,7 +42,14 @@ export const recallBots = pgTable(
       .notNull()
       .defaultNow(),
   },
-  (table) => [index("recall_bots_bot_id_idx").on(table.botId)],
+  (table) => [
+    index("recall_bots_bot_id_idx").on(table.botId),
+    // Backs listUpcomingBotsForUser (metadata->>'user_id' filter). Partial on
+    // join_at not-null: only the "upcoming" rows that query ever scans.
+    index("recall_bots_metadata_user_id_idx")
+      .on(sql`(${table.metadata}->>'user_id')`)
+      .where(sql`${table.joinAt} is not null`),
+  ],
 );
 
 export type RecallBotRow = typeof recallBots.$inferSelect;
@@ -95,6 +102,11 @@ export const userCalendars = pgTable(
       table.platformEmail,
       table.platform,
     ),
+    // Backs listAutoRecordCalendars (system cron): metadata->>'auto_record' =
+    // 'true'. Partial index = only the opted-in rows.
+    index("user_calendars_auto_record_idx")
+      .on(sql`(${table.metadata}->>'auto_record')`)
+      .where(sql`(${table.metadata}->>'auto_record') = 'true'`),
   ],
 );
 
@@ -312,6 +324,13 @@ export const meetingRecords = pgTable(
     index("meeting_records_user_idx").on(table.userId),
     index("meeting_records_status_idx").on(table.status),
     index("meeting_records_share_token_idx").on(table.shareToken),
+    // Backs the keyset-paginated library query: ORDER BY created_at DESC with
+    // bot_id as the stable tiebreaker (two rows can share created_at when
+    // webhooks land in the same tick). See listMeetingRecordsPage.
+    index("meeting_records_created_at_bot_id_idx").on(
+      table.createdAt.desc(),
+      table.botId.desc(),
+    ),
   ],
 );
 
@@ -354,15 +373,20 @@ export type RateLimitAppRow = typeof rateLimitApp.$inferSelect;
  * no RLS: a nonce is a random 128-bit token, globally unique, not tenant data.
  * `expiresAt` mirrors the state TTL so a periodic sweep can reclaim old rows.
  */
-export const oauthStateNonce = pgTable("oauth_state_nonce", {
-  /** The random nonce embedded in the signed state. PK → INSERT conflict = replay. */
-  nonce: text("nonce").primaryKey(),
-  /** When the owning state expires; rows past this are safe to sweep. */
-  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-  /** When the nonce was consumed (audit/debug). */
-  consumedAt: timestamp("consumed_at", { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-});
+export const oauthStateNonce = pgTable(
+  "oauth_state_nonce",
+  {
+    /** The random nonce embedded in the signed state. PK → INSERT conflict = replay. */
+    nonce: text("nonce").primaryKey(),
+    /** When the owning state expires; rows past this are safe to sweep. */
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    /** When the nonce was consumed (audit/debug). */
+    consumedAt: timestamp("consumed_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  // Backs the periodic sweep (delete where expires_at < now()).
+  (table) => [index("oauth_state_nonce_expires_at_idx").on(table.expiresAt)],
+);
 
 export type OAuthStateNonceRow = typeof oauthStateNonce.$inferSelect;

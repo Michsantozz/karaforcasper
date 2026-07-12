@@ -92,3 +92,60 @@ describe("signOAuthState / verifyOAuthState", () => {
     expect(a).not.toBe(b);
   });
 });
+
+/**
+ * consumeOAuthNonce / sweepExpiredOAuthNonces — single-use enforcement + the
+ * housekeeping sweep. Both hit the DB via `db.execute`; we mock it and inspect
+ * the emitted SQL + rowCount handling.
+ */
+describe("consumeOAuthNonce", () => {
+  const execute = vi.fn();
+  beforeEach(() => {
+    execute.mockReset();
+    vi.doMock("@/shared/db", () => ({ db: { execute } }));
+  });
+  afterEach(() => vi.doUnmock("@/shared/db"));
+
+  it("INSERT devolve linha → nonce fresco, não lança", async () => {
+    execute.mockResolvedValueOnce({ rows: [{ nonce: "n1" }] });
+    const { consumeOAuthNonce } = await import("@/server/recall/oauth-state");
+    await expect(
+      consumeOAuthNonce("n1", Date.now() + 60_000),
+    ).resolves.toBeUndefined();
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("INSERT sem linha (conflito no PK) → replay → lança state_replayed", async () => {
+    execute.mockResolvedValueOnce({ rows: [] });
+    const { consumeOAuthNonce } = await import("@/server/recall/oauth-state");
+    await expect(consumeOAuthNonce("n1", Date.now() + 60_000)).rejects.toThrow(
+      "state_replayed",
+    );
+  });
+});
+
+describe("sweepExpiredOAuthNonces", () => {
+  const execute = vi.fn();
+  beforeEach(() => {
+    execute.mockReset();
+    vi.doMock("@/shared/db", () => ({ db: { execute } }));
+  });
+  afterEach(() => vi.doUnmock("@/shared/db"));
+
+  it("devolve rowCount de linhas removidas", async () => {
+    execute.mockResolvedValueOnce({ rowCount: 7, rows: [] });
+    const { sweepExpiredOAuthNonces } = await import(
+      "@/server/recall/oauth-state"
+    );
+    expect(await sweepExpiredOAuthNonces()).toBe(7);
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("rowCount ausente → 0 (nada a varrer)", async () => {
+    execute.mockResolvedValueOnce({ rows: [] });
+    const { sweepExpiredOAuthNonces } = await import(
+      "@/server/recall/oauth-state"
+    );
+    expect(await sweepExpiredOAuthNonces()).toBe(0);
+  });
+});

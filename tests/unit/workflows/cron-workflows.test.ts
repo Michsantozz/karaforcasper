@@ -13,12 +13,16 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 
 const autoScheduleAll = vi.fn();
 const reconcileStuckMeetings = vi.fn();
+const sweepExpiredOAuthNonces = vi.fn();
 
 vi.mock("@/server/recall/auto-schedule", () => ({
   autoScheduleAll: (...a: unknown[]) => autoScheduleAll(...a),
 }));
 vi.mock("@/server/recall/enrich", () => ({
   reconcileStuckMeetings: (...a: unknown[]) => reconcileStuckMeetings(...a),
+}));
+vi.mock("@/server/recall/oauth-state", () => ({
+  sweepExpiredOAuthNonces: (...a: unknown[]) => sweepExpiredOAuthNonces(...a),
 }));
 
 function run(step: { execute: (p: never) => Promise<unknown> }) {
@@ -29,6 +33,7 @@ beforeEach(() => {
   vi.resetModules();
   autoScheduleAll.mockReset();
   reconcileStuckMeetings.mockReset();
+  sweepExpiredOAuthNonces.mockReset();
 });
 
 describe("workflow auto-schedule — step", () => {
@@ -60,5 +65,19 @@ describe("workflow meeting-reconcile — step", () => {
     // reprocessar uma enrichment ainda VIVA disparada pelo webhook.
     expect(reconcileStuckMeetings).toHaveBeenCalledWith(15 * 60_000);
     expect(out).toEqual({ processed: 2, done: 1, stillPending: 1 });
+  });
+});
+
+describe("workflow oauth-nonce-sweep — step", () => {
+  it("delega a sweepExpiredOAuthNonces e reporta as linhas removidas", async () => {
+    sweepExpiredOAuthNonces.mockResolvedValue(4);
+    const { oauthNonceSweep } = await import(
+      "@/mastra/workflows/oauth-nonce-sweep.workflow"
+    );
+
+    const out = await run(oauthNonceSweep);
+
+    expect(sweepExpiredOAuthNonces).toHaveBeenCalledOnce();
+    expect(out).toEqual({ deleted: 4 });
   });
 });

@@ -202,13 +202,14 @@ export function MeetingDetail({ botId }: { botId: string }) {
 
   return (
     <Shell>
-      {/* top bar */}
-      <header className="flex shrink-0 items-center justify-between rounded-[8px] border bg-background px-4 py-2.5">
-        <div className="flex items-center gap-3">
-          <span className="flex size-8 items-center justify-center rounded-[5px] border bg-background">
+      {/* top bar — wraps on narrow viewports (MacBook 13"/notebook) instead of
+          the title fighting the meta+actions row for a fixed width. */}
+      <header className="flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-[8px] border bg-background px-4 py-2.5">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-[5px] border bg-background">
             <FileTextIcon className="size-4 text-(--thread-accent-primary)" />
           </span>
-          <div className="flex flex-col">
+          <div className="flex min-w-0 flex-col">
             <span className="flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
               <span
                 aria-hidden
@@ -226,7 +227,7 @@ export function MeetingDetail({ botId }: { botId: string }) {
             />
           </div>
         </div>
-        <div className="flex items-center gap-4 font-mono text-[11px] text-muted-foreground">
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-x-3 gap-y-2 font-mono text-[11px] text-muted-foreground">
           <Meta icon={CalendarIcon} v={new Date(data.createdAt).toLocaleDateString()} />
           {fmtDurationLabel(data.durationSeconds) && (
             <Meta icon={ClockIcon} v={fmtDurationLabel(data.durationSeconds)!} />
@@ -313,15 +314,15 @@ function MeetingDetailSkeleton() {
     <Shell>
       <div aria-busy aria-label="loading minutes" className="contents">
         {/* top bar */}
-        <header className="flex shrink-0 items-center justify-between rounded-[8px] border bg-background px-4 py-2.5">
-          <div className="flex items-center gap-3">
+        <header className="flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-[8px] border bg-background px-4 py-2.5">
+          <div className="flex min-w-0 flex-1 items-center gap-3">
             <SkeletonBar className="size-8 shrink-0 rounded-[5px]" />
-            <div className="flex flex-col gap-1.5">
+            <div className="flex min-w-0 flex-col gap-1.5">
               <SkeletonBar className="h-2.5 w-36" />
               <SkeletonBar className="h-3.5 w-52" />
             </div>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-x-3 gap-y-2">
             <SkeletonBar className="h-3 w-20" />
             <SkeletonBar className="h-3 w-14" />
             <SkeletonBar className="h-6 w-16 rounded-[5px]" />
@@ -2067,7 +2068,7 @@ type ClipStateClipping = Extract<ClipState, { status: "clipping" }>;
 
 function Meta({ icon: Icon, v }: { icon: LucideIcon; v: string }) {
   return (
-    <span className="flex items-center gap-1.5">
+    <span className="flex items-center gap-1.5 whitespace-nowrap">
       <Icon className="size-3" />
       {v}
     </span>

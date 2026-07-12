@@ -135,11 +135,13 @@ Unit tests are hermetic (external services mocked). Live/E2E flows are opt-in (`
 
 ## 🧩 Architecture
 
-Feature-based, colocated with the App Router, with layer boundaries **enforced by ESLint** (`eslint-plugin-boundaries` — a violating import fails `pnpm lint`). Six layers, one unidirectional import flow: `app → features/mastra → server/shared`, never the reverse.
+Feature-based (FSD-flavored), colocated with the App Router, with layer boundaries **enforced by ESLint** (`eslint-plugin-boundaries` — a violating import fails `pnpm lint`). Next's `app/` files are thin shells that re-export the real logic from `_pages/` (page composition) and `_app/api-routes/` (route handlers). One unidirectional import flow: `app → _pages/_app → features/mastra → server/shared`, never the reverse.
 
 | Layer | Owns | May import from |
 |---|---|---|
-| `app/` | Routing only — thin shells that delegate | `features`, `mastra`, `server`, `shared` |
+| `app/` | Next routing only — thin shells re-exporting `_pages`/`_app` | `_pages`, `_app`, `features`, `mastra`, `server`, `shared` |
+| `_pages/<slice>/` | Page logic behind each `app/**/page.tsx` | `features`, `shared` |
+| `_app/api-routes/` | Route-handler logic behind each `app/api/**/route.ts` | `features`, `mastra`, `server`, `shared`, `inngest` |
 | `features/<domain>/` | Business logic per domain (`ui/` `model/` `api/` + `index.ts` barrel) | `shared`, `auth` (cross-cutting) |
 | `mastra/` | **The agent** — `agents/` `tools/` `workflows/` | `server`, `shared`, `auth`, `inngest` |
 | `server/` | **server-only** — Recall.ai, storage, crypto (never reaches the client bundle) | `server`, `shared` |
@@ -218,4 +220,4 @@ sequenceDiagram
     M-->>U: confirmed ✅
 ```
 
-**Layer rules behind these flows:** unidirectional `app → features/mastra → server/shared` (never the reverse). `shared/` is a leaf. `server/` is server-only — feature UI never imports it; only `app/api/*`, Server Actions, and `mastra/` reach it, and it alone talks to Recall.ai, Postgres, and S3. `mastra/` also fires Inngest crons (backfill · reconcile) that loop back to rescue lost webhooks.
+**Layer rules behind these flows:** unidirectional `app → _pages/_app → features/mastra → server/shared` (never the reverse). `shared/` is a leaf. `server/` is server-only — feature UI never imports it; only `_app/api-routes/*`, Server Actions, and `mastra/` reach it, and it alone talks to Recall.ai, Postgres, and S3. `mastra/` also fires Inngest crons (backfill · reconcile) that loop back to rescue lost webhooks.

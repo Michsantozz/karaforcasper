@@ -6,6 +6,7 @@ import { meetingReconcileWorkflow } from "./workflows/meeting-reconcile.workflow
 import { meetingEnrichWorkflow } from "./workflows/meeting-enrich.workflow";
 import { meetingBackfillWorkflow } from "./workflows/meeting-backfill.workflow";
 import { autoScheduleWorkflow } from "./workflows/auto-schedule.workflow";
+import { oauthNonceSweepWorkflow } from "./workflows/oauth-nonce-sweep.workflow";
 import { getMastraStore } from "./storage";
 import { createObservability } from "./observability";
 
@@ -20,6 +21,7 @@ export const mastra = new Mastra({
     meetingEnrichWorkflow,
     meetingBackfillWorkflow,
     autoScheduleWorkflow,
+    oauthNonceSweepWorkflow,
   },
   // Persists traces, telemetry and workflow state in the app's PG (schema
   // `mastra`). Without this the cron would run stateless.
