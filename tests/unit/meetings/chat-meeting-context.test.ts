@@ -38,6 +38,7 @@ vi.mock("ai", () => ({
   createUIMessageStreamResponse: () => new Response("ok"),
   jsonSchema: (s: unknown) => s,
   tool: (t: unknown) => t,
+  stepCountIs: (n: number) => n,
 }));
 // The agent barrel is dynamically imported inside POST — stub it away.
 vi.mock("@/mastra", () => ({ mastra: {} }));

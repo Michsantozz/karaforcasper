@@ -86,6 +86,54 @@ describe("shouldResumeAfterClientTool", () => {
     expect(shouldResumeAfterClientTool({ messages })).toBe(true);
   });
 
+  it("does NOT resume once the agent already answered in the same step (loop fix)", () => {
+    // The observed loop: the agent's answer text lands in the SAME step as the
+    // resolved client tool (no fresh step-start), so the client tool stays the
+    // only tool part and the stock check keeps firing a resend every render.
+    // A non-empty text part after the resolved client tool means the agent has
+    // responded — do NOT resend again.
+    const messages = [
+      assistantMessage([
+        toolPart("pick_date", "output-available"),
+        text("You picked July 15 at 09:00. Want to book it?"),
+      ]),
+    ];
+    expect(shouldResumeAfterClientTool({ messages })).toBe(false);
+  });
+
+  it("does NOT resume when text keeps stacking after the client tool", () => {
+    // Second/third spurious resend: parts grow with extra text each time.
+    const messages = [
+      assistantMessage([
+        toolPart("pick_date", "output-available"),
+        text("You picked July 15 at 09:00."),
+        text("You picked July 15 at 09:00."),
+      ]),
+    ];
+    expect(shouldResumeAfterClientTool({ messages })).toBe(false);
+  });
+
+  it("still resumes when the step is just the resolved client tool (no answer yet)", () => {
+    // The one genuine resume moment: user acted, agent hasn't responded.
+    const messages = [
+      assistantMessage([
+        stepStart,
+        toolPart("connect_calendar", "output-available"),
+      ]),
+    ];
+    expect(shouldResumeAfterClientTool({ messages })).toBe(true);
+  });
+
+  it("ignores an empty/whitespace text part (still resumes)", () => {
+    const messages = [
+      assistantMessage([
+        toolPart("pick_date", "output-available"),
+        text("   "),
+      ]),
+    ];
+    expect(shouldResumeAfterClientTool({ messages })).toBe(true);
+  });
+
   it("only considers the LAST step's tool parts", () => {
     // A server tool in an earlier step, then a fresh step with a client tool:
     // the earlier server tool must not block the resume.

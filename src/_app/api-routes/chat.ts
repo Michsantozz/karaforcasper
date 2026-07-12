@@ -1,5 +1,5 @@
 import { handleChatStream } from "@mastra/ai-sdk";
-import { createUIMessageStreamResponse, jsonSchema, tool } from "ai";
+import { createUIMessageStreamResponse, jsonSchema, stepCountIs, tool } from "ai";
 import type { JSONSchema7 } from "ai";
 import { NextResponse, after } from "next/server";
 import { getSession } from "@/features/auth/model/session";
@@ -175,6 +175,13 @@ export async function POST(req: Request) {
     params: {
       ...rest,
       messages,
+      // Per-turn step ceiling: bound the SERVER-side tool loop (one model call +
+      // its tool round-trip per step) so a runaway agent can't spin unbounded on
+      // the server. This is defence-in-depth, NOT the fix for the client resend
+      // loop — that lives in shouldResumeAfterClientTool (resume-predicate.ts).
+      // Set on the request; the constructor AgentConfig doesn't accept it in this
+      // Mastra version (it's a stream/generate option via AgentExecutionOptions).
+      stopWhen: stepCountIs(5),
       // Per-request system prompt (meeting pin). Appends to the agent's own
       // instructions; omitted when there's no owned meeting in context.
       ...(meetingContext ? { system: meetingContext } : {}),

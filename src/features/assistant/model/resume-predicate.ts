@@ -42,14 +42,35 @@ export function shouldResumeAfterClientTool({
     (last, part, index) => (part.type === "step-start" ? index : last),
     -1,
   );
-  const toolParts = message.parts.slice(lastStepStart + 1).filter(isToolUIPart);
+  const stepParts = message.parts.slice(lastStepStart + 1);
+  const toolParts = stepParts.filter(isToolUIPart);
   if (toolParts.length === 0) return false;
 
   // Every pending tool call must be complete AND a known client tool. If any is a
   // server tool, this is a server turn — do NOT resend (that's what looped).
-  return toolParts.every(
+  const allCompleteClientTools = toolParts.every(
     (part) =>
       (part.state === "output-available" || part.state === "output-error") &&
       CLIENT_TOOLS.has(getToolName(part)),
   );
+  if (!allCompleteClientTools) return false;
+
+  // The agent RESPONDED already in this same step (a non-empty text part sits in
+  // the step alongside the resolved client tool). Resuming again would re-send a
+  // turn the agent already answered — and because the answer text lands in the
+  // SAME step as the client tool (no fresh step-start), the tool part stays the
+  // only tool in the step, so the resend fires every time and loops (observed:
+  // parts grow ["tool-pick_date"] → [...,"text"] → [...,"text","text"], one extra
+  // text per spurious resend, N POSTs to /api/chat). Only resume while the step
+  // is still JUST the resolved client tool with no answer yet — that's the one
+  // genuine "user acted, agent must continue" moment.
+  const hasAnswerText = stepParts.some(
+    (part) =>
+      part.type === "text" &&
+      typeof (part as { text?: unknown }).text === "string" &&
+      (part as { text: string }).text.trim().length > 0,
+  );
+  if (hasAnswerText) return false;
+
+  return true;
 }
