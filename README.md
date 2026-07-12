@@ -11,6 +11,8 @@
 
 Casper records your Zoom/Meet/Teams calls, turns them into actionable minutes, and — the part most note-takers skip — measures *how your team actually interacted*: who dominated, who went quiet, where the tension was, and how that shifts across meetings. All through chat.
 
+![The Casper meeting notebook — synced player, karaoke transcript, talk-time balance, interruption counts, and tension-flagged moments, side by side with the chat assistant.](.github/assets/meeting-notebook.png)
+
 - 🌐 **Live app:** https://casper.careglyph.com
 - 💻 **Repo:** https://github.com/Michsantozz/karaforcasper
 
