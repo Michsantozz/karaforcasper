@@ -47,8 +47,20 @@ export function LoginScreen() {
   }, []);
 
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col items-center justify-center gap-6 px-4">
+    <main
+      className="mx-auto flex min-h-dvh w-full max-w-md flex-col items-center justify-center gap-6 px-4"
+      style={{
+        ["--thread-max-width" as string]: "28rem",
+      }}
+    >
       <div className="flex flex-col items-center gap-3 text-center">
+        <span className="flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
+          <span
+            aria-hidden
+            className="size-1.5 animate-pulse rounded-[1px] bg-(--thread-accent-primary)"
+          />
+          meeting assistant · recall.ai
+        </span>
         <span className="flex size-12 items-center justify-center rounded-[10px] border bg-background">
           <SparklesIcon className="size-6 text-(--thread-accent-primary)" />
         </span>
@@ -59,7 +71,23 @@ export function LoginScreen() {
         </p>
       </div>
 
-      <div className="flex w-full flex-col gap-4 rounded-[12px] border bg-background p-5">
+      {/* EvilCharts frame: outer wrapper (8px) → mono header bar → inner card (5px) */}
+      <div className="w-full rounded-[8px] bg-(--thread-frame-outer) p-1">
+        <div className="flex items-center justify-between px-2 py-1.5">
+          <span className="flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
+            <KeyRoundIcon className="size-3.5" />
+            sign in
+          </span>
+          <span className="flex items-center gap-1.5 font-mono text-[10px] text-muted-foreground">
+            <span
+              aria-hidden
+              className="size-1.5 animate-pulse rounded-[1px] bg-(--thread-accent-primary)"
+            />
+            meeting-assistant
+          </span>
+        </div>
+
+        <div className="flex w-full flex-col gap-4 rounded-[5px] border bg-background p-5">
         {/* Google */}
         <Button
           variant="outline"
@@ -78,7 +106,7 @@ export function LoginScreen() {
         </div>
 
         {/* Magic link / password switcher */}
-        <div className="flex rounded-[8px] border p-0.5">
+        <div className="flex rounded-[5px] border p-0.5">
           <TabButton
             active={mode === "magic"}
             onClick={() => setMode("magic")}
@@ -94,6 +122,7 @@ export function LoginScreen() {
         </div>
 
         {mode === "magic" ? <MagicLinkForm /> : <PasswordForm />}
+        </div>
       </div>
     </main>
   );
@@ -115,7 +144,7 @@ function TabButton({
       type="button"
       onClick={onClick}
       className={cn(
-        "flex flex-1 items-center justify-center gap-1.5 rounded-[6px] py-1.5 font-mono text-xs transition-colors",
+        "flex flex-1 items-center justify-center gap-1.5 rounded-[3px] py-1.5 font-mono text-xs transition-colors",
         active
           ? "bg-(--thread-accent-primary-soft) text-(--thread-accent-primary)"
           : "text-muted-foreground hover:text-foreground",
@@ -157,7 +186,7 @@ function MagicLinkForm() {
 
   if (sent) {
     return (
-      <p className="rounded-[8px] border bg-(--thread-accent-primary-soft)/30 px-3 py-4 text-center text-sm text-foreground">
+      <p className="rounded-[5px] border bg-(--thread-accent-primary-soft)/30 px-3 py-4 text-center text-sm text-foreground">
         We sent an access link to <strong>{email}</strong>. Open the email and
         click it to sign in.
       </p>
@@ -439,7 +468,7 @@ function Field({
       value={value}
       onChange={(e) => onChange(e.target.value)}
       autoComplete={autoComplete}
-      className="w-full rounded-[8px] border bg-background px-3 py-2 text-sm outline-none focus:border-(--thread-accent-primary)"
+      className="w-full rounded-[5px] border bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-(--thread-accent-primary)"
     />
   );
 }

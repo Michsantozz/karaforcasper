@@ -84,6 +84,13 @@ export function OnboardingDialog() {
     <Dialog open={open} onOpenChange={dismiss}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
+          <span className="mb-1 flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
+            <span
+              aria-hidden
+              className="size-1.5 animate-pulse rounded-[1px] bg-(--thread-accent-primary)"
+            />
+            meeting assistant · recall.ai
+          </span>
           <span className="mb-1 flex size-10 items-center justify-center rounded-[10px] border bg-background text-(--thread-accent-primary)">
             <SparklesIcon className="size-5" />
           </span>
@@ -99,9 +106,9 @@ export function OnboardingDialog() {
             return (
               <li
                 key={f.href}
-                className="flex items-start gap-3 rounded-[8px] border bg-background p-3"
+                className="flex items-start gap-3 rounded-[5px] border bg-background p-3"
               >
-                <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-[6px] bg-(--thread-accent-primary-soft) text-(--thread-accent-primary)">
+                <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-[3px] bg-(--thread-accent-primary-soft) text-(--thread-accent-primary)">
                   <Icon className="size-4" />
                 </span>
                 <div className="flex flex-1 flex-col gap-0.5">
