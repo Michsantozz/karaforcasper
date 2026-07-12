@@ -18,10 +18,13 @@ const failMeetingRecord = vi.fn();
 const requeueMeetingRecord = vi.fn();
 const enqueueMeetingRecord = vi.fn();
 const listStuckMeetingRecords = vi.fn();
+const listPendingSummaryNotifications = vi.fn();
+const markSummaryNotificationDelivered = vi.fn();
 const summarizeMeeting = vi.fn();
 const captureMeetingMedia = vi.fn();
 const findBotByBotId = vi.fn();
 const botOwnerUserId = vi.fn();
+const quarantineMeetingOwner = vi.fn();
 const createNotification = vi.fn();
 const emailMeetingSummaryReady = vi.fn();
 
@@ -33,6 +36,11 @@ vi.mock("@/server/recall/meeting-repository", () => ({
   requeueMeetingRecord: (...a: unknown[]) => requeueMeetingRecord(...a),
   enqueueMeetingRecord: (...a: unknown[]) => enqueueMeetingRecord(...a),
   listStuckMeetingRecords: (...a: unknown[]) => listStuckMeetingRecords(...a),
+  listPendingSummaryNotifications: (...a: unknown[]) =>
+    listPendingSummaryNotifications(...a),
+  markSummaryNotificationDelivered: (...a: unknown[]) =>
+    markSummaryNotificationDelivered(...a),
+  quarantineMeetingOwner: (...a: unknown[]) => quarantineMeetingOwner(...a),
 }));
 vi.mock("@/server/recall/summarize", () => ({
   summarizeMeeting: (...a: unknown[]) => summarizeMeeting(...a),
@@ -43,6 +51,16 @@ vi.mock("@/server/recall/media", () => ({
 vi.mock("@/server/recall/bot-repository", () => ({
   findBotByBotId: (...a: unknown[]) => findBotByBotId(...a),
   botOwnerUserId: (...a: unknown[]) => botOwnerUserId(...a),
+  resolveBotOwner: (row: unknown, supplied: unknown) => {
+    const persisted = botOwnerUserId(row);
+    if (persisted && typeof supplied === "string" && persisted !== supplied) {
+      return { userId: null, conflict: true };
+    }
+    return {
+      userId: persisted ?? (typeof supplied === "string" ? supplied : null),
+      conflict: false,
+    };
+  },
 }));
 vi.mock("@/server/notifications", () => ({
   createNotification: (...a: unknown[]) => createNotification(...a),
@@ -87,6 +105,9 @@ beforeEach(() => {
     requeueMeetingRecord,
     enqueueMeetingRecord,
     listStuckMeetingRecords,
+    listPendingSummaryNotifications,
+    markSummaryNotificationDelivered,
+    quarantineMeetingOwner,
     summarizeMeeting,
     captureMeetingMedia,
     findBotByBotId,
@@ -98,6 +119,10 @@ beforeEach(() => {
   }
   captureMeetingMedia.mockResolvedValue({ transcriptStruct: null, videoUrl: null });
   createNotification.mockResolvedValue(undefined);
+  failMeetingRecord.mockResolvedValue(true);
+  listPendingSummaryNotifications.mockResolvedValue([]);
+  markSummaryNotificationDelivered.mockResolvedValue(undefined);
+  quarantineMeetingOwner.mockResolvedValue(undefined);
   emailMeetingSummaryReady.mockResolvedValue(undefined);
   logSpy.warn.mockReset();
   logSpy.error.mockReset();
@@ -168,6 +193,19 @@ describe("enrichMeeting — máquina de estados", () => {
     );
   });
 
+  it("ignora evento atrasado/duplicado quando o estado já é terminal", async () => {
+    failMeetingRecord.mockResolvedValue(false);
+    const { markMeetingTranscriptFailed } = await importEnrich();
+
+    await markMeetingTranscriptFailed({
+      botId: "bot-done",
+      userId: "owner-1",
+      reason: "transcript.failed: late",
+    });
+
+    expect(createNotification).not.toHaveBeenCalled();
+  });
+
   it("still-processing ABAIXO do limite → requeue (segue retentando)", async () => {
     // #4: abaixo do teto, o comportamento antigo permanece — requeue.
     findMeetingRecord.mockResolvedValue({ status: "pending" });
@@ -232,6 +270,7 @@ describe("enrichMeeting — máquina de estados", () => {
     expect(emailMeetingSummaryReady).toHaveBeenCalledWith(
       expect.objectContaining({ userId: "owner-1", botId: "bot-1" }),
     );
+    expect(markSummaryNotificationDelivered).toHaveBeenCalledWith("bot-1");
   });
 
   it("erro transiente antes do limite → requeue (state processing)", async () => {
@@ -343,6 +382,30 @@ describe("reconcileStuckMeetings — sweep", () => {
     expect(res).toEqual({ processed: 3, done: 1, stillPending: 1 });
   });
 
+  it("retenta a notificação pendente sem reprocessar a ata", async () => {
+    listStuckMeetingRecords.mockResolvedValue([]);
+    listPendingSummaryNotifications.mockResolvedValue(["bot-ready"]);
+    findMeetingRecord.mockResolvedValue({
+      botId: "bot-ready",
+      userId: "owner-1",
+      status: "done",
+      summary: "ready",
+      decisions: [],
+      actionItems: [],
+    });
+
+    const { reconcileStuckMeetings } = await importEnrich();
+    await reconcileStuckMeetings();
+
+    expect(summarizeMeeting).not.toHaveBeenCalled();
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        idempotencyKey: "meeting_summary_ready:bot-ready",
+      }),
+    );
+    expect(markSummaryNotificationDelivered).toHaveBeenCalledWith("bot-ready");
+  });
+
   it("resgata um bot `failed` que voltou à lista de stuck (retry budget)", async () => {
     // The repo now returns failed-with-budget rows; enrich reprocesses them
     // like any other. Here the retry succeeds → done.
@@ -386,6 +449,25 @@ describe("enrichMeeting — backfill de dono em linha órfã (#6)", () => {
     expect(createNotification).toHaveBeenCalledWith(
       expect.objectContaining({ userId: "resolved-owner" }),
     );
+  });
+});
+
+describe("enrichMeeting — conflito de proprietário", () => {
+  it("quarantines the record before any transcript or model work", async () => {
+    findMeetingRecord.mockResolvedValue({ status: "pending" });
+    claimMeetingRecord.mockResolvedValue({ ...CLAIMED, userId: "row-owner" });
+    findBotByBotId.mockResolvedValue({ metadata: { user_id: "mapped-owner" } });
+    botOwnerUserId.mockReturnValue("mapped-owner");
+
+    const { enrichMeeting } = await importEnrich();
+    const result = await enrichMeeting("bot-conflict");
+
+    expect(result).toEqual({ state: "failed", error: "meeting owner mismatch" });
+    expect(quarantineMeetingOwner).toHaveBeenCalledWith(
+      "bot-conflict",
+      "owner mismatch: meeting quarantined",
+    );
+    expect(summarizeMeeting).not.toHaveBeenCalled();
   });
 });
 

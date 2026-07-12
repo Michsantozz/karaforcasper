@@ -1,6 +1,6 @@
 import "server-only";
 import { randomBytes } from "node:crypto";
-import { and, desc, eq, ilike, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, lt, or, sql } from "drizzle-orm";
 import { scopedDb } from "@/shared/db/rls";
 import {
   meetingRecords,
@@ -514,7 +514,13 @@ export async function completeMeetingRecord(
 ): Promise<void> {
   await scopedDb()
     .update(meetingRecords)
-    .set({ ...data, status: "done", error: null, updatedAt: new Date() })
+    .set({
+      ...data,
+      status: "done",
+      error: null,
+      summaryNotificationPending: data.userId != null,
+      updatedAt: new Date(),
+    })
     .where(eq(meetingRecords.botId, botId));
 }
 
@@ -522,11 +528,18 @@ export async function completeMeetingRecord(
 export async function failMeetingRecord(
   botId: string,
   error: string,
-): Promise<void> {
-  await scopedDb()
+): Promise<boolean> {
+  const rows = await scopedDb()
     .update(meetingRecords)
     .set({ status: "failed", error, updatedAt: new Date() })
-    .where(eq(meetingRecords.botId, botId));
+    .where(
+      and(
+        eq(meetingRecords.botId, botId),
+        inArray(meetingRecords.status, ["pending", "processing"]),
+      ),
+    )
+    .returning({ botId: meetingRecords.botId });
+  return rows.length === 1;
 }
 
 /**
@@ -541,7 +554,50 @@ export async function requeueMeetingRecord(
   await scopedDb()
     .update(meetingRecords)
     .set({ status: "pending", error: note, updatedAt: new Date() })
+    .where(
+      and(
+        eq(meetingRecords.botId, botId),
+        inArray(meetingRecords.status, ["processing", "failed"]),
+      ),
+    );
+}
+
+/** Removes disputed tenant ownership and makes the record system-only. */
+export async function quarantineMeetingOwner(
+  botId: string,
+  error: string,
+): Promise<void> {
+  await scopedDb()
+    .update(meetingRecords)
+    .set({ userId: null, status: "failed", error, updatedAt: new Date() })
     .where(eq(meetingRecords.botId, botId));
+}
+
+/** Done meetings whose durable ready-notification outbox flag is still set. */
+export async function listPendingSummaryNotifications(): Promise<string[]> {
+  const rows = await scopedDb()
+    .select({ botId: meetingRecords.botId })
+    .from(meetingRecords)
+    .where(
+      and(
+        eq(meetingRecords.status, "done"),
+        eq(meetingRecords.summaryNotificationPending, true),
+      ),
+    );
+  return rows.map((row) => row.botId);
+}
+
+/** Acknowledges the durable notification outbox entry after successful insert. */
+export async function markSummaryNotificationDelivered(botId: string): Promise<void> {
+  await scopedDb()
+    .update(meetingRecords)
+    .set({ summaryNotificationPending: false, updatedAt: new Date() })
+    .where(
+      and(
+        eq(meetingRecords.botId, botId),
+        eq(meetingRecords.status, "done"),
+      ),
+    );
 }
 
 /**

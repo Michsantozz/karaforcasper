@@ -13,8 +13,7 @@ import {
 import { enrichMeeting } from "@/server/recall/enrich";
 import {
   findBotByBotId,
-  findBotByDedupKey,
-  saveBotMapping,
+  getOrCreateBotMapping,
   deleteBotMapping,
   defaultDedupKey,
 } from "@/server/recall/bot-repository";
@@ -149,31 +148,28 @@ export async function scheduleMeetingBot(input: {
   }
 
   const dedupKey = defaultDedupKey(userId, meetingUrl, joinAt);
-  const existing = await findBotByDedupKey(dedupKey);
-  if (existing) {
-    return {
-      ok: true,
-      botId: existing.botId,
-      scheduled: existing.joinAt != null,
-      reused: true,
-    };
-  }
-
-  let bot: { id: string };
+  let result: Awaited<ReturnType<typeof getOrCreateBotMapping>>;
   try {
-    bot = await recallFetch<{ id: string }>({
-      method: "POST",
-      path: "v1/bot/",
-      body: {
-        meeting_url: meetingUrl,
-        ...(joinAt ? { join_at: joinAt } : {}),
-        recording_config: {
-          transcript: { provider: { recallai_streaming: {} } },
-          participant_events: {},
-          start_recording_on: "participant_join",
-        },
-        metadata: { dedup_key: dedupKey, user_id: userId },
-      },
+    result = await getOrCreateBotMapping({
+      dedupKey,
+      meetingUrl,
+      joinAt: joinAt ? new Date(joinAt) : null,
+      metadata: { user_id: userId },
+      createBot: () =>
+        recallFetch<{ id: string }>({
+          method: "POST",
+          path: "v1/bot/",
+          body: {
+            meeting_url: meetingUrl,
+            ...(joinAt ? { join_at: joinAt } : {}),
+            recording_config: {
+              transcript: { provider: { recallai_streaming: {} } },
+              participant_events: {},
+              start_recording_on: "participant_join",
+            },
+            metadata: { dedup_key: dedupKey, user_id: userId },
+          },
+        }),
     });
   } catch (err) {
     if (err instanceof RecallAdhocPoolError) {
@@ -187,15 +183,12 @@ export async function scheduleMeetingBot(input: {
     return { ok: false, error: message };
   }
 
-  await saveBotMapping({
-    dedupKey,
-    botId: bot.id,
-    meetingUrl,
-    joinAt: joinAt ? new Date(joinAt) : null,
-    metadata: { user_id: userId },
-  });
-
-  return { ok: true, botId: bot.id, scheduled: joinAt != null, reused: false };
+  return {
+    ok: true,
+    botId: result.row.botId,
+    scheduled: result.row.joinAt != null,
+    reused: !result.created,
+  };
 }
 
 /**

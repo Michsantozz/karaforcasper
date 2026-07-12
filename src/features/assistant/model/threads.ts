@@ -4,6 +4,8 @@ import { generateText } from "ai";
 import { toAISdkMessages } from "@mastra/ai-sdk/ui";
 import type { Memory } from "@mastra/memory";
 import { createChatModel } from "@/mastra/model";
+import { db } from "@/shared/db";
+import { sql } from "drizzle-orm";
 
 /**
  * Server-side thread store for the chat sidebar (ThreadList). It's a thin
@@ -118,17 +120,41 @@ export async function createThread(
   title?: string,
 ): Promise<ChatThread> {
   const memory = await getMemory();
-  const thread = await memory.createThread({
-    threadId,
-    resourceId: userId,
-    title,
+  return db.transaction(async (tx) => {
+    // Serialize caller-supplied ids across users and replicas. A preflight check
+    // without this lock still has a TOCTOU race where two first-time creates both
+    // see no row and Mastra's upsert lets the last writer steal resourceId.
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${`thread:${threadId}`}, 0))`,
+    );
+
+    // Mastra's PostgreSQL store implements saveThread as an upsert that replaces
+    // resourceId on an id conflict. Never call createThread for an id owned by a
+    // different resource.
+    const existing = await memory.getThreadById({ threadId, resourceId: userId });
+    if (existing) {
+      if (existing.resourceId !== userId) {
+        throw new Error("thread id conflict");
+      }
+      return {
+        id: existing.id,
+        title: existing.title,
+        archived: isArchived(existing.metadata),
+        updatedAt: existing.updatedAt.toISOString(),
+      };
+    }
+    const thread = await memory.createThread({
+      threadId,
+      resourceId: userId,
+      title,
+    });
+    return {
+      id: thread.id,
+      title: thread.title,
+      archived: isArchived(thread.metadata),
+      updatedAt: thread.updatedAt.toISOString(),
+    };
   });
-  return {
-    id: thread.id,
-    title: thread.title,
-    archived: isArchived(thread.metadata),
-    updatedAt: thread.updatedAt.toISOString(),
-  };
 }
 
 /** Renames a thread. Ownership-checked before the write. */

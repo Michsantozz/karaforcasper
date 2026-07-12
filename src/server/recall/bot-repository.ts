@@ -40,6 +40,32 @@ export function botOwnerUserId(row: RecallBotRow | null): string | null {
   return typeof uid === "string" ? uid : null;
 }
 
+export type BotOwnerResolution =
+  | { userId: string | null; conflict: false }
+  | { userId: null; conflict: true; persistedUserId: string; suppliedUserId: string };
+
+/**
+ * Resolves bot ownership consistently at every ingest path. The persisted app
+ * mapping is authoritative, but a disagreement is quarantined rather than
+ * silently choosing either tenant.
+ */
+export function resolveBotOwner(
+  row: RecallBotRow | null,
+  suppliedUserId: unknown,
+): BotOwnerResolution {
+  const persistedUserId = botOwnerUserId(row);
+  const supplied = typeof suppliedUserId === "string" ? suppliedUserId : null;
+  if (persistedUserId && supplied && persistedUserId !== supplied) {
+    return {
+      userId: null,
+      conflict: true,
+      persistedUserId,
+      suppliedUserId: supplied,
+    };
+  }
+  return { userId: persistedUserId ?? supplied, conflict: false };
+}
+
 /** One scheduled meeting (bot whose join is still in the future). */
 export interface UpcomingBot {
   botId: string;
@@ -105,6 +131,48 @@ export async function saveBotMapping(input: {
       metadata: input.metadata,
     })
     .onConflictDoNothing({ target: recallBots.dedupKey });
+}
+
+/**
+ * Serializes check-create-save for one dedup key across app replicas.
+ *
+ * The advisory transaction lock is intentionally held across `createBot`: the
+ * provider's v1 Create Bot endpoint has no idempotency key, so reserving only in
+ * application memory would still let two replicas create duplicate bots. Calls
+ * for different keys remain concurrent.
+ */
+export async function getOrCreateBotMapping(input: {
+  dedupKey: string;
+  meetingUrl: string;
+  joinAt?: Date | null;
+  metadata?: Record<string, unknown>;
+  createBot: () => Promise<{ id: string }>;
+}): Promise<{ row: RecallBotRow; created: boolean }> {
+  return db.transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${input.dedupKey}, 0))`,
+    );
+
+    const existing = await tx
+      .select()
+      .from(recallBots)
+      .where(eq(recallBots.dedupKey, input.dedupKey))
+      .limit(1);
+    if (existing[0]) return { row: existing[0], created: false };
+
+    const bot = await input.createBot();
+    const inserted = await tx
+      .insert(recallBots)
+      .values({
+        dedupKey: input.dedupKey,
+        botId: bot.id,
+        meetingUrl: input.meetingUrl,
+        joinAt: input.joinAt ?? null,
+        metadata: input.metadata,
+      })
+      .returning();
+    return { row: inserted[0], created: true };
+  });
 }
 
 /** Removes the mapping (after canceling/removing the bot). */

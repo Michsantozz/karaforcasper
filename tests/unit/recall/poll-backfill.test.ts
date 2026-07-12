@@ -25,6 +25,16 @@ vi.mock("@/server/recall/meeting-repository", () => ({
 vi.mock("@/server/recall/bot-repository", () => ({
   findBotByBotId: (...a: unknown[]) => findBotByBotId(...a),
   botOwnerUserId: (...a: unknown[]) => botOwnerUserId(...a),
+  resolveBotOwner: (row: unknown, supplied: unknown) => {
+    const persisted = botOwnerUserId(row);
+    if (persisted && typeof supplied === "string" && persisted !== supplied) {
+      return { userId: null, conflict: true };
+    }
+    return {
+      userId: persisted ?? (typeof supplied === "string" ? supplied : null),
+      conflict: false,
+    };
+  },
 }));
 vi.mock("@/shared/db/rls", () => ({
   withSystemScope: (fn: () => unknown) => fn(),
@@ -124,6 +134,21 @@ describe("backfillMissingMeetings", () => {
       expect.objectContaining({ botId: "orphan-1" }),
       expect.stringContaining("orphan bot"),
     );
+  });
+
+  it("skips a bot when persisted and provider owners conflict", async () => {
+    recallFetch.mockResolvedValue({
+      results: [bot("conflict", "done", { user_id: "provider-owner" })],
+      next: null,
+    });
+    findBotByBotId.mockResolvedValue({ metadata: { user_id: "persisted-owner" } });
+    botOwnerUserId.mockReturnValue("persisted-owner");
+
+    const { backfillMissingMeetings } = await load();
+    await backfillMissingMeetings();
+
+    expect(enqueueMeetingRecord).not.toHaveBeenCalled();
+    expect(logSpy.error).toHaveBeenCalled();
   });
 
   it("follows pagination via `next` cursor", async () => {

@@ -29,6 +29,13 @@ export async function POST(req: Request) {
   if (!body.id) {
     return NextResponse.json({ error: "id required" }, { status: 400 });
   }
-  const thread = await createThread(session.user.id, body.id, body.title);
-  return NextResponse.json({ thread });
+  try {
+    const thread = await createThread(session.user.id, body.id, body.title);
+    return NextResponse.json({ thread });
+  } catch (err) {
+    if (err instanceof Error && err.message === "thread id conflict") {
+      return NextResponse.json({ error: "thread id conflict" }, { status: 409 });
+    }
+    throw err;
+  }
 }

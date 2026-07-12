@@ -87,7 +87,7 @@ describe("generateMeetingHealthInsight", () => {
       object: {
         headline: "One voice dominates",
         summary: "Ana drove most of the conversation.",
-        moments: [{ atSeconds: 10, label: "Ana pushed back on João", tone: "tense" }],
+        moments: [{ sourceIndex: 0, label: "Ana pushed back on João", tone: "tense" }],
       },
     });
     const d = dynamics([
@@ -113,19 +113,18 @@ describe("generateMeetingHealthInsight", () => {
     expect(out).toBeNull();
   });
 
-  it("defaults an unmatched moment kind to interruption without throwing", async () => {
-    // LLM returns a moment at a second that doesn't match any source moment.
+  it("drops an unmatched source id instead of inventing a moment", async () => {
     generateObject.mockResolvedValue({
       object: {
         headline: "h",
         summary: "s",
-        moments: [{ atSeconds: 999, label: "ghost", tone: "neutral" }],
+        moments: [{ sourceIndex: 999, label: "ghost", tone: "neutral" }],
       },
     });
     const d = dynamics([
       { kind: "monologue", atSeconds: 10, durationSeconds: 90, label: "m" },
     ]);
     const out = await generateMeetingHealthInsight(d, transcript);
-    expect(out?.moments[0].kind).toBe("interruption");
+    expect(out?.moments).toEqual([]);
   });
 });

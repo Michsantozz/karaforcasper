@@ -19,6 +19,16 @@ const inngestSend = vi.fn();
 vi.mock("@/server/recall/bot-repository", () => ({
   findBotByBotId: (...a: unknown[]) => findBotByBotId(...a),
   botOwnerUserId: (...a: unknown[]) => botOwnerUserId(...a),
+  resolveBotOwner: (row: unknown, supplied: unknown) => {
+    const persisted = botOwnerUserId(row);
+    if (persisted && typeof supplied === "string" && persisted !== supplied) {
+      return { userId: null, conflict: true };
+    }
+    return {
+      userId: persisted ?? (typeof supplied === "string" ? supplied : null),
+      conflict: false,
+    };
+  },
 }));
 vi.mock("@/server/recall/meeting-repository", () => ({
   enqueueMeetingRecord: (...a: unknown[]) => enqueueMeetingRecord(...a),
@@ -129,23 +139,22 @@ describe("POST /api/webhooks/recall/bot — reação por evento", () => {
     expect(json.dispatched).toBe("meeting-enrich");
   });
 
-  it("prefere metadata.user_id do payload sobre o dono do repo", async () => {
+  it("quarantines conflicting payload and persisted owners", async () => {
     findBotByBotId.mockResolvedValue({ meetingUrl: null });
     botOwnerUserId.mockReturnValue("owner-repo");
     enqueueMeetingRecord.mockResolvedValue(undefined);
     inngestSend.mockResolvedValue({ ids: ["evt-1"] });
 
     const { POST } = await import("@/app/api/webhooks/recall/bot/route");
-    await POST(
+    const res = await POST(
       makeRequest({
         event: "transcript.done",
         data: { bot: { id: "bot-9", metadata: { user_id: "owner-payload" } } },
       }),
     );
 
-    expect(enqueueMeetingRecord).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: "owner-payload" }),
-    );
+    expect(enqueueMeetingRecord).not.toHaveBeenCalled();
+    expect(await res.json()).toMatchObject({ quarantined: "owner_mismatch" });
   });
 
   it("send do evento que rejeita não vira 5xx (fica pending p/ reconcile)", async () => {

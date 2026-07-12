@@ -74,6 +74,11 @@ export async function reconnectCalendar(
   });
 }
 
+/** Deletes a provider calendar, used to compensate a failed local link write. */
+export async function deleteCalendar(calendarId: string): Promise<void> {
+  await recallFetch({ method: "DELETE", path: `v2/calendars/${calendarId}/` });
+}
+
 /** Lists workspace calendars, optionally filtering by email/platform. */
 export async function listCalendars(query?: {
   platformEmail?: string;

@@ -16,6 +16,7 @@ const getSession = vi.fn();
 const recallFetch = vi.fn();
 const findBotByDedupKey = vi.fn();
 const saveBotMapping = vi.fn();
+const getOrCreateBotMapping = vi.fn();
 const isBotOwner = vi.fn();
 const assertBotOwner = vi.fn();
 
@@ -29,6 +30,7 @@ vi.mock("@/server/recall/client", () => ({
 vi.mock("@/server/recall/bot-repository", () => ({
   findBotByDedupKey: (...a: unknown[]) => findBotByDedupKey(...a),
   saveBotMapping: (...a: unknown[]) => saveBotMapping(...a),
+  getOrCreateBotMapping: (...a: unknown[]) => getOrCreateBotMapping(...a),
   deleteBotMapping: vi.fn(),
   // Real signature: (userId, meetingUrl, joinAt?).
   defaultDedupKey: (userId: string, url: string, joinAt?: string) =>
@@ -66,6 +68,22 @@ async function tool(name: string): Promise<ToolExec> {
 beforeEach(() => {
   vi.clearAllMocks();
   getSession.mockResolvedValue({ user: { id: "u1" } });
+  getOrCreateBotMapping.mockImplementation(async (input) => {
+    const existing = await findBotByDedupKey(input.dedupKey);
+    if (existing) return { row: existing, created: false };
+    const bot = await input.createBot();
+    await saveBotMapping({ ...input, botId: bot.id, createBot: undefined });
+    return {
+      row: {
+        botId: bot.id,
+        dedupKey: input.dedupKey,
+        meetingUrl: input.meetingUrl,
+        joinAt: input.joinAt ?? null,
+        metadata: input.metadata,
+      },
+      created: true,
+    };
+  });
 });
 
 describe("scheduleRecallBotTool — #3 dedup namespaced by tenant", () => {

@@ -45,10 +45,20 @@ export async function POST(req: Request) {
   }
 
   const rawBody = await req.text();
+  // Recall signs with the Standard-Webhooks header family (`webhook-*`), not the
+  // legacy `svix-*` names — accept both, else every real delivery 401s with
+  // "Missing required headers" despite a correct secret (see webhook-recall-bot).
   const headers = {
-    "svix-id": req.headers.get("svix-id") ?? "",
-    "svix-timestamp": req.headers.get("svix-timestamp") ?? "",
-    "svix-signature": req.headers.get("svix-signature") ?? "",
+    "svix-id":
+      req.headers.get("svix-id") ?? req.headers.get("webhook-id") ?? "",
+    "svix-timestamp":
+      req.headers.get("svix-timestamp") ??
+      req.headers.get("webhook-timestamp") ??
+      "",
+    "svix-signature":
+      req.headers.get("svix-signature") ??
+      req.headers.get("webhook-signature") ??
+      "",
   };
 
   let payload: RecallWebhook;

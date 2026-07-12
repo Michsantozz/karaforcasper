@@ -1,7 +1,7 @@
 import "server-only";
 import { recallFetch } from "@/server/recall/client";
 import { enqueueMeetingRecord } from "@/server/recall/meeting-repository";
-import { findBotByBotId, botOwnerUserId } from "@/server/recall/bot-repository";
+import { findBotByBotId, resolveBotOwner } from "@/server/recall/bot-repository";
 import { withSystemScope } from "@/shared/db/rls";
 import { createLogger } from "@/shared/lib/logger";
 
@@ -58,11 +58,8 @@ function hasReadyTranscript(bot: RecallListBot): boolean {
 }
 
 /** Resolves the owner for a discovered bot: our mapping first, then metadata. */
-async function resolveOwner(bot: RecallListBot): Promise<string | null> {
-  const fromRepo = botOwnerUserId(await findBotByBotId(bot.id));
-  if (fromRepo) return fromRepo;
-  const meta = bot.metadata?.user_id;
-  return typeof meta === "string" ? meta : null;
+async function resolveOwner(bot: RecallListBot) {
+  return resolveBotOwner(await findBotByBotId(bot.id), bot.metadata?.user_id);
 }
 
 export type BackfillResult = {
@@ -112,7 +109,15 @@ export async function backfillMissingMeetings(
     scanned += page.results.length;
 
     for (const bot of ready) {
-      const userId = await resolveOwner(bot);
+      const owner = await resolveOwner(bot);
+      if (owner.conflict) {
+        log.error(
+          { botId: bot.id },
+          "bot owner mismatch between persisted mapping and provider metadata; backfill skipped",
+        );
+        continue;
+      }
+      const userId = owner.userId;
       if (!userId) {
         // Ownerless bot discovered by the poll — enqueue anyway (data isn't
         // lost, RLS hides it until re-owned), but surface it like the webhook's

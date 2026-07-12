@@ -26,14 +26,19 @@ export async function createNotification(input: {
   message: string;
   /** Optional deep link to open when the notification is clicked. */
   link?: string | null;
+  /** Stable id makes retried delivery idempotent. */
+  idempotencyKey?: string;
 }): Promise<void> {
-  await db.insert(notifications).values({
-    id: randomUUID(),
-    userId: input.userId,
-    type: input.type,
-    message: input.message,
-    link: input.link ?? null,
-  });
+  await db
+    .insert(notifications)
+    .values({
+      id: input.idempotencyKey ?? randomUUID(),
+      userId: input.userId,
+      type: input.type,
+      message: input.message,
+      link: input.link ?? null,
+    })
+    .onConflictDoNothing({ target: notifications.id });
 }
 
 /**

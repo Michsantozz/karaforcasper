@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { Webhook, WebhookVerificationError } from "svix";
-import { findBotByBotId, botOwnerUserId } from "@/server/recall/bot-repository";
+import { findBotByBotId, resolveBotOwner } from "@/server/recall/bot-repository";
 import { enqueueMeetingRecord } from "@/server/recall/meeting-repository";
 import { withSystemScope } from "@/shared/db/rls";
 import { inngest } from "@/inngest/client";
@@ -47,10 +47,23 @@ export async function POST(req: Request) {
   }
 
   const rawBody = await req.text();
+
+  // Recall signs with the Standard-Webhooks header family (`webhook-id`,
+  // `webhook-timestamp`, `webhook-signature`), NOT the legacy `svix-*` names.
+  // The svix verifier only reads whatever keys we hand it, so accept both:
+  // without the `webhook-*` fallback every real delivery failed with "Missing
+  // required headers" → 401, even though the signing secret was correct.
   const headers = {
-    "svix-id": req.headers.get("svix-id") ?? "",
-    "svix-timestamp": req.headers.get("svix-timestamp") ?? "",
-    "svix-signature": req.headers.get("svix-signature") ?? "",
+    "svix-id":
+      req.headers.get("svix-id") ?? req.headers.get("webhook-id") ?? "",
+    "svix-timestamp":
+      req.headers.get("svix-timestamp") ??
+      req.headers.get("webhook-timestamp") ??
+      "",
+    "svix-signature":
+      req.headers.get("svix-signature") ??
+      req.headers.get("webhook-signature") ??
+      "",
   };
 
   let payload: BotWebhook;
@@ -87,7 +100,15 @@ export async function POST(req: Request) {
         ? (data.bot.metadata.user_id as string)
         : null;
     const row = await findBotByBotId(botId);
-    const userId = payloadUser ?? botOwnerUserId(row);
+    const owner = resolveBotOwner(row, payloadUser);
+    if (owner.conflict) {
+      log.error(
+        { botId },
+        "bot owner mismatch between persisted mapping and webhook metadata; event quarantined",
+      );
+      return NextResponse.json({ ok: true, botId, quarantined: "owner_mismatch" });
+    }
+    const userId = owner.userId;
 
     // Orphan guard: with no owner, RLS hides the resulting row from every user
     // and no one can be notified — the meeting would be processed and then

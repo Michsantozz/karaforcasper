@@ -79,6 +79,15 @@ describe("POST /threads", () => {
     expect(res.status).toBe(200);
     expect(createThread).toHaveBeenCalledWith("u1", "t1", "Hi");
   });
+
+  it("409 when the client id already belongs to another user", async () => {
+    createThread.mockRejectedValue(new Error("thread id conflict"));
+    const { POST } = await import("@/_app/api-routes/threads");
+    const res = await POST(req({ id: "foreign-thread" }));
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "thread id conflict" });
+  });
 });
 
 describe("PATCH /threads/:id", () => {

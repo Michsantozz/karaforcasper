@@ -1,0 +1,4 @@
+ALTER TABLE "meeting_records" ADD COLUMN "summary_notification_pending" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "meeting_records" ADD CONSTRAINT "meeting_records_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "user_calendars" ADD CONSTRAINT "user_calendars_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+CREATE UNIQUE INDEX "user_calendars_owner_email_platform_uidx" ON "user_calendars" USING btree ("user_id","platform_email","platform");

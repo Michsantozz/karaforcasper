@@ -17,17 +17,25 @@ const recall = vi.fn();
 const getThreadById = vi.fn();
 const updateThread = vi.fn();
 const listThreadsFn = vi.fn();
+const createThreadFn = vi.fn();
 const getMemory = vi.fn(() => ({
   recall,
   getThreadById,
   updateThread,
   listThreads: listThreadsFn,
+  createThread: createThreadFn,
 }));
 
 vi.mock("ai", () => ({
   generateText: (...a: unknown[]) => generateText(...a),
 }));
 vi.mock("@/mastra/model", () => ({ createChatModel: () => ({}) }));
+vi.mock("@/shared/db", () => ({
+  db: {
+    transaction: (fn: (tx: { execute: () => Promise<void> }) => unknown) =>
+      fn({ execute: async () => undefined }),
+  },
+}));
 // The store resolves Memory via `agent.getMemory()`; mock the agent graph.
 vi.mock("@/mastra", () => ({
   mastra: { getAgentById: () => ({ getMemory: () => getMemory() }) },
@@ -44,7 +52,7 @@ vi.mock("@mastra/ai-sdk/ui", () => ({
 }));
 
 // Imported after the mocks are registered.
-const { generateThreadTitle, listThreads } = await import(
+const { createThread, generateThreadTitle, listThreads } = await import(
   "@/features/assistant/model/threads"
 );
 
@@ -64,6 +72,47 @@ beforeEach(() => {
     metadata: {},
   });
   updateThread.mockResolvedValue(undefined);
+  createThreadFn.mockResolvedValue({
+    id: "new-thread",
+    resourceId: "u1",
+    title: "",
+    metadata: {},
+    createdAt: new Date("2026-07-12T00:00:00Z"),
+    updatedAt: new Date("2026-07-12T00:00:00Z"),
+  });
+});
+
+describe("createThread — ownership-safe idempotency", () => {
+  it("rejects an id already owned by another resource", async () => {
+    getThreadById.mockResolvedValueOnce({
+      id: "shared-id",
+      resourceId: "victim",
+      title: "Private",
+      metadata: {},
+      updatedAt: new Date("2026-07-12T00:00:00Z"),
+    });
+
+    await expect(createThread("attacker", "shared-id")).rejects.toThrow(
+      "thread id conflict",
+    );
+    expect(createThreadFn).not.toHaveBeenCalled();
+  });
+
+  it("returns an existing same-owner thread without upserting it", async () => {
+    getThreadById.mockResolvedValueOnce({
+      id: "owned",
+      resourceId: "u1",
+      title: "Existing",
+      metadata: { archived: false },
+      updatedAt: new Date("2026-07-12T00:00:00Z"),
+    });
+
+    await expect(createThread("u1", "owned")).resolves.toMatchObject({
+      id: "owned",
+      title: "Existing",
+    });
+    expect(createThreadFn).not.toHaveBeenCalled();
+  });
 });
 
 describe("generateThreadTitle", () => {

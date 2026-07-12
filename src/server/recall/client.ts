@@ -52,6 +52,7 @@ type RecallRequest = {
 // user-facing "try again" semantics, not an instant retry.
 const MAX_RETRIES = 2; // total attempts = 3
 const BASE_DELAY_MS = 300;
+const REQUEST_TIMEOUT_MS = 30_000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -84,6 +85,9 @@ export async function recallFetch<T = unknown>(req: RecallRequest): Promise<T> {
           Accept: "application/json",
         },
         body: req.body === undefined ? undefined : JSON.stringify(req.body),
+        // Bounds provider stalls. This is especially important for POST bot
+        // creation, which may run while a per-dedup advisory lock is held.
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
     } catch (err) {
       // Network-level failure (no response). Retry idempotent reads, else rethrow.

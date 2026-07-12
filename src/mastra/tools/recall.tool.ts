@@ -2,8 +2,7 @@ import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { recallFetch, RecallAdhocPoolError } from "@/server/recall/client";
 import {
-  findBotByDedupKey,
-  saveBotMapping,
+  getOrCreateBotMapping,
   deleteBotMapping,
   defaultDedupKey,
 } from "@/server/recall/bot-repository";
@@ -197,41 +196,29 @@ export const scheduleRecallBotTool = createTool({
     const dedupKey =
       input.dedupKey ?? defaultDedupKey(userId, input.meetingUrl, input.joinAt);
 
-    const existing = await findBotByDedupKey(dedupKey);
-    if (existing) {
-      return {
-        ok: true,
-        botId: existing.botId,
-        reused: true,
-        scheduled: existing.joinAt != null,
-        dedupKey,
-      };
-    }
-
-    let bot: RecallBot;
+    let result: Awaited<ReturnType<typeof getOrCreateBotMapping>>;
     try {
-      bot = await recallFetch<RecallBot>({
-        method: "POST",
-        path: "v1/bot/",
-        body: {
-          meeting_url: input.meetingUrl,
-          ...(input.joinAt ? { join_at: input.joinAt } : {}),
-          ...(input.botName ? { bot_name: input.botName } : {}),
-          // Bot records automatically as soon as a participant joins (Recall's
-          // default) — the scheduled meeting flow is hands-off: the user never
-          // needs to press "record" in chat. Video + streaming transcript are
-          // captured for the whole call. Manual control (start/stop/pause) still
-          // works during the call if the user wants it.
-          recording_config: {
-            transcript: { provider: { recallai_streaming: {} } },
-            participant_events: {},
-            start_recording_on: "participant_join",
-          },
-          metadata: {
-            dedup_key: dedupKey,
-            user_id: userId,
-          },
-        },
+      result = await getOrCreateBotMapping({
+        dedupKey,
+        meetingUrl: input.meetingUrl,
+        joinAt: input.joinAt ? new Date(input.joinAt) : null,
+        metadata: { user_id: userId },
+        createBot: () =>
+          recallFetch<RecallBot>({
+            method: "POST",
+            path: "v1/bot/",
+            body: {
+              meeting_url: input.meetingUrl,
+              ...(input.joinAt ? { join_at: input.joinAt } : {}),
+              ...(input.botName ? { bot_name: input.botName } : {}),
+              recording_config: {
+                transcript: { provider: { recallai_streaming: {} } },
+                participant_events: {},
+                start_recording_on: "participant_join",
+              },
+              metadata: { dedup_key: dedupKey, user_id: userId },
+            },
+          }),
       });
     } catch (err) {
       if (err instanceof RecallAdhocPoolError) {
@@ -242,19 +229,11 @@ export const scheduleRecallBotTool = createTool({
       throw err;
     }
 
-    await saveBotMapping({
-      dedupKey,
-      botId: bot.id,
-      meetingUrl: input.meetingUrl,
-      joinAt: input.joinAt ? new Date(input.joinAt) : null,
-      metadata: { user_id: userId },
-    });
-
     return {
       ok: true,
-      botId: bot.id,
-      reused: false,
-      scheduled: input.joinAt != null,
+      botId: result.row.botId,
+      reused: !result.created,
+      scheduled: result.row.joinAt != null,
       dedupKey,
     };
   },
@@ -1011,4 +990,3 @@ export const getMeetingDynamicsTool = createTool({
     };
   },
 });
-

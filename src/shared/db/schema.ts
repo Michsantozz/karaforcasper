@@ -4,9 +4,11 @@ import {
   pgEnum,
   text,
   integer,
+  boolean,
   timestamp,
   jsonb,
   index,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { user } from "./auth-schema";
 
@@ -64,7 +66,9 @@ export const userCalendars = pgTable(
     /** Calendar ID returned by Recall (api/v2/calendars). PK. */
     recallCalendarId: text("recall_calendar_id").primaryKey(),
     /** User ID in our system (calendar owner). */
-    userId: text("user_id").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
     /** Platform: "google_calendar" | "microsoft_outlook". */
     platform: text("platform").notNull(),
     /** Authorized account email (dedup key together with platform). */
@@ -83,6 +87,11 @@ export const userCalendars = pgTable(
   (table) => [
     index("user_calendars_user_id_idx").on(table.userId),
     index("user_calendars_email_platform_idx").on(
+      table.platformEmail,
+      table.platform,
+    ),
+    uniqueIndex("user_calendars_owner_email_platform_uidx").on(
+      table.userId,
       table.platformEmail,
       table.platform,
     ),
@@ -153,7 +162,7 @@ export const meetingRecords = pgTable(
     /** Recall botId — 1 minutes record per bot. PK. */
     botId: text("bot_id").primaryKey(),
     /** Meeting owner (for scoping/notification). */
-    userId: text("user_id"),
+    userId: text("user_id").references(() => user.id, { onDelete: "set null" }),
     /** Meeting URL (denormalized for display). */
     meetingUrl: text("meeting_url"),
     /**
@@ -288,6 +297,10 @@ export const meetingRecords = pgTable(
     shareToken: text("share_token").unique(),
     /** When the current share link was created (for display). Null if not shared. */
     shareCreatedAt: timestamp("share_created_at", { withTimezone: true }),
+    /** Durable outbox flag: true until the ready notification is delivered. */
+    summaryNotificationPending: boolean("summary_notification_pending")
+      .notNull()
+      .default(false),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

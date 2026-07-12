@@ -1,4 +1,5 @@
 import "server-only";
+import { RecallError } from "@/server/recall/client";
 import { summarizeMeeting } from "@/server/recall/summarize";
 import {
   claimMeetingRecord,
@@ -6,14 +7,21 @@ import {
   enqueueMeetingRecord,
   failMeetingRecord,
   findMeetingRecord,
+  listPendingSummaryNotifications,
   listStuckMeetingRecords,
+  markSummaryNotificationDelivered,
+  quarantineMeetingOwner,
   requeueMeetingRecord,
 } from "@/server/recall/meeting-repository";
 import { captureMeetingMedia } from "@/server/recall/media";
 import { fetchScreenshareSpans } from "@/server/recall/screenshare";
 import { computeMeetingDynamics } from "@/server/recall/dynamics";
 import { generateMeetingHealthInsight } from "@/server/recall/dynamics-insight";
-import { botOwnerUserId, findBotByBotId } from "@/server/recall/bot-repository";
+import {
+  botOwnerUserId,
+  findBotByBotId,
+  resolveBotOwner,
+} from "@/server/recall/bot-repository";
 import { createNotification } from "@/server/notifications";
 import { emailMeetingSummaryReady } from "@/server/email";
 import { withSystemScope } from "@/shared/db/rls";
@@ -63,8 +71,16 @@ export async function enrichMeeting(botId: string): Promise<EnrichResult> {
   // BACKFILLS orphan rows: without it, an ownerless meeting is enriched (LLM
   // paid) and then hidden from every user by RLS forever. Falls back to
   // claimed.userId (may still be null → row stays orphan, warned by notifyOwner).
-  const ownerUserId =
-    claimed.userId ?? botOwnerUserId(await findBotByBotId(botId));
+  const botRow = await findBotByBotId(botId);
+  const owner = resolveBotOwner(botRow, claimed.userId);
+  if (owner.conflict) {
+    await withSystemScope(() =>
+      quarantineMeetingOwner(botId, "owner mismatch: meeting quarantined"),
+    );
+    log.error({ botId }, "meeting owner mismatch; enrichment quarantined");
+    return { state: "failed", error: "meeting owner mismatch" };
+  }
+  const ownerUserId = owner.userId;
 
   try {
     const summary = await summarizeMeeting(botId);
@@ -148,6 +164,19 @@ export async function enrichMeeting(botId: string): Promise<EnrichResult> {
     return { state: "done", notified };
   } catch (err) {
     const message = err instanceof Error ? err.message : "unknown error";
+    // Terminal, don't retry: a 404 from Recall means the bot/recording no longer
+    // exists (deleted, expired, or never a real bot — e.g. a test/probe id). The
+    // reconcile cron would otherwise burn all MAX_ATTEMPTS re-fetching a resource
+    // that will never come back. Standard practice (see any HTTP client's retry
+    // policy): classify by status — 404 is not-found = permanent, unlike 5xx/429.
+    // Fail-fast to a terminal `failed` row the owner can see and delete.
+    if (err instanceof RecallError && err.status === 404) {
+      await withSystemScope(() =>
+        failMeetingRecord(botId, `recording not found in Recall (404)`),
+      );
+      await notifyMeetingFailed(botId, ownerUserId, "recording no longer available");
+      return { state: "failed", error: "recording not found (404)" };
+    }
     // Ran out of attempts → permanent failed; otherwise leaves it as
     // transient failed (the reconcile cron will retry via claim).
     if (claimed.attempts >= MAX_ATTEMPTS) {
@@ -182,8 +211,10 @@ export async function markMeetingTranscriptFailed(input: {
   await withSystemScope(() =>
     enqueueMeetingRecord({ botId, userId, meetingUrl }),
   );
-  await withSystemScope(() => failMeetingRecord(botId, reason));
-  await notifyMeetingFailed(botId, userId, reason);
+  const transitioned = await withSystemScope(() => failMeetingRecord(botId, reason));
+  // A late or duplicate provider event must not regress `done` or notify twice
+  // for an already-terminal `failed` record.
+  if (transitioned) await notifyMeetingFailed(botId, userId, reason);
 }
 
 /**
@@ -242,18 +273,37 @@ async function notifyOwner(
   if (tasks) parts.push(`${tasks} task${tasks > 1 ? "s" : ""}`);
   const detail = parts.length ? ` — ${parts.join(", ")}` : "";
 
-  // notifications has RLS: create under system scope (the notification belongs to userId).
-  await withSystemScope(() =>
-    createNotification({
-      userId,
-      type: "meeting_summary_ready",
-      message: `Meeting minutes ready${detail}. Open to review.`,
-      // Deep link straight to this meeting's notebook.
-      link: `/meetings/${botId}`,
-    }),
-  );
-  await emailMeetingSummaryReady({ userId, detail, botId });
-  return true;
+  // Notification is BEST-EFFORT and runs AFTER completeMeetingRecord has already
+  // written status=done. It must never throw back into enrichMeeting's catch —
+  // that would requeue the row and undo a successful enrichment (pending forever).
+  // Concretely: a bot owned by a user_id no longer in `user` (e.g. an orphaned
+  // recording after a DB reset) makes the notifications FK insert fail; without
+  // this guard that FK error reverts an otherwise-complete meeting to pending on
+  // every reconcile tick. Swallow + log; the minutes are already saved.
+  try {
+    // notifications has RLS: create under system scope (the notification belongs to userId).
+    await withSystemScope(() =>
+      createNotification({
+        userId,
+        type: "meeting_summary_ready",
+        message: `Meeting minutes ready${detail}. Open to review.`,
+        // Deep link straight to this meeting's notebook.
+        link: `/meetings/${botId}`,
+        idempotencyKey: `meeting_summary_ready:${botId}`,
+      }),
+    );
+    // The deterministic notification id makes a retry safe if the process dies
+    // between the insert and this acknowledgement.
+    await withSystemScope(() => markSummaryNotificationDelivered(botId));
+    await emailMeetingSummaryReady({ userId, detail, botId });
+    return true;
+  } catch (err) {
+    log.warn(
+      { botId, userId, err: err instanceof Error ? err.message : String(err) },
+      "meeting enriched but owner notification failed (minutes are saved)",
+    );
+    return false;
+  }
 }
 
 /**
@@ -280,6 +330,24 @@ export async function reconcileStuckMeetings(
     const res = await enrichMeeting(botId);
     if (res.state === "done") done++;
     else if (res.state === "processing") stillPending++;
+  }
+
+  // Retry ready notifications independently of enrichment. A transient
+  // notification failure no longer requires recomputing minutes or changing the
+  // meeting state away from done.
+  const notificationBotIds = await withSystemScope(() =>
+    listPendingSummaryNotifications(),
+  );
+  for (const botId of notificationBotIds) {
+    const record = await withSystemScope(() => findMeetingRecord(botId));
+    if (!record?.userId || record.status !== "done") continue;
+    await notifyOwner(botId, record.userId, {
+      botId,
+      state: "ready",
+      summary: record.summary,
+      decisions: record.decisions ?? [],
+      actionItems: record.actionItems ?? [],
+    });
   }
   return { processed: botIds.length, done, stillPending };
 }

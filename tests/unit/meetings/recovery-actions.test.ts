@@ -24,6 +24,7 @@ const enrichMeeting = vi.fn();
 const findBotByBotId = vi.fn();
 const findBotByDedupKey = vi.fn();
 const saveBotMapping = vi.fn();
+const getOrCreateBotMapping = vi.fn();
 const deleteBotMapping = vi.fn();
 const defaultDedupKey = vi.fn();
 const deleteObjectByUrl = vi.fn();
@@ -57,6 +58,7 @@ vi.mock("@/server/recall/bot-repository", () => ({
   findBotByBotId: (...a: unknown[]) => findBotByBotId(...a),
   findBotByDedupKey: (...a: unknown[]) => findBotByDedupKey(...a),
   saveBotMapping: (...a: unknown[]) => saveBotMapping(...a),
+  getOrCreateBotMapping: (...a: unknown[]) => getOrCreateBotMapping(...a),
   deleteBotMapping: (...a: unknown[]) => deleteBotMapping(...a),
   defaultDedupKey: (...a: unknown[]) => defaultDedupKey(...a),
 }));
@@ -104,6 +106,22 @@ beforeEach(() => {
   findMeetingRecord.mockResolvedValue({ botId: "bot-1" });
   findBotByDedupKey.mockResolvedValue(null);
   saveBotMapping.mockResolvedValue(undefined);
+  getOrCreateBotMapping.mockImplementation(async (input) => {
+    const existing = await findBotByDedupKey(input.dedupKey);
+    if (existing) return { row: existing, created: false };
+    const bot = await input.createBot();
+    await saveBotMapping({ ...input, botId: bot.id, createBot: undefined });
+    return {
+      row: {
+        botId: bot.id,
+        dedupKey: input.dedupKey,
+        meetingUrl: input.meetingUrl,
+        joinAt: input.joinAt ?? null,
+        metadata: input.metadata,
+      },
+      created: true,
+    };
+  });
   defaultDedupKey.mockReturnValue("dk-1");
   deleteObjectByUrl.mockResolvedValue(true);
 });
