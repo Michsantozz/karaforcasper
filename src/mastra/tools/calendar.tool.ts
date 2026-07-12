@@ -156,9 +156,10 @@ export const listCalendarEventsTool = createTool({
 export const scheduleBotForEventTool = createTool({
   id: "schedule_bot_for_event",
   description:
-    "Schedules a Recall.ai bot to automatically join a user's calendar event. " +
+    "Schedules a Recall.ai bot to automatically join a user's connected-calendar event (by eventId). " +
     "The link and time come from the event itself. Calling it again on the same event updates the bot. " +
-    "The bot joins without recording; the user can ask it to start recording later.",
+    "The bot joins without recording; the user can ask it to start recording later. " +
+    "Prefer this over schedule_recall_bot whenever the meeting is a calendar event; use schedule_recall_bot only for a raw meeting link or a custom ad-hoc time.",
   inputSchema: z.object({
     eventId: z.string().describe("Calendar event ID (from list_calendar_events)"),
     botName: z
@@ -204,8 +205,9 @@ export const scheduleBotForEventTool = createTool({
 export const removeBotFromEventTool = createTool({
   id: "remove_bot_from_event",
   description:
-    "Removes the scheduled bot from a user's calendar event (unschedules it). " +
-    "Use it when the user no longer wants to record that meeting.",
+    "Removes the scheduled bot from a user's connected-calendar event (unschedules it), by eventId. " +
+    "Use it when the user no longer wants to record that meeting. " +
+    "For an ad-hoc bot you scheduled by meeting URL (you have a botId, not an eventId), use cancel_recall_bot instead.",
   inputSchema: z.object({
     eventId: z.string().describe("Calendar event ID"),
   }),

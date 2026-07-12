@@ -155,9 +155,10 @@ function renderTranscript(segments: TranscriptSegment[]): {
 export const scheduleRecallBotTool = createTool({
   id: "schedule_recall_bot",
   description:
-    "Schedules or starts a Recall.ai bot to join a meeting (Zoom/Meet/Teams/etc.). " +
+    "Schedules or starts a Recall.ai bot to join a meeting by its raw meeting URL (Zoom/Meet/Teams/etc.). " +
     "Pass join_at (ISO 8601, >10min in the future) to schedule with a guaranteed join, or omit it to join now (ad-hoc). " +
-    "Deduplicates automatically: doesn't create a duplicate bot for the same meeting.",
+    "Deduplicates automatically: doesn't create a duplicate bot for the same meeting. " +
+    "Use this when you only have a meeting link or a custom time; if the meeting is already a connected-calendar event, prefer schedule_bot_for_event instead.",
   inputSchema: z.object({
     meetingUrl: z.url().describe("Meeting URL"),
     joinAt: z.iso
@@ -332,7 +333,8 @@ export const getRecallTranscriptTool = createTool({
 export const getRecallRecordingTool = createTool({
   id: "get_recall_recording",
   description:
-    "Lists a Recall.ai bot's recorded media (video, audio, transcript) and the state of each, with a download link when ready.",
+    "Lists a Recall.ai bot's recorded media (video, audio, transcript) and the state of each, with a download link when ready. " +
+    "Returns only metadata and download links — NOT the transcript text itself. To read the actual conversation text, use get_recall_transcript.",
   inputSchema: z.object({
     botId: z.string().describe("Bot UUID"),
   }),
@@ -545,7 +547,8 @@ export const listMyMeetingsTool = createTool({
   id: "list_my_meetings",
   description:
     "Lists the current user's PAST recorded meetings (with generated minutes), most recent first. " +
-    "Use to see which meetings exist, find a meeting by date, or get a botId to drill into. " +
+    "Use to see which meetings exist or to get a botId to drill into. There is no date or query filter " +
+    "(only a limit) — scan the returned list yourself; to find meetings by keyword/topic use search_my_meetings. " +
     "Does NOT need a botId — it returns them.",
   inputSchema: z.object({
     limit: z
@@ -809,8 +812,9 @@ export const listScheduledRecallBotsTool = createTool({
 export const cancelRecallBotTool = createTool({
   id: "cancel_recall_bot",
   description:
-    "Cancels a scheduled bot or removes a bot that's already in a Recall.ai call. " +
-    "Use it to back out of a meeting or to remove the bot from an ongoing call.",
+    "Cancels a scheduled bot or removes a bot that's already in a Recall.ai call, by botId. " +
+    "Use it to back out of a meeting or to remove the bot from an ongoing call. " +
+    "If the bot was scheduled from a connected-calendar event (you have an eventId, not a botId), use remove_bot_from_event instead.",
   inputSchema: z.object({
     botId: z.string().describe("Bot UUID"),
     dedupKey: z
@@ -867,6 +871,7 @@ export const startRecallRecordingTool = createTool({
   id: "start_recall_recording",
   description:
     "Starts recording for a Recall.ai bot that's already in the meeting. " +
+    "Bots already record automatically on join, so you rarely need this — use it only for MANUAL control (restarting after a stop/pause). " +
     "By default it also captures the transcript (Recall.ai Transcription). Restarts if it was already recording.",
   inputSchema: z.object({
     botId: z.string().describe("Bot UUID (must be in the call)"),
