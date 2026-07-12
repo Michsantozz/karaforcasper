@@ -84,6 +84,9 @@ jobs:
           # o build só valida o bundle, não roda Server Actions reais.
           NEXT_SERVER_ACTIONS_ENCRYPTION_KEY: ci-placeholder-not-a-real-secret
           GIT_HASH: ${{ github.sha }}
+      # Impede que barrels/client boundaries voltem a acoplar UIs pesadas entre
+      # rotas. Lê a métrica oficial emitida pelo build anterior por rota.
+      - run: pnpm bundle:check
 
   # Gates AppSec (audit fix #9): auditoria de dependências, secret scanning e
   # SAST. Roda em paralelo ao verify — não bloqueia o feedback de qualidade, mas

@@ -264,7 +264,7 @@ export function useMeetingsList(filters: MeetingsQuery = {}) {
   return { ...query, flat };
 }
 
-/** Public (share-token) meeting view — the read-only subset served at /share/[token]. */
+/** Public meeting data serialized by the /share/[token] Server Component. */
 export interface PublicMeetingResponse {
   title: string;
   summary: string | null;
@@ -279,24 +279,6 @@ export interface PublicMeetingResponse {
   videoUrl: string | null;
   durationSeconds: number | null;
   createdAt: string;
-}
-
-/**
- * Public meeting by share token. No auth — hits /api/public/meetings/:token.
- * 404 (unknown/revoked token) is terminal; no polling (the meeting is done).
- */
-export function usePublicMeeting(token: string) {
-  return useQuery({
-    queryKey: ["public-meeting", token] as const,
-    queryFn: () =>
-      getJson<PublicMeetingResponse>(`/api/public/meetings/${token}`),
-    enabled: Boolean(token),
-    retry: (count, err) => {
-      const status = err instanceof HttpError ? err.status : 0;
-      if (status === 404) return false;
-      return count < 2;
-    },
-  });
 }
 
 /**

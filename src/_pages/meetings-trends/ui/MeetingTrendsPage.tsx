@@ -1,4 +1,4 @@
-import { TeamTrends } from "@/features/meetings";
+import { TeamTrends } from "@/features/meetings/ui/TeamTrends";
 import { AppShell } from "@/features/auth/ui/AppShell";
 
 // Longitudinal team-health dashboard: how the team's dynamics evolve across

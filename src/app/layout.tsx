@@ -30,7 +30,7 @@ export default function RootLayout({
       suppressHydrationWarning
       className={cn("font-sans", geist.variable, jetbrainsMono.variable)}
     >
-      <body suppressHydrationWarning>
+      <body>
         <ThemeProvider
           attribute="class"
           defaultTheme="dark"

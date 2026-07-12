@@ -33,14 +33,16 @@ test.describe("public share — hermético", () => {
     expect(res.status()).toBe(404);
   });
 
-  test("/share/[token] serve uma casca sem exigir sessão", async ({ page }) => {
-    // A rota pública renderiza (não redireciona pra login) mesmo deslogado —
-    // a autorização é o token, resolvido server-side.
+  test("/share/[token] devolve 404 real para token desconhecido", async ({ page }) => {
+    // A autorização é o token e agora a própria página o resolve no RSC, antes
+    // de emitir o documento, preservando a semântica HTTP correta.
     const res = await page.goto("/share/__nonexistent_token__", {
       waitUntil: "domcontentloaded",
     });
-    // A page existe e responde (não é um 500/redirect de auth).
-    expect(res?.status()).toBeLessThan(500);
+    expect(res?.status()).toBe(404);
+    await expect(
+      page.getByRole("heading", { name: "Page not found" }),
+    ).toBeVisible();
   });
 });
 

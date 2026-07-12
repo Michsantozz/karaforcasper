@@ -11,6 +11,7 @@
     "dev": "next dev -p 3001",
     "dev:inngest": "npx inngest-cli@latest dev -u http://localhost:3001/api/inngest",
     "build": "next build",
+    "bundle:check": "node scripts/check-bundle-budget.mjs",
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",

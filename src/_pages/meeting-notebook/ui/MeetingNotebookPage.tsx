@@ -1,4 +1,4 @@
-import { MeetingNotebook } from "@/features/meetings";
+import { MeetingNotebook } from "@/features/meetings/ui/MeetingNotebook";
 import { AppShell } from "@/features/auth/ui/AppShell";
 
 // Meeting notebook: terminal-aesthetic minutes (player + karaoke transcript +

@@ -1,4 +1,4 @@
-import { MeetingsList } from "@/features/meetings";
+import { MeetingsList } from "@/features/meetings/ui/MeetingsList";
 import { AppShell } from "@/features/auth/ui/AppShell";
 
 // Meetings index: dense list of recorded meetings. Clicking a transcribed one
