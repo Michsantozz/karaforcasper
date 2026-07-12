@@ -135,6 +135,33 @@ function refine(env: NodeJS.ProcessEnv, toggles: Toggles, ctx: z.RefinementCtx) 
         "in production when RESEND_API_KEY is set (else emails ship from the resend.dev sandbox)",
       );
     }
+
+    // Audit fix #4: password signup without email verification lets anyone claim
+    // an address they don't own. In production, verification is REQUIRED by
+    // default (see auth.ts); it can only be disabled with the explicit
+    // REQUIRE_EMAIL_VERIFICATION=false escape hatch. Enforce the two safe states:
+    const verificationDisabled = env.REQUIRE_EMAIL_VERIFICATION === "false";
+    if (verificationDisabled) {
+      // Escape hatch chosen → password signup must be turned off, otherwise the
+      // unverified-signup hole is wide open again.
+      if (env.PASSWORD_SIGNUP_ENABLED !== "false") {
+        ctx.addIssue({
+          code: "custom",
+          path: ["REQUIRE_EMAIL_VERIFICATION"],
+          message:
+            "REQUIRE_EMAIL_VERIFICATION=false in production requires PASSWORD_SIGNUP_ENABLED=false — otherwise users can register unverified email addresses. Either keep verification on (unset this) or disable password signup.",
+        });
+      }
+    } else if (env.PASSWORD_SIGNUP_ENABLED !== "false" && !env.RESEND_API_KEY) {
+      // Verification is on (default) with password signup on → we MUST be able to
+      // send the verification email, or sign-in locks out every new user.
+      ctx.addIssue({
+        code: "custom",
+        path: ["RESEND_API_KEY"],
+        message:
+          "email verification is required in production with password signup, so a real email provider is required (set RESEND_API_KEY + EMAIL_FROM). To opt out, set PASSWORD_SIGNUP_ENABLED=false and REQUIRE_EMAIL_VERIFICATION=false.",
+      });
+    }
   }
 
   // Google OAuth: all-or-nothing. If any var is set, require the full set.

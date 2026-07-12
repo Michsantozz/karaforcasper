@@ -96,16 +96,38 @@ export async function assertRlsHardening(): Promise<void> {
       owns_meeting_records: boolean | null;
     }>;
     const r = rows[0];
-    if (r && (r.can_bypass || r.owns_meeting_records)) {
+    if (!r) return;
+
+    // A role que pode BYPASS (superuser/BYPASSRLS) ignora até FORCE ROW LEVEL
+    // SECURITY → isolamento multi-tenant NÃO existe. Em produção isto é uma
+    // falha crítica, não um aviso: falha o boot (fail-closed) para nunca servir
+    // tráfego com tenants misturados. Ver drizzle/0020_rls_app_user_grants.sql.
+    if (r.can_bypass) {
+      const msg =
+        `[rls] app is connected as "${r.role}", which can BYPASS RLS ` +
+        `(superuser/BYPASSRLS). Tenant isolation is DISABLED — connect as the ` +
+        `non-owner "app_user" role (DATABASE_URL=postgres://app_user:...). ` +
+        `See drizzle/0008_rls_multitenant.sql + 0020_rls_app_user_grants.sql.`;
+      if (process.env.NODE_ENV === "production") throw new Error(msg);
+      console.warn(msg);
+      return;
+    }
+
+    // Owner sem bypass: FORCE ainda isola as linhas, mas é uma fraqueza de
+    // defesa-em-profundidade (uma migração que remova FORCE reabriria o furo).
+    // Avisa em qualquer ambiente; não bloqueia.
+    if (r.owns_meeting_records) {
       console.warn(
-        `[rls] app is connected as "${r.role}", which ${
-          r.can_bypass ? "can BYPASS RLS" : "OWNS the tenant tables"
-        }. FORCE ROW LEVEL SECURITY still isolates rows, but for ` +
+        `[rls] app is connected as "${r.role}", which OWNS the tenant tables. ` +
+          `FORCE ROW LEVEL SECURITY still isolates rows, but for ` +
           `defense-in-depth connect as the non-owner "app_user" role ` +
-          `(see drizzle/0008_rls_multitenant.sql + docs/rls.md).`,
+          `(see drizzle/0020_rls_app_user_grants.sql).`,
       );
     }
-  } catch {
-    // Diagnostic only — never block boot on the guard.
+  } catch (err) {
+    // Um throw de produção (bypass detectado) deve propagar e derrubar o boot.
+    // Só engolimos falhas DIAGNÓSTICAS (query/DB indisponível no check).
+    if (err instanceof Error && err.message.startsWith("[rls]")) throw err;
+    // Diagnostic only — never block boot on a failed check.
   }
 }

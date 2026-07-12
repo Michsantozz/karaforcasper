@@ -13,6 +13,7 @@ const verifyOAuthState = vi.fn();
 const findCalendarByEmail = vi.fn();
 const createCalendar = vi.fn();
 const reconnectCalendar = vi.fn();
+const deleteCalendar = vi.fn();
 const saveCalendarMapping = vi.fn();
 
 vi.mock("@/server/recall/google-oauth", () => ({
@@ -24,6 +25,7 @@ vi.mock("@/server/recall/google-oauth", () => ({
 vi.mock("@/server/recall/calendars", () => ({
   createCalendar: (...a: unknown[]) => createCalendar(...a),
   reconnectCalendar: (...a: unknown[]) => reconnectCalendar(...a),
+  deleteCalendar: (...a: unknown[]) => deleteCalendar(...a),
 }));
 vi.mock("@/server/recall/calendar-repository", () => ({
   findCalendarByEmail: (...a: unknown[]) => findCalendarByEmail(...a),
@@ -32,10 +34,26 @@ vi.mock("@/server/recall/calendar-repository", () => ({
 vi.mock("@/server/recall/oauth-state", () => ({
   verifyOAuthState: (...a: unknown[]) => verifyOAuthState(...a),
 }));
-// RLS scope is a passthrough here — the isolation itself is exercised by the
-// repository/RLS tests; this route test only cares about the callback logic.
+// The callback binds the flow to the current session (audit fix #7): the
+// logged-in user must match the state's userId. Default: session = "u1".
+const getSession = vi.fn();
+vi.mock("@/features/auth/model/session", () => ({
+  getSession: () => getSession(),
+}));
+// RLS scope records an event trace so tests can assert that provider network
+// calls run BETWEEN scopes, never while a withUserScope transaction is open
+// (the pinned-connection regression). Each withUserScope call is stamped
+// enter/exit around its callback.
+const trace: string[] = [];
 vi.mock("@/shared/db/rls", () => ({
-  withUserScope: (_userId: string, fn: () => unknown) => fn(),
+  withUserScope: async (_userId: string, fn: () => unknown) => {
+    trace.push("scope:enter");
+    try {
+      return await fn();
+    } finally {
+      trace.push("scope:exit");
+    }
+  },
 }));
 
 const call = (qs: string) =>
@@ -45,12 +63,21 @@ const call = (qs: string) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  trace.length = 0;
   verifyOAuthState.mockReturnValue("u1");
+  getSession.mockResolvedValue({ user: { id: "u1" } });
   exchangeCode.mockResolvedValue({ refreshToken: "rt", accessToken: "at" });
   fetchUserEmail.mockResolvedValue("user@x.com");
-  createCalendar.mockResolvedValue({ id: "cal-1", status: "connected", platform_email: "user@x.com" });
-  reconnectCalendar.mockResolvedValue({ id: "cal-1", status: "connected", platform_email: "user@x.com" });
+  createCalendar.mockImplementation(async () => {
+    trace.push("createCalendar");
+    return { id: "cal-1", status: "connected", platform_email: "user@x.com" };
+  });
+  reconnectCalendar.mockImplementation(async () => {
+    trace.push("reconnectCalendar");
+    return { id: "cal-1", status: "connected", platform_email: "user@x.com" };
+  });
   findCalendarByEmail.mockResolvedValue(null);
+  deleteCalendar.mockResolvedValue(undefined);
 });
 
 describe("calendar OAuth callback — validation", () => {
@@ -80,11 +107,28 @@ describe("calendar OAuth callback — validation", () => {
 describe("calendar OAuth callback — linking uses the VERIFIED userId", () => {
   it("persists the mapping under the userId from the signed state, not the query", async () => {
     verifyOAuthState.mockReturnValue("real-user");
+    getSession.mockResolvedValue({ user: { id: "real-user" } });
     const res = await call("?code=abc&state=signed&user_id=attacker");
     expect(res.status).toBe(307); // redirect
     expect(saveCalendarMapping).toHaveBeenCalledWith(
       expect.objectContaining({ userId: "real-user" }),
     );
+  });
+
+  it("403 when the session user does NOT match the state userId (replay in another session)", async () => {
+    verifyOAuthState.mockReturnValue("victim");
+    getSession.mockResolvedValue({ user: { id: "attacker" } });
+    const res = await call("?code=abc&state=signed-for-victim");
+    expect(res.status).toBe(403);
+    expect(exchangeCode).not.toHaveBeenCalled();
+    expect(saveCalendarMapping).not.toHaveBeenCalled();
+  });
+
+  it("403 when there is no session at all", async () => {
+    getSession.mockResolvedValue(null);
+    const res = await call("?code=abc&state=signed");
+    expect(res.status).toBe(403);
+    expect(exchangeCode).not.toHaveBeenCalled();
   });
 
   it("creates a new calendar when none exists for (platform,email)", async () => {
@@ -112,6 +156,7 @@ describe("calendar OAuth callback — linking uses the VERIFIED userId", () => {
     // caller's refresh token and reassign the row. The callback must create a
     // fresh calendar for the caller instead.
     verifyOAuthState.mockReturnValue("attacker");
+    getSession.mockResolvedValue({ user: { id: "attacker" } });
     findCalendarByEmail.mockResolvedValue({
       recallCalendarId: "victim-cal",
       userId: "victim",
@@ -131,5 +176,57 @@ describe("calendar OAuth callback — linking uses the VERIFIED userId", () => {
     const res = await call("?code=abc&state=signed");
     expect(res.status).toBe(502);
     expect(saveCalendarMapping).not.toHaveBeenCalled();
+  });
+
+  it("deletes a newly-created remote calendar when the local mapping fails", async () => {
+    saveCalendarMapping.mockRejectedValue(new Error("unique conflict"));
+
+    const res = await call("?code=abc&state=signed");
+
+    expect(res.status).toBe(502);
+    expect(deleteCalendar).toHaveBeenCalledWith("cal-1");
+  });
+
+  it("runs the provider create OUTSIDE any RLS transaction (no pinned connection)", async () => {
+    // The slow OAuth/provider network call must not sit inside an open
+    // withUserScope transaction — otherwise it pins a Postgres connection from
+    // the pool for the whole request. The route reads under one scope, closes
+    // it, does the network call, then persists under a second short scope.
+    await call("?code=abc&state=signed");
+
+    expect(trace).toEqual([
+      "scope:enter", // lookup scope (findCalendarByEmail)
+      "scope:exit",
+      "createCalendar", // network — after the first scope closed
+      "scope:enter", // persist scope (saveCalendarMapping)
+      "scope:exit",
+    ]);
+  });
+
+  it("does NOT delete the provider calendar when reconnecting an owned one fails to persist", async () => {
+    // Reconnect targets a calendar we already own; compensating by DELETE would
+    // destroy the user's live calendar. Only a freshly-created remote is safe to
+    // roll back.
+    findCalendarByEmail.mockResolvedValue({
+      recallCalendarId: "cal-1",
+      userId: "u1",
+    });
+    saveCalendarMapping.mockRejectedValue(new Error("write failed"));
+
+    const res = await call("?code=abc&state=signed");
+
+    expect(res.status).toBe(502);
+    expect(reconnectCalendar).toHaveBeenCalled();
+    expect(deleteCalendar).not.toHaveBeenCalled();
+  });
+
+  it("leaves no orphan on the happy path (create succeeds, persist succeeds)", async () => {
+    saveCalendarMapping.mockResolvedValue(undefined);
+
+    const res = await call("?code=abc&state=signed");
+
+    expect(res.status).toBe(307);
+    expect(createCalendar).toHaveBeenCalledOnce();
+    expect(deleteCalendar).not.toHaveBeenCalled();
   });
 });

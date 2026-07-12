@@ -25,12 +25,21 @@ import { encryptToken } from "@/server/crypto/token-cipher";
  * generation to create the rateLimit table.
  */
 
-// Email verification is only REQUIRED when an email provider is configured
-// (REQUIRE_EMAIL_VERIFICATION=true). Without SMTP/provider, requiring it would
-// lock sign-in — so the default is off, but the wiring is ready: just flip
-// the flag and plug in a real provider instead of the console.log.
+// Email verification for the password flow.
+//
+// SECURITY (audit fix #4): without verification, anyone can sign up with an
+// address they don't control, pick an arbitrary display name, and get a live
+// session — enabling identity impersonation and abuse of outbound email
+// (meeting summaries to external recipients). So in PRODUCTION verification is
+// REQUIRED by default; it can only be turned off with an explicit escape hatch
+// (REQUIRE_EMAIL_VERIFICATION=false), which env-schema then forces to be paired
+// with a disabled password signup. Outside production it defaults off so local
+// dev (console.log email transport) isn't blocked. env-schema additionally
+// requires a real email provider (RESEND_API_KEY) whenever verification is on.
 const requireEmailVerification =
-  process.env.REQUIRE_EMAIL_VERIFICATION === "true";
+  process.env.NODE_ENV === "production"
+    ? process.env.REQUIRE_EMAIL_VERIFICATION !== "false"
+    : process.env.REQUIRE_EMAIL_VERIFICATION === "true";
 
 // Trusted origins (better-auth CSRF/origin check). The production domain comes
 // from env (BETTER_AUTH_URL / NEXT_PUBLIC_APP_URL — validated at boot); the
@@ -107,6 +116,10 @@ export const auth = betterAuth({
   },
   emailAndPassword: {
     enabled: true,
+    // Opt-out for deployments that want passwordless-only (see env-schema: the
+    // only sanctioned way to disable email verification in prod). Sign-IN with
+    // existing credentials still works; only new password registrations close.
+    disableSignUp: process.env.PASSWORD_SIGNUP_ENABLED === "false",
     requireEmailVerification,
     // Password reset via Resend (forget → email → /reset-password flow).
     sendResetPassword: async ({ user, url }) => {

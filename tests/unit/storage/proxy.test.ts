@@ -3,21 +3,21 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 /**
  * proxyMediaStream — same-origin media proxy transport. Contract:
  *  - forwards the client's `Range` header upstream (byte-range streaming);
- *  - remaps the persisted public URL to the server-reachable internal one
- *    (via toServerReachableUrl) before fetching;
+ *  - resolves the persisted URL to a server-reachable, authenticated (presigned)
+ *    URL (via presignServerReachableUrl) before fetching;
  *  - mirrors the upstream status (206 vs 200) and the whitelisted response
  *    headers, and never lets a shared cache hold the media;
  *  - returns 502 when the upstream fails (source error, not client's fault).
  *
- * toServerReachableUrl is mocked to a deterministic remap; `fetch` is stubbed.
+ * presignServerReachableUrl is mocked to a deterministic remap; `fetch` is stubbed.
  */
 
-const toServerReachableUrl = vi.fn((url: string) =>
+const presignServerReachableUrl = vi.fn(async (url: string) =>
   url.replace("http://localhost:9200", "http://minio:9000"),
 );
 
 vi.mock("@/server/storage/s3", () => ({
-  toServerReachableUrl: (url: string) => toServerReachableUrl(url),
+  presignServerReachableUrl: (url: string) => presignServerReachableUrl(url),
 }));
 
 async function load() {
@@ -53,7 +53,7 @@ describe("proxyMediaStream", () => {
     const res = await proxyMediaStream(PUBLIC_URL, reqWith());
 
     // Fetched the INTERNAL (server-reachable) URL, not the public one.
-    expect(toServerReachableUrl).toHaveBeenCalledWith(PUBLIC_URL);
+    expect(presignServerReachableUrl).toHaveBeenCalledWith(PUBLIC_URL);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][0]).toBe(INTERNAL_URL);
 

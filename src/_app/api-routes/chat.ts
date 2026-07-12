@@ -5,9 +5,15 @@ import { NextResponse, after } from "next/server";
 import { getSession } from "@/features/auth/model/session";
 import { isBotOwner } from "@/server/recall/ownership";
 import { checkRateLimit, rateLimitedResponse } from "@/shared/lib/rate-limit";
+import { assertBodyWithinLimit } from "@/shared/lib/http";
 import { createLogger } from "@/shared/lib/logger";
 
 const log = createLogger("chat");
+
+// Pre-parse ceiling on the chat body. Generous for a real turn (messages +
+// client tool JSON schemas + threadId) but hostile to a payload crafted to
+// exhaust memory before req.json() even returns. See audit fix #5.
+const MAX_CHAT_BODY_BYTES = 2 * 1024 * 1024; // 2 MB
 
 /** A v6 UIMessage as it arrives from the transport (only what we read/build). */
 type UIMessageLike = {
@@ -84,6 +90,11 @@ export async function POST(req: Request) {
     max: 20,
   });
   if (!rl.ok) return rateLimitedResponse(rl.retryAfter);
+
+  // Reject an oversized body by declared Content-Length BEFORE parsing it into
+  // memory (audit fix #5).
+  const tooLarge = assertBodyWithinLimit(req, MAX_CHAT_BODY_BYTES);
+  if (tooLarge) return tooLarge;
 
   const params = await req.json();
   // The transport injects `tools` (JSON Schema) and — for multi-thread chat —

@@ -66,6 +66,31 @@ services:
         condition: service_healthy
     restart: "no"
 
+  # Job one-shot: dá LOGIN + senha à role NÃO-owner `app_user` (a 0020 só a cria
+  # NOLOGIN e concede os GRANTs; a credencial de runtime vem daqui, do .env, para
+  # não versionar senha). Roda DEPOIS do migrate (a role e os grants já existem)
+  # e ANTES do app subir. Idempotente: reexecutar só re-seta a senha.
+  app-db-init:
+    image: postgres:17-alpine
+    logging: *default-logging
+    environment:
+      # Conecta como owner/superuser só para o ALTER ROLE (o app NUNCA usa isto).
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?set APP_DB_PASSWORD in .env (senha da role app_user)}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        psql -h db -U casper -d casperagent -v ON_ERROR_STOP=1 \
+          -c "ALTER ROLE app_user WITH LOGIN PASSWORD '$$APP_DB_PASSWORD';"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
   # MinIO: object storage S3-compatível (uploads de imagem/attachments do chat).
   # console em :9001, API S3 em :9000. Bucket criado pelo job `minio-init`.
   minio:
@@ -89,9 +114,17 @@ services:
     # Host ports offset to 92xx: 9000/9001 are commonly taken by another local
     # MinIO. Container stays on 9000/9001 internally (compose network + init use
     # those); only the host mapping is shifted.
+    #
+    # Least privilege (fix #8): bind to 127.0.0.1 so the S3 API and the admin
+    # CONSOLE are reachable only from the host loopback, never the LAN/public
+    # interface. The app talks to MinIO over the internal compose network
+    # (http://minio:9000), not these host ports. In prod, drop the console
+    # mapping (9201) entirely — set MINIO_CONSOLE_BIND to an unused value or
+    # remove the line. The S3 host port (9200) is needed for presigned GETs the
+    # browser/provider fetch via S3_PUBLIC_URL.
     ports:
-      - "9200:9000"
-      - "9201:9001"
+      - "${MINIO_API_BIND:-127.0.0.1:9200}:9000"
+      - "${MINIO_CONSOLE_BIND:-127.0.0.1:9201}:9001"
     volumes:
       - miniodata:/data
     healthcheck:
@@ -100,8 +133,16 @@ services:
       timeout: 5s
       retries: 10
 
-  # Job one-shot: cria o bucket e o deixa com leitura pública (imagens servidas
-  # por URL direta pro modelo de visão). Encerra após configurar.
+  # Job one-shot: cria o bucket PRIVADO (sem leitura anônima) e uma SERVICE
+  # ACCOUNT escopada só a esse bucket, que é a credencial S3 do app. Gravações
+  # são servidas por proxy autenticado (/api/meeting-video); anexos para o modelo
+  # de visão usam presigned GET de vida curta (/api/upload). Uma URL vazada não
+  # dá acesso permanente fora da sessão/RLS. Ver audit fix #3 + #8.
+  #
+  # Least privilege (fix #8): o app NÃO usa mais as credenciais root do MinIO —
+  # um comprometimento do app não dá controle administrativo do storage, só
+  # leitura/escrita no bucket de uploads. As creds da service account vêm do
+  # .env (S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY) e são atribuídas aqui.
   minio-init:
     image: minio/mc:RELEASE.2025-04-08T15-39-49Z
     logging: *default-logging
@@ -112,12 +153,41 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
       S3_BUCKET: ${S3_BUCKET:-casper-uploads}
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set local http://minio:9000 $$MINIO_ROOT_USER $$MINIO_ROOT_PASSWORD &&
-      mc mb --ignore-existing local/$$S3_BUCKET &&
-      mc anonymous set download local/$$S3_BUCKET
-      "
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?set S3_ACCESS_KEY_ID in .env (service account do app)}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY in .env (service account do app)}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
+        mc mb --ignore-existing local/"$$S3_BUCKET"
+        mc anonymous set none local/"$$S3_BUCKET"
+        # Policy escopada: só ações de objeto/listagem NESTE bucket.
+        cat > /tmp/app-policy.json <<EOF
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+              "Resource": ["arn:aws:s3:::$$S3_BUCKET/*"]
+            },
+            {
+              "Effect": "Allow",
+              "Action": ["s3:ListBucket", "s3:GetBucketLocation"],
+              "Resource": ["arn:aws:s3:::$$S3_BUCKET"]
+            }
+          ]
+        }
+        EOF
+        mc admin policy create local casper-app-rw /tmp/app-policy.json || true
+        # Service account (idempotente): remove e recria com as creds do .env.
+        mc admin user svcacct rm local "$$S3_ACCESS_KEY_ID" || true
+        mc admin user svcacct add local "$$MINIO_ROOT_USER" \
+          --access-key "$$S3_ACCESS_KEY_ID" \
+          --secret-key "$$S3_SECRET_ACCESS_KEY" \
+          --policy /tmp/app-policy.json
     restart: "no"
 
   # Servidor Inngest: registra o endpoint /api/inngest do app e executa o cron
@@ -174,12 +244,13 @@ services:
       - ALL
     env_file: .env
     environment:
-      # NOTE (RLS hardening): meeting_records + user_calendars use FORCE ROW LEVEL
-      # SECURITY, so isolation holds even when the app connects as the table
-      # owner. For defense-in-depth the app SHOULD connect as the non-owner
-      # `app_user` role (see drizzle/0008 + docs/rls.md); until that role is
-      # provisioned with LOGIN in prod, `casper` is used and a boot guard warns.
-      DATABASE_URL: postgres://casper:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/casperagent
+      # RLS hardening: o app conecta como a role NÃO-owner `app_user` (sem
+      # BYPASSRLS, não-superuser) — só assim as policies FORCE ROW LEVEL SECURITY
+      # de fato isolam por app.user_id. O superuser `casper` fica restrito ao job
+      # de migrations (DDL) e ao app-db-init (ALTER ROLE). A role app_user recebe
+      # LOGIN + senha no job app-db-init (senha via APP_DB_PASSWORD no .env).
+      # Ver drizzle/0008 + 0020_rls_app_user_grants.sql.
+      DATABASE_URL: postgres://app_user:${APP_DB_PASSWORD:?set APP_DB_PASSWORD in .env}@db:5432/casperagent
       # LLM guardrails (prompt-injection block + PII redact) on the chat agent.
       # Off by default (LLM cost/latency); turn on for untrusted-input prod.
       ENABLE_LLM_GUARDRAILS: ${ENABLE_LLM_GUARDRAILS:-false}
@@ -191,12 +262,14 @@ services:
       INNGEST_EVENT_KEY: ${INNGEST_EVENT_KEY:?set INNGEST_EVENT_KEY in .env}
       INNGEST_SIGNING_KEY: ${INNGEST_SIGNING_KEY:?set INNGEST_SIGNING_KEY in .env}
       # Storage S3 (MinIO). Endpoint interno via rede do compose; a URL pública
-      # (S3_PUBLIC_URL) é o que vai no image part servido ao browser/modelo.
+      # (S3_PUBLIC_URL) é o que vai no presigned GET servido ao browser/modelo.
+      # Least privilege (fix #8): o app usa a SERVICE ACCOUNT criada no minio-init
+      # (escopada só ao bucket), NÃO as credenciais root do MinIO.
       S3_ENDPOINT: http://minio:9000
       S3_REGION: ${S3_REGION:-us-east-1}
       S3_BUCKET: ${S3_BUCKET:-casper-uploads}
-      S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env}
-      S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?set S3_ACCESS_KEY_ID in .env}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY in .env}
       S3_PUBLIC_URL: ${S3_PUBLIC_URL:-http://localhost:9200/casper-uploads}
       S3_FORCE_PATH_STYLE: "true"
       # better-auth valida o header Origin em mutations (sign-out, sign-in) contra
@@ -225,6 +298,8 @@ services:
       db:
         condition: service_healthy
       migrate:
+        condition: service_completed_successfully
+      app-db-init:
         condition: service_completed_successfully
       minio-init:
         condition: service_completed_successfully

@@ -1,5 +1,5 @@
 import "server-only";
-import { toServerReachableUrl } from "@/server/storage/s3";
+import { presignServerReachableUrl } from "@/server/storage/s3";
 
 /**
  * Same-origin streaming proxy for meeting media (video/audio).
@@ -46,12 +46,14 @@ export async function proxyMediaStream(
   req: Request,
 ): Promise<Response> {
   const range = req.headers.get("range");
-  // A persisted public URL (e.g. localhost:9200) isn't reachable from inside the
-  // container; swap it for the internal endpoint. Recall signed URLs pass through.
-  const upstreamUrl = toServerReachableUrl(sourceUrl);
+  // The bucket is private, so an anonymous GET 403s. Resolve the source to a
+  // server-reachable, presigned (authenticated) URL: for objects in our bucket
+  // this signs against the internal endpoint; Recall's own signed URLs pass
+  // through untouched. Signature auth travels in the query string, so no cookies
+  // or app auth headers leak to the object store.
+  const upstreamUrl = await presignServerReachableUrl(sourceUrl);
   const upstream = await fetch(upstreamUrl, {
-    // Only the Range header matters upstream; a fresh request avoids leaking
-    // the app's cookies/auth headers to the object store.
+    // Only the Range header matters upstream.
     headers: range ? { range } : {},
     // Let the browser's own cache-control apply; don't cache credentialed media
     // at the fetch layer.

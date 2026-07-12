@@ -1,11 +1,16 @@
 import "server-only";
-import { Buffer } from "node:buffer";
 import { recallFetch } from "@/server/recall/client";
 import { pickRecording } from "@/server/recall/recordings";
-import { uploadObject } from "@/server/storage/s3";
+import { uploadObjectStream } from "@/server/storage/s3";
 import { createLogger } from "@/shared/lib/logger";
 
 const log = createLogger("media");
+
+// Hard ceiling for a captured recording. A long meeting is large but bounded;
+// anything past this is almost certainly wrong (or hostile) and would risk the
+// worker. Enforced two ways: reject an oversized declared Content-Length up
+// front, and abort mid-stream if the actual bytes exceed it. See audit fix #6.
+const MAX_VIDEO_BYTES = 2 * 1024 * 1024 * 1024; // 2 GB
 
 /**
  * Durable capture of a meeting's media, so the notebook survives Recall's
@@ -123,14 +128,28 @@ async function captureVideo(
   if (artifact?.status?.code !== "done" || !url) return null;
   try {
     const res = await fetch(url);
-    if (!res.ok) return null;
-    const bytes = Buffer.from(await res.arrayBuffer());
-    const uploaded = await uploadObject({
+    if (!res.ok || !res.body) return null;
+
+    // Reject up front if Recall declares a size beyond our ceiling — avoids even
+    // starting a doomed multi-GB transfer.
+    const declared = Number(res.headers.get("content-length") ?? "");
+    if (Number.isFinite(declared) && declared > MAX_VIDEO_BYTES) {
+      log.error(
+        { botId, declared, max: MAX_VIDEO_BYTES },
+        "video capture skipped: recording exceeds max size",
+      );
+      return null;
+    }
+
+    // Stream Recall → object storage without buffering the whole video in RAM;
+    // the upload aborts if the actual byte count exceeds MAX_VIDEO_BYTES.
+    const uploaded = await uploadObjectStream({
       // Namespace by owner; anonymous bots (no userId) go under "_shared".
       userId: userId ?? "_shared",
       filename: `meeting-${botId}.mp4`,
       contentType: "video/mp4",
-      body: bytes,
+      body: res.body,
+      maxBytes: MAX_VIDEO_BYTES,
     });
     return uploaded.url;
   } catch (err) {

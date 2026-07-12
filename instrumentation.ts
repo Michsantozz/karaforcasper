@@ -33,10 +33,13 @@ export async function register() {
   );
   assertTokenEncryptionKey();
 
-  // Defense-in-depth RLS check — warns (never blocks) if the DB connection can
-  // bypass row-level security (owner/BYPASSRLS role). Best-effort, non-fatal.
+  // RLS boot guard. In production, a DB connection that can BYPASS RLS
+  // (superuser/BYPASSRLS) disables tenant isolation → assertRlsHardening THROWS
+  // and crashes the boot (fail-closed). Owner-without-bypass and diagnostic
+  // failures only warn (the guard swallows those internally). Do NOT wrap in a
+  // catch that eats the throw — the crash is the point.
   const { assertRlsHardening } = await import("@/shared/db/rls");
-  await assertRlsHardening().catch(() => {});
+  await assertRlsHardening();
 }
 
 // Next calls this on any uncaught error from Server Components, route handlers,

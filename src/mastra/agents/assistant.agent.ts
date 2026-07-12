@@ -10,7 +10,6 @@ import {
 } from "@mastra/core/processors";
 import { createModel, createEmbedder } from "@/mastra/model";
 import { getMastraStore, getMastraVector } from "@/mastra/storage";
-import { mcp } from "@/mastra/mcp";
 import { minutesAgent } from "@/mastra/agents/minutes.agent";
 import { searchAgent } from "@/mastra/agents/search.agent";
 import {
@@ -28,9 +27,6 @@ import {
   createCalendarEventTool,
   getFreeSlotsTool,
 } from "@/mastra/tools/calendar.tool";
-import { createLogger } from "@/shared/lib/logger";
-
-const log = createLogger("mcp");
 
 /**
  * CasperAgent's meeting assistant — brings together meetings (Recall.ai) and
@@ -246,25 +242,15 @@ General rules:
         },
       },
     }),
-  // DynamicArgument: combines local tools + MCP tools (Recall.ai read-only).
-  tools: async () => {
-    const { toolsets, errors } = await mcp.listToolsetsWithErrors();
-    for (const [server, err] of Object.entries(errors)) {
-      log.error({ server, err }, "MCP server unavailable");
-    }
-    const mcpTools = Object.values(toolsets).reduce(
-      (acc, serverTools) => Object.assign(acc, serverTools),
-      {},
-    );
-    // localTools win name collisions with the MCP. The Recall MCP exposes its
-    // own `list_calendar_events` (raw snake_case payload, NO event title, plus a
-    // per-event get_calendar_event) — if it spread last it would shadow our
-    // curated `listCalendarEventsTool`, which is user-scoped and already returns
-    // each event's `title` from the list. That shadowing is exactly what made
-    // the agent fire one get_calendar_event per event just to learn titles. MCP
-    // tools only FILL GAPS (read-only helpers we don't wrap); ours take priority.
-    return { ...mcpTools, ...localTools };
-  },
+  // SECURITY: only the curated localTools are exposed — NOT the raw Recall MCP
+  // toolset. The MCP authenticates with the workspace-wide RECALL_API_KEY, so
+  // its read tools (get_bot, list_bots, list_recordings, get_recording_resource,
+  // get_calendar_event, …) return resources for EVERY tenant with no per-user
+  // filter. Each localTool, by contrast, resolves the caller's session and
+  // asserts ownership (isBotOwner / user-scoped calendar) before any Recall
+  // fetch. Re-adding the MCP means wrapping every tool in that ownership check
+  // first — see src/mastra/mcp.ts and the audit fix #2.
+  tools: () => localTools,
   // Sub-agents: Mastra auto-generates a delegation tool per entry (using each
   // agent's `description`). The supervisor's model decides when to hand off. Both
   // inherit this agent's memory during delegation (they have none of their own).

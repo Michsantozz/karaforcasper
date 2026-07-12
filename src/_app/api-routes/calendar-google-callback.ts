@@ -7,6 +7,7 @@ import {
 } from "@/server/recall/google-oauth";
 import {
   createCalendar,
+  deleteCalendar,
   reconnectCalendar,
 } from "@/server/recall/calendars";
 import {
@@ -14,6 +15,8 @@ import {
   saveCalendarMapping,
 } from "@/server/recall/calendar-repository";
 import { verifyOAuthState } from "@/server/recall/oauth-state";
+import { getSession } from "@/features/auth/model/session";
+import { appPublicUrl } from "@/shared/lib/config";
 import { withUserScope } from "@/shared/db/rls";
 
 const PLATFORM = "google_calendar" as const;
@@ -54,11 +57,24 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: reason }, { status: 403 });
   }
 
-  // Absolute webhook_url derived from the request (or APP_URL if set).
-  // Recall BLOCKS (403 request_blocked) localhost/private URLs. In dev,
-  // we omit webhook_url (connect still works; updates only via public tunnel).
-  // To receive webhooks, point APP_URL to a public https URL (e.g. ngrok).
-  const appUrl = process.env.APP_URL ?? url.origin;
+  // Bind the callback to the CURRENT session: the state proves who STARTED the
+  // flow, but the browser hitting /callback must be logged in as that same user.
+  // Without this, a signed state captured for user B, replayed in user A's
+  // browser, would link B's calendar into A's view. (audit fix #7)
+  const session = await getSession();
+  if (!session?.user?.id || session.user.id !== userId) {
+    return NextResponse.json({ error: "session_mismatch" }, { status: 403 });
+  }
+
+  // Absolute URLs from the VALIDATED public app URL — NEVER the request origin.
+  // SECURITY (audit fix #7): url.origin is derived from the Host header, which
+  // an upstream that doesn't validate Host lets an attacker control. That value
+  // fed both the redirect below and the webhook_url sent to Recall — a poisoned
+  // Host could redirect the user or point Recall's webhooks at an attacker host.
+  // appPublicUrl() reads only the allowlisted env URL (env-schema requires one
+  // in production). Recall BLOCKS (403 request_blocked) localhost/private URLs,
+  // so in dev (localhost) we omit webhook_url; connect still works.
+  const appUrl = appPublicUrl();
   const isLocal = /localhost|127\.0\.0\.1|0\.0\.0\.0/.test(appUrl);
   const webhookUrl = isLocal ? undefined : `${appUrl}/api/webhooks/recall`;
 
@@ -87,25 +103,35 @@ export async function GET(req: Request) {
     // with this caller's refresh token and reassign the row on save — a silent
     // cross-tenant calendar hijack. So we only reconnect a row we actually own;
     // a foreign match is treated as a brand-new calendar for this user.
-    await withUserScope(userId, async () => {
-      const existing = await findCalendarByEmail(PLATFORM, email);
-      const ownedExisting =
-        existing && existing.userId === userId ? existing : null;
+    // Keep provider network calls outside the RLS transaction so a slow OAuth
+    // request never pins a Postgres connection from the pool.
+    const existing = await withUserScope(userId, () =>
+      findCalendarByEmail(PLATFORM, email),
+    );
+    const ownedExisting = existing?.userId === userId ? existing : null;
+    const createdNew = !ownedExisting;
+    const cal = ownedExisting
+      ? await reconnectCalendar(ownedExisting.recallCalendarId, oauth)
+      : await createCalendar({ platform: PLATFORM, webhookUrl, ...oauth });
 
-      const cal = ownedExisting
-        ? await reconnectCalendar(ownedExisting.recallCalendarId, oauth)
-        : await createCalendar({ platform: PLATFORM, webhookUrl, ...oauth });
-
-      // 3. Persists the mapping (INSERT/UPDATE by recallCalendarId PK). Under the
-      // user scope so the WITH CHECK policy accepts it (row belongs to userId).
-      await saveCalendarMapping({
-        recallCalendarId: cal.id,
-        userId,
-        platform: PLATFORM,
-        platformEmail: cal.platform_email ?? email,
-        status: cal.status,
-      });
-    });
+    try {
+      // Persist in a short, separate transaction. The composite unique
+      // constraint closes concurrent duplicate links for the same owner/email.
+      await withUserScope(userId, () =>
+        saveCalendarMapping({
+          recallCalendarId: cal.id,
+          userId,
+          platform: PLATFORM,
+          platformEmail: cal.platform_email ?? email,
+          status: cal.status,
+        }),
+      );
+    } catch (err) {
+      // If the remote create succeeded but the local source-of-truth write did
+      // not, compensate instead of leaving an unmanaged provider calendar.
+      if (createdNew) await deleteCalendar(cal.id).catch(() => undefined);
+      throw err;
+    }
 
     // Redirects back to the meetings agent UI, signaling the connection.
     return NextResponse.redirect(`${appUrl}/?connected=1`);

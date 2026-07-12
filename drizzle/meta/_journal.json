@@ -134,6 +134,20 @@
       "when": 1783809089048,
       "tag": "0018_lovely_maddog",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1783826272659,
+      "tag": "0019_integrity_hardening",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1783826300000,
+      "tag": "0020_rls_app_user_grants",
+      "breakpoints": true
     }
   ]
 }

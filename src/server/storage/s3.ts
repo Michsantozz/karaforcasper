@@ -2,9 +2,12 @@ import "server-only";
 import { Buffer } from "node:buffer";
 import {
   DeleteObjectCommand,
+  GetObjectCommand,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
+import { Upload } from "@aws-sdk/lib-storage";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { v4 as uuidv4 } from "uuid";
 import { createLogger } from "@/shared/lib/logger";
 
@@ -15,10 +18,13 @@ const log = createLogger("s3");
  * endpoint in prod). Server-only: the S3 credentials must never reach the
  * client bundle. The browser talks to `/api/upload`, never to S3 directly.
  *
- * Public read: the bucket is provisioned with anonymous download (see
- * `minio-init` in docker-compose), so the returned URL is fetchable by both the
- * browser preview and the vision model. If you switch to a private bucket,
- * return a presigned GET URL from here instead of the plain public URL.
+ * PRIVATE bucket (see `minio-init` in docker-compose — anonymous access is
+ * `none`). Objects are NOT world-readable. Two delivery paths:
+ *  - meeting recordings → authenticated same-origin proxy (/api/meeting-video),
+ *    session + RLS enforced; the raw URL never leaves the server.
+ *  - chat image attachments → the vision provider fetches by URL, so /api/upload
+ *    returns a short-lived presigned GET (presignGetUrl) instead of a permanent
+ *    public URL. A leaked link expires; it doesn't grant durable access.
  */
 
 function env(name: string): string | undefined {
@@ -92,6 +98,45 @@ export function toServerReachableUrl(url: string): string {
   return url.startsWith(base) ? internal + url.slice(base.length) : url;
 }
 
+let internalPresignClient: S3Client | null = null;
+
+/** Signing client pinned to the INTERNAL endpoint (server-reachable host). */
+function getInternalPresignClient(): S3Client {
+  if (internalPresignClient) return internalPresignClient;
+  const endpoint = env("S3_ENDPOINT");
+  if (!endpoint) return getClient();
+  const accessKeyId = env("S3_ACCESS_KEY_ID");
+  const secretAccessKey = env("S3_SECRET_ACCESS_KEY");
+  if (!accessKeyId || !secretAccessKey) {
+    throw new Error("Storage not configured: S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY missing.");
+  }
+  internalPresignClient = new S3Client({
+    region: env("S3_REGION") ?? "us-east-1",
+    endpoint: new URL(endpoint).origin,
+    forcePathStyle: env("S3_FORCE_PATH_STYLE") === "true",
+    credentials: { accessKeyId, secretAccessKey },
+  });
+  return internalPresignClient;
+}
+
+/**
+ * Turns a persisted media URL into a SERVER-reachable, AUTHENTICATED URL for the
+ * proxy to fetch. The bucket is private, so an anonymous GET now 403s — the
+ * proxy must present credentials. For URLs that live in our bucket we return a
+ * short-lived presigned GET signed against the internal endpoint (reachable from
+ * inside the container). Foreign URLs (Recall's own signed CDN links) already
+ * carry their own auth and pass through untouched.
+ */
+export async function presignServerReachableUrl(url: string): Promise<string> {
+  const key = keyFromPublicUrl(url);
+  if (!key) return url; // not ours (e.g. Recall signed URL) → leave as-is
+  return getSignedUrl(
+    getInternalPresignClient(),
+    new GetObjectCommand({ Bucket: bucket(), Key: key }),
+    { expiresIn: PRESIGN_TTL_SECONDS },
+  );
+}
+
 const EXT_BY_MIME: Record<string, string> = {
   "image/png": "png",
   "image/jpeg": "jpg",
@@ -134,6 +179,115 @@ export async function uploadObject(input: {
     }),
   );
   return { url: `${publicBase()}/${key}`, key, contentType: input.contentType };
+}
+
+/**
+ * Streams `body` straight to storage as a multipart upload WITHOUT buffering the
+ * whole object in memory (audit fix #6). Used for meeting recordings, which can
+ * be hundreds of MB — `Buffer.from(await res.arrayBuffer())` would materialize
+ * the entire video and OOM the 1 GB worker.
+ *
+ * `maxBytes` is a hard cap: the stream is watched and the upload is aborted the
+ * moment cumulative bytes exceed it (a lying/absent Content-Length can't slip a
+ * huge object past a header-only check). Throws on cap breach or upload error.
+ */
+export async function uploadObjectStream(input: {
+  userId: string;
+  filename: string;
+  contentType: string;
+  body: ReadableStream<Uint8Array>;
+  maxBytes: number;
+}): Promise<UploadedObject> {
+  const key = keyFor(input.userId, input.filename, input.contentType);
+
+  // Tee the source through a counter that aborts once maxBytes is exceeded, so
+  // we never accumulate an oversized object in the multipart buffers.
+  let seen = 0;
+  const capped = input.body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        seen += chunk.byteLength;
+        if (seen > input.maxBytes) {
+          controller.error(
+            new Error(
+              `upload exceeded max size ${input.maxBytes} bytes (aborted mid-stream)`,
+            ),
+          );
+          return;
+        }
+        controller.enqueue(chunk);
+      },
+    }),
+  );
+
+  const upload = new Upload({
+    client: getClient(),
+    params: {
+      Bucket: bucket(),
+      Key: key,
+      Body: capped,
+      ContentType: input.contentType,
+    },
+    // 8 MB parts: bounds peak memory to ~queueSize * partSize regardless of the
+    // total object size.
+    partSize: 8 * 1024 * 1024,
+    queueSize: 2,
+  });
+  await upload.done();
+  return { url: `${publicBase()}/${key}`, key, contentType: input.contentType };
+}
+
+/** Default TTL (seconds) for presigned GET URLs handed to the vision provider. */
+const PRESIGN_TTL_SECONDS = 900; // 15 min
+
+let presignClient: S3Client | null = null;
+
+/**
+ * A separate S3 client used ONLY to sign presigned URLs, pointed at the PUBLIC
+ * host (S3_PUBLIC_URL) rather than the internal S3_ENDPOINT. SigV4 signs the
+ * host as part of the canonical request, so a signature made against
+ * `minio:9000` would be rejected when the URL is served from `localhost:9200`.
+ * Presigning is a pure local HMAC computation (no network call), so this client
+ * never needs to reach the public host — it only needs the host to appear in
+ * the signature. Falls back to the main client when no public host is set
+ * (real AWS S3, where the public URL is already what the SDK signs).
+ */
+function getPresignClient(): S3Client {
+  if (presignClient) return presignClient;
+  const publicHost = env("S3_PUBLIC_URL");
+  if (!publicHost) return getClient();
+  const accessKeyId = env("S3_ACCESS_KEY_ID");
+  const secretAccessKey = env("S3_SECRET_ACCESS_KEY");
+  if (!accessKeyId || !secretAccessKey) {
+    throw new Error("Storage not configured: S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY missing.");
+  }
+  // S3_PUBLIC_URL is `<scheme>://<host>[/<bucket>]`; the SDK endpoint is the
+  // host origin (path-style adds the bucket). Strip any path so the bucket
+  // isn't doubled.
+  const origin = new URL(publicHost).origin;
+  presignClient = new S3Client({
+    region: env("S3_REGION") ?? "us-east-1",
+    endpoint: origin,
+    forcePathStyle: env("S3_FORCE_PATH_STYLE") === "true",
+    credentials: { accessKeyId, secretAccessKey },
+  });
+  return presignClient;
+}
+
+/**
+ * Presigned GET URL for a stored object (private bucket). Short-lived by design:
+ * the vision provider fetches the image within the TTL window; a leaked link
+ * expires instead of granting durable, session-less access.
+ */
+export async function presignGetUrl(
+  key: string,
+  ttlSeconds: number = PRESIGN_TTL_SECONDS,
+): Promise<string> {
+  return getSignedUrl(
+    getPresignClient(),
+    new GetObjectCommand({ Bucket: bucket(), Key: key }),
+    { expiresIn: ttlSeconds },
+  );
 }
 
 /**

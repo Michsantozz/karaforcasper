@@ -21,8 +21,12 @@ vi.mock("@/features/auth/model/session", () => ({
 }));
 
 const uploadObject = vi.fn();
+// Private bucket (audit fix #3): the route hands back a short-lived presigned
+// GET, not the permanent public URL. Mock both.
+const presignGetUrl = vi.fn();
 vi.mock("@/server/storage/s3", () => ({
   uploadObject: (...a: unknown[]) => uploadObject(...a),
+  presignGetUrl: (...a: unknown[]) => presignGetUrl(...a),
 }));
 
 // Rate limiter is DB-backed (Postgres); stub the check so the route never
@@ -49,6 +53,8 @@ beforeEach(() => {
   vi.resetModules();
   getSession.mockReset();
   uploadObject.mockReset();
+  presignGetUrl.mockReset();
+  presignGetUrl.mockResolvedValue("http://localhost:9200/presigned?sig=abc");
 });
 
 describe("POST /api/upload", () => {
@@ -101,6 +107,10 @@ describe("POST /api/upload", () => {
     expect(res.status).toBe(200);
     const json = (await res.json()) as { url: string; key: string };
     expect(json.key).toBe("uploads/session-user/k.png");
+    // The returned URL is the presigned one (private bucket), not the raw public
+    // URL from uploadObject.
+    expect(json.url).toBe("http://localhost:9200/presigned?sig=abc");
+    expect(presignGetUrl).toHaveBeenCalledWith("uploads/session-user/k.png");
 
     expect(uploadObject).toHaveBeenCalledTimes(1);
     const arg = uploadObject.mock.calls[0][0] as { userId: string };

@@ -1,8 +1,9 @@
 import { Buffer } from "node:buffer";
 import { NextResponse } from "next/server";
 import { getSession } from "@/features/auth/model/session";
-import { uploadObject } from "@/server/storage/s3";
+import { uploadObject, presignGetUrl } from "@/server/storage/s3";
 import { checkRateLimit, rateLimitedResponse } from "@/shared/lib/rate-limit";
+import { assertBodyWithinLimit } from "@/shared/lib/http";
 import { createLogger } from "@/shared/lib/logger";
 
 const log = createLogger("upload");
@@ -16,6 +17,10 @@ const ALLOWED = new Set([
   "application/pdf",
 ]);
 const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
+// Pre-parse ceiling on the whole multipart body: the 10 MB file limit plus a
+// small allowance for multipart framing (boundaries, headers). Checked against
+// Content-Length BEFORE req.formData() materializes the body. See audit fix #5.
+const MAX_UPLOAD_BODY_BYTES = MAX_BYTES + 1024 * 1024; // ~11 MB
 
 /**
  * Uploads a chat attachment to object storage (MinIO/S3) and returns its public
@@ -39,6 +44,12 @@ export async function POST(req: Request) {
     max: 30,
   });
   if (!rl.ok) return rateLimitedResponse(rl.retryAfter);
+
+  // Reject an oversized multipart body by declared Content-Length BEFORE
+  // req.formData() reads it all into memory (audit fix #5). The per-file
+  // file.size check below still applies after parsing.
+  const tooLarge = assertBodyWithinLimit(req, MAX_UPLOAD_BODY_BYTES);
+  if (tooLarge) return tooLarge;
 
   const form = await req.formData();
   const file = form.get("file");
@@ -65,7 +76,12 @@ export async function POST(req: Request) {
       contentType,
       body,
     });
-    return NextResponse.json(uploaded);
+    // Bucket is private: hand back a short-lived presigned GET (not the
+    // permanent public URL) so the vision provider can fetch the object within
+    // the TTL window. `key` is returned too, so a later flow can re-sign if the
+    // link expires before the message is sent. See audit fix #3.
+    const url = await presignGetUrl(uploaded.key);
+    return NextResponse.json({ ...uploaded, url });
   } catch (err) {
     log.error({ err }, "upload failed");
     return NextResponse.json({ error: "upload failed" }, { status: 500 });

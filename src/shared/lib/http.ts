@@ -35,13 +35,50 @@ export async function assertSameOrigin(): Promise<NextResponse | null> {
 }
 
 /**
+ * Rejects a request whose body is larger than `maxBytes` BEFORE it is parsed,
+ * using the declared Content-Length. Parsing first (req.json()/req.formData())
+ * materializes the whole body in memory — a hostile or accidental huge payload
+ * would exhaust memory/CPU before any size check. This is a cheap pre-parse
+ * gate; it is NOT a substitute for a limit at the proxy/server (Content-Length
+ * can be absent or lie under chunked encoding), but it stops the common case.
+ *
+ * Returns a 413 NextResponse when over the limit, or null to proceed.
+ */
+export function assertBodyWithinLimit(
+  req: Request,
+  maxBytes: number,
+): NextResponse | null {
+  const header = req.headers.get("content-length");
+  if (header === null) return null; // no declared length → can't pre-check here
+  const length = Number(header);
+  if (!Number.isFinite(length) || length < 0) {
+    return NextResponse.json({ error: "invalid_content_length" }, { status: 400 });
+  }
+  if (length > maxBytes) {
+    return NextResponse.json(
+      { error: "payload_too_large", maxBytes },
+      { status: 413 },
+    );
+  }
+  return null;
+}
+
+/**
  * Parses + validates the JSON body against a zod schema. Returns `{ data }`
  * or `{ response }` (error NextResponse) — the caller early-returns on error.
+ *
+ * When `maxBytes` is given, a pre-parse Content-Length check rejects oversized
+ * bodies (413) before req.json() reads them into memory.
  */
 export async function parseBody<T extends z.ZodTypeAny>(
   req: Request,
   schema: T,
+  maxBytes?: number,
 ): Promise<{ data: z.infer<T>; response?: never } | { data?: never; response: NextResponse }> {
+  if (maxBytes !== undefined) {
+    const tooLarge = assertBodyWithinLimit(req, maxBytes);
+    if (tooLarge) return { response: tooLarge };
+  }
   let raw: unknown;
   try {
     raw = await req.json();
