@@ -142,7 +142,10 @@ jobs:
           load: true
           tags: casperagent:ci
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # gha cache exige write no escopo `actions`, que o GITHUB_TOKEN de PRs
+          # do Dependabot não tem (read-only forçado). Só grava em push (main);
+          # em PR só lê (cache-from não precisa de write). Evita falha no setup.
+          cache-to: ${{ github.event_name == 'push' && 'type=gha,mode=max' || '' }}
           build-args: |
             NEXT_SERVER_ACTIONS_ENCRYPTION_KEY=ci-placeholder-not-a-real-secret
             GIT_HASH=${{ github.sha }}
