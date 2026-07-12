@@ -73,6 +73,11 @@ const togglesSchema = z.object({
   // to turn it on; SENTRY_ENVIRONMENT is a cosmetic tag defaulting to NODE_ENV.
   SENTRY_DSN: z.url().optional(),
   SENTRY_ENVIRONMENT: z.string().optional(),
+  // Structured logger (pino) verbosity. Optional — the logger defaults to
+  // `info` when unset. `debug`/`trace` for verbose runs, `silent` to mute.
+  LOG_LEVEL: z
+    .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
+    .optional(),
 });
 
 type Toggles = z.infer<typeof togglesSchema>;

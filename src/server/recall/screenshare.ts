@@ -1,6 +1,9 @@
 import "server-only";
 import { recallFetch } from "@/server/recall/client";
 import { pickRecording } from "@/server/recall/recordings";
+import { createLogger } from "@/shared/lib/logger";
+
+const log = createLogger("screenshare");
 
 /**
  * Screen-share TIMELINE — when the shared screen was on, in seconds from the
@@ -118,7 +121,7 @@ export async function fetchScreenshareSpans(
     if (!Array.isArray(events)) return [];
     return eventsToSpans(events as RawParticipantEvent[]);
   } catch (err) {
-    console.error(`[screenshare] span capture failed for ${botId}: ${err}`);
+    log.error({ err, botId }, "span capture failed");
     return [];
   }
 }

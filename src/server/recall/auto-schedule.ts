@@ -3,6 +3,9 @@ import { recallFetch } from "@/server/recall/client";
 import { listCalendarEvents, type CalendarEvent } from "@/server/recall/calendars";
 import { listAutoRecordCalendars } from "@/server/recall/calendar-repository";
 import { withSystemScope } from "@/shared/db/rls";
+import { createLogger } from "@/shared/lib/logger";
+
+const log = createLogger("auto-schedule");
 
 /**
  * Auto-scheduling of bots per calendar (opt-in).
@@ -95,9 +98,13 @@ export async function autoScheduleAll(): Promise<{
       calendarId: cal.recallCalendarId,
       userId: cal.userId,
     }).catch((err) => {
-      console.warn(
-        `[auto-schedule] calendar ${cal.recallCalendarId} (user ${cal.userId}) failed:`,
-        err instanceof Error ? err.message : err,
+      log.warn(
+        {
+          recallCalendarId: cal.recallCalendarId,
+          userId: cal.userId,
+          err: err instanceof Error ? err.message : err,
+        },
+        "calendar scheduling failed",
       );
       return null;
     });

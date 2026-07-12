@@ -17,6 +17,9 @@ import { botOwnerUserId, findBotByBotId } from "@/server/recall/bot-repository";
 import { createNotification } from "@/server/notifications";
 import { emailMeetingSummaryReady } from "@/server/email";
 import { withSystemScope } from "@/shared/db/rls";
+import { createLogger } from "@/shared/lib/logger";
+
+const log = createLogger("enrich");
 
 /**
  * Meeting-minutes enrichment worker — durable logic shared between:
@@ -196,8 +199,9 @@ async function notifyMeetingFailed(
 ): Promise<boolean> {
   const userId = recordUserId ?? botOwnerUserId(await findBotByBotId(botId));
   if (!userId) {
-    console.warn(
-      `[enrich] failed meeting for bot ${botId} has no owner to notify (${reason})`,
+    log.warn(
+      { botId, reason },
+      "failed meeting has no owner to notify",
     );
     return false;
   }
@@ -224,8 +228,9 @@ async function notifyOwner(
     // Orphan minutes: enriched but ownerless → no one to notify, hidden by RLS.
     // Surface it (matching the webhook's orphan guard) so it's diagnosable
     // instead of a silent no-op after we've already paid the LLM.
-    console.warn(
-      `[enrich] orphan minutes for bot ${botId}: enriched but no owner to notify`,
+    log.warn(
+      { botId },
+      "orphan minutes: enriched but no owner to notify",
     );
     return false;
   }

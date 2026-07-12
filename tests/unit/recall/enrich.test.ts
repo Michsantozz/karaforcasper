@@ -54,6 +54,19 @@ vi.mock("@/shared/db/rls", () => ({
   withSystemScope: (fn: () => unknown) => fn(),
 }));
 
+// Structured logger → capture warn/error instead of console. The child returned
+// by createLogger carries the same spies so assertions can read the calls.
+const logSpy = {
+  warn: vi.fn(),
+  error: vi.fn(),
+  info: vi.fn(),
+  debug: vi.fn(),
+};
+vi.mock("@/shared/lib/logger", () => ({
+  createLogger: () => logSpy,
+  logger: logSpy,
+}));
+
 const CLAIMED = {
   userId: "owner-1",
   meetingUrl: "https://meet/x",
@@ -86,6 +99,8 @@ beforeEach(() => {
   captureMeetingMedia.mockResolvedValue({ transcriptStruct: null, videoUrl: null });
   createNotification.mockResolvedValue(undefined);
   emailMeetingSummaryReady.mockResolvedValue(undefined);
+  logSpy.warn.mockReset();
+  logSpy.error.mockReset();
 });
 
 describe("enrichMeeting — máquina de estados", () => {
@@ -282,7 +297,6 @@ describe("markMeetingTranscriptFailed — transcrição falhou na Recall (#3)", 
   });
 
   it("órfão (sem dono): registra failed mas não notifica, e avisa", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     findBotByBotId.mockResolvedValue(null);
     botOwnerUserId.mockReturnValue(null);
     const { markMeetingTranscriptFailed } = await importEnrich();
@@ -298,10 +312,10 @@ describe("markMeetingTranscriptFailed — transcrição falhou na Recall (#3)", 
       "transcript.failed: no_audio",
     );
     expect(createNotification).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining("bot-orphan"),
+    expect(logSpy.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ botId: "bot-orphan" }),
+      expect.any(String),
     );
-    warn.mockRestore();
   });
 });
 
@@ -377,7 +391,6 @@ describe("enrichMeeting — backfill de dono em linha órfã (#6)", () => {
 
 describe("notifyOwner — ata órfã (sem dono)", () => {
   it("não notifica e emite warn quando não há userId resolvível", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     findMeetingRecord.mockResolvedValue({ status: "pending" });
     // claimed.userId null → notifyOwner cai no fallback do bot-repository...
     claimMeetingRecord.mockResolvedValue({ ...CLAIMED, userId: null });
@@ -392,9 +405,9 @@ describe("notifyOwner — ata órfã (sem dono)", () => {
     expect(res).toEqual({ state: "done", notified: false });
     expect(createNotification).not.toHaveBeenCalled();
     expect(emailMeetingSummaryReady).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining("orphan minutes for bot bot-orphan"),
+    expect(logSpy.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ botId: "bot-orphan" }),
+      expect.stringContaining("orphan minutes"),
     );
-    warn.mockRestore();
   });
 });

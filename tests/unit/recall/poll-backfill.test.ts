@@ -30,6 +30,12 @@ vi.mock("@/shared/db/rls", () => ({
   withSystemScope: (fn: () => unknown) => fn(),
 }));
 
+const logSpy = { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() };
+vi.mock("@/shared/lib/logger", () => ({
+  createLogger: () => logSpy,
+  logger: logSpy,
+}));
+
 /** A bot with a transcript in the given status. */
 function bot(id: string, transcriptCode: string, metadata?: unknown) {
   return {
@@ -101,7 +107,7 @@ describe("backfillMissingMeetings", () => {
   });
 
   it("warns on an orphan bot but still enqueues it", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    logSpy.warn.mockReset();
     recallFetch.mockResolvedValue({
       results: [bot("orphan-1", "done")], // no repo owner, no metadata
       next: null,
@@ -114,10 +120,10 @@ describe("backfillMissingMeetings", () => {
       botId: "orphan-1",
       userId: null,
     });
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining("orphan bot orphan-1"),
+    expect(logSpy.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ botId: "orphan-1" }),
+      expect.stringContaining("orphan bot"),
     );
-    warn.mockRestore();
   });
 
   it("follows pagination via `next` cursor", async () => {

@@ -3,6 +3,9 @@ import { Buffer } from "node:buffer";
 import { recallFetch } from "@/server/recall/client";
 import { pickRecording } from "@/server/recall/recordings";
 import { uploadObject } from "@/server/storage/s3";
+import { createLogger } from "@/shared/lib/logger";
+
+const log = createLogger("media");
 
 /**
  * Durable capture of a meeting's media, so the notebook survives Recall's
@@ -100,7 +103,7 @@ async function captureTranscript(
     if (!Array.isArray(segments)) return null;
     return segments.map(toUtterance);
   } catch (err) {
-    console.error(`[media] transcript capture failed for ${err}`);
+    log.error({ err }, "transcript capture failed");
     return null;
   }
 }
@@ -131,7 +134,7 @@ async function captureVideo(
     });
     return uploaded.url;
   } catch (err) {
-    console.error(`[media] video capture failed for ${botId}: ${err}`);
+    log.error({ err, botId }, "video capture failed");
     return null;
   }
 }

@@ -3,6 +3,9 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/features/auth/model/session";
 import { uploadObject } from "@/server/storage/s3";
 import { checkRateLimit, rateLimitedResponse } from "@/shared/lib/rate-limit";
+import { createLogger } from "@/shared/lib/logger";
+
+const log = createLogger("upload");
 
 // Image formats the vision model (Fireworks kimi) accepts, plus PDF for docs.
 const ALLOWED = new Set([
@@ -64,7 +67,7 @@ export async function POST(req: Request) {
     });
     return NextResponse.json(uploaded);
   } catch (err) {
-    console.error("[upload] failed:", err);
+    log.error({ err }, "upload failed");
     return NextResponse.json({ error: "upload failed" }, { status: 500 });
   }
 }

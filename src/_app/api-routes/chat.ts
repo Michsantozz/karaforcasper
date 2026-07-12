@@ -5,6 +5,9 @@ import { NextResponse, after } from "next/server";
 import { getSession } from "@/features/auth/model/session";
 import { isBotOwner } from "@/server/recall/ownership";
 import { checkRateLimit, rateLimitedResponse } from "@/shared/lib/rate-limit";
+import { createLogger } from "@/shared/lib/logger";
+
+const log = createLogger("chat");
 
 /** A v6 UIMessage as it arrives from the transport (only what we read/build). */
 type UIMessageLike = {
@@ -173,7 +176,9 @@ export async function POST(req: Request) {
     // model content = PII) from the provider SDK.
     onError: (error: unknown) => {
       const message = error instanceof Error ? error.message : String(error);
-      console.error("[chat] stream error:", message);
+      // Log ONLY the message — never the error object (provider SDK may attach
+      // request/response bodies = user + model content = PII).
+      log.error({ message }, "stream error");
       return message;
     },
   } as Parameters<typeof handleChatStream>[0]);
@@ -206,7 +211,7 @@ export async function POST(req: Request) {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      console.error("[chat] detached drain error:", message);
+      log.error({ message }, "detached drain error");
     } finally {
       reader.releaseLock();
     }

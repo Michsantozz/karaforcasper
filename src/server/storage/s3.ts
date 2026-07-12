@@ -6,6 +6,9 @@ import {
   S3Client,
 } from "@aws-sdk/client-s3";
 import { v4 as uuidv4 } from "uuid";
+import { createLogger } from "@/shared/lib/logger";
+
+const log = createLogger("s3");
 
 /**
  * Object storage for chat attachments (MinIO in docker-compose, any S3-compat
@@ -149,7 +152,7 @@ export async function deleteObjectByUrl(url: string): Promise<boolean> {
     );
     return true;
   } catch (err) {
-    console.error(`[s3] delete failed for ${url}: ${err}`);
+    log.error({ err, url }, "delete failed");
     return false;
   }
 }

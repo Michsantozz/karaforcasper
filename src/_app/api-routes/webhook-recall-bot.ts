@@ -4,6 +4,9 @@ import { findBotByBotId, botOwnerUserId } from "@/server/recall/bot-repository";
 import { enqueueMeetingRecord } from "@/server/recall/meeting-repository";
 import { withSystemScope } from "@/shared/db/rls";
 import { inngest } from "@/inngest/client";
+import { createLogger } from "@/shared/lib/logger";
+
+const log = createLogger("webhook-recall-bot");
 
 /**
  * Recall BOT webhook (status/artifact change, delivered via Svix) — channel
@@ -91,10 +94,9 @@ export async function POST(req: Request) {
     // invisible. We still enqueue (so the data isn't lost and can be re-owned
     // later), but surface it loudly instead of silently.
     if (!userId) {
-      console.warn(
-        `[webhook-recall-bot] orphan meeting: no owner resolved for bot ${botId} ` +
-          `(no payload metadata.user_id and no recall_bots row). Row will be ` +
-          `hidden by RLS until an owner is attached.`,
+      log.warn(
+        { botId },
+        "orphan meeting: no owner resolved (no payload metadata.user_id and no recall_bots row); row hidden by RLS until an owner is attached",
       );
     }
 

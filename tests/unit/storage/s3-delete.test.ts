@@ -35,6 +35,12 @@ vi.mock("@aws-sdk/client-s3", () => ({
 }));
 vi.mock("uuid", () => ({ v4: () => "fixed-uuid" }));
 
+const logSpy = { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() };
+vi.mock("@/shared/lib/logger", () => ({
+  createLogger: () => logSpy,
+  logger: logSpy,
+}));
+
 const ORIGINAL = { ...process.env };
 
 function setEnv() {
@@ -85,17 +91,14 @@ describe("deleteObjectByUrl", () => {
 
   it("swallows a send() rejection and returns false (never throws)", async () => {
     send.mockRejectedValueOnce(new Error("network blip"));
-    const consoleErrorSpy = vi
-      .spyOn(console, "error")
-      .mockImplementation(() => {});
+    logSpy.error.mockReset();
     const { deleteObjectByUrl } = await import("@/server/storage/s3");
 
     const url = "https://cdn.example.com/bucket/uploads/user-1/video.mp4";
     const result = await deleteObjectByUrl(url);
 
     expect(result).toBe(false);
-    expect(consoleErrorSpy).toHaveBeenCalled();
-    consoleErrorSpy.mockRestore();
+    expect(logSpy.error).toHaveBeenCalled();
   });
 
   it("returns false without throwing when storage isn't configured", async () => {

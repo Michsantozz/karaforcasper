@@ -28,6 +28,9 @@ import {
   createCalendarEventTool,
   getFreeSlotsTool,
 } from "@/mastra/tools/calendar.tool";
+import { createLogger } from "@/shared/lib/logger";
+
+const log = createLogger("mcp");
 
 /**
  * CasperAgent's meeting assistant — brings together meetings (Recall.ai) and
@@ -247,7 +250,7 @@ General rules:
   tools: async () => {
     const { toolsets, errors } = await mcp.listToolsetsWithErrors();
     for (const [server, err] of Object.entries(errors)) {
-      console.error(`[mcp] server "${server}" unavailable: ${err}`);
+      log.error({ server, err }, "MCP server unavailable");
     }
     const mcpTools = Object.values(toolsets).reduce(
       (acc, serverTools) => Object.assign(acc, serverTools),

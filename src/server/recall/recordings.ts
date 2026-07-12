@@ -1,4 +1,7 @@
 import "server-only";
+import { createLogger } from "@/shared/lib/logger";
+
+const log = createLogger("recordings");
 
 /**
  * Recording selection — a Recall bot's `recordings` field is an ARRAY. In the
@@ -33,9 +36,9 @@ export function pickRecording<T extends RecordingLike>(
     const withDone = recordings.filter(
       (r) => r.media_shortcuts?.transcript?.status?.code === "done",
     ).length;
-    console.warn(
-      `[recordings] bot ${botId ?? "?"} has ${recordings.length} recordings ` +
-        `(${withDone} with a done transcript); reading the transcript-ready one.`,
+    log.warn(
+      { botId: botId ?? null, recordings: recordings.length, withDone },
+      "multiple recordings; reading the transcript-ready one",
     );
   }
   const ready = recordings.find(

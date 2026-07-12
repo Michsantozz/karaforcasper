@@ -3,6 +3,9 @@ import { recallFetch } from "@/server/recall/client";
 import { enqueueMeetingRecord } from "@/server/recall/meeting-repository";
 import { findBotByBotId, botOwnerUserId } from "@/server/recall/bot-repository";
 import { withSystemScope } from "@/shared/db/rls";
+import { createLogger } from "@/shared/lib/logger";
+
+const log = createLogger("poll-backfill");
 
 /**
  * Poll-backfill against Recall (source of truth) — closes the "webhook never
@@ -114,9 +117,9 @@ export async function backfillMissingMeetings(
         // Ownerless bot discovered by the poll — enqueue anyway (data isn't
         // lost, RLS hides it until re-owned), but surface it like the webhook's
         // orphan guard so it's diagnosable.
-        console.warn(
-          `[poll-backfill] orphan bot ${bot.id}: transcript ready but no owner ` +
-            `(no recall_bots row, no metadata.user_id)`,
+        log.warn(
+          { botId: bot.id },
+          "orphan bot: transcript ready but no owner (no recall_bots row, no metadata.user_id)",
         );
       }
       // onConflictDoNothing → no-op if the webhook already created the row.
@@ -135,9 +138,9 @@ export async function backfillMissingMeetings(
   // ready-transcript bots in the window may not have been scanned this run. Log
   // it instead of silently under-covering (the next tick resumes the window).
   if (cursor && pages >= maxPages) {
-    console.warn(
-      `[poll-backfill] hit maxPages=${maxPages} with more pages remaining; ` +
-        `${scanned} bots scanned this run — backlog continues next tick.`,
+    log.warn(
+      { maxPages, scanned },
+      "hit maxPages with more pages remaining; backlog continues next tick",
     );
   }
 
