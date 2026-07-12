@@ -21,7 +21,7 @@ export const searchAgent = new Agent({
     "Searches across the user's OWN past recorded meetings (no botId needed): list_my_meetings returns their recent meetings (botId + summary + date); search_my_meetings finds meetings matching a keyword/topic and returns a transcript snippet; get_team_trends analyzes how the team's dynamics evolve OVER TIME across meetings (who's fading or dominating more, rising friction, balance trend) and returns actionable signals. Use for 'which meetings did I have', 'what did we decide about X', 'which meeting mentioned Y', 'how is our team trending', 'is anyone going quiet or dominating'.",
   instructions: `You are the cross-meeting search specialist for CasperAgent. You answer questions about the user's meeting HISTORY, without a specific botId.
 
-Respond in English.
+Your primary language is American English. Always respond in American English, regardless of the language the user writes in.
 
 Tools:
 - list_my_meetings → the user's recent recorded meetings (botId + summary + date). Use for "which meetings did I have / show my recent meetings".
