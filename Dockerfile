@@ -52,6 +52,17 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends tini \
     && rm -rf /var/lib/apt/lists/*
 
+# Remove o npm/corepack bundlado na imagem base do Node. O runtime roda só
+# `node server.js` (Next standalone) — npm nunca é usado em produção. O npm que
+# vem com node:24-slim traz um undici@6.26.0 vulnerável (CVE-2026-12151, DoS)
+# em node_modules/npm/node_modules/undici, que o scan de imagem (Trivy) flagra
+# como HIGH fixável. Deletar o npm elimina a vuln do artefato final sem afetar
+# o runtime. (O app usa pnpm; deps já vêm do standalone.)
+RUN rm -rf /usr/local/lib/node_modules/npm \
+    /usr/local/bin/npm /usr/local/bin/npx \
+    /usr/local/lib/node_modules/corepack \
+    /usr/local/bin/corepack
+
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
