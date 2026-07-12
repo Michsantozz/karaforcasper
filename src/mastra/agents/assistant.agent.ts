@@ -284,4 +284,7 @@ You: Call pick_date (never ask for date/time as free text). With the returned da
   // token cap (output). Lazy so envs resolve at request time. See builders above.
   inputProcessors: () => buildInputProcessors(),
   outputProcessors: () => buildOutputProcessors(),
+  // NOTE: the per-turn step ceiling (stopWhen) is NOT set here — the constructor
+  // AgentConfig doesn't accept it in this Mastra version. It's passed per stream
+  // call via handleChatStream's `params.stopWhen` in _app/api-routes/chat.ts.
 });
