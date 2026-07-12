@@ -16,6 +16,7 @@ const magicLink = vi.fn();
 const signUpEmail = vi.fn();
 const signInEmail = vi.fn();
 const requestPasswordReset = vi.fn();
+const sendVerificationEmail = vi.fn();
 
 vi.mock("@/features/auth/model/auth-client", () => ({
   signIn: { social: (...a: unknown[]) => social(...a) },
@@ -26,6 +27,7 @@ vi.mock("@/features/auth/model/auth-client", () => ({
     },
     signUp: { email: (...a: unknown[]) => signUpEmail(...a) },
     requestPasswordReset: (...a: unknown[]) => requestPasswordReset(...a),
+    sendVerificationEmail: (...a: unknown[]) => sendVerificationEmail(...a),
   },
 }));
 
@@ -174,8 +176,9 @@ describe("LoginScreen — e-mail + senha", () => {
     expect(window.location.href).toBe("");
   });
 
-  it("alternar para signup e criar conta chama signUp.email", async () => {
-    signUpEmail.mockResolvedValue({ error: null });
+  it("alternar para signup e criar conta chama signUp.email + navega quando há sessão", async () => {
+    // token presente = sessão criada (verificação de e-mail desligada).
+    signUpEmail.mockResolvedValue({ data: { token: "sess_1" }, error: null });
     const user = userEvent.setup();
     render(<LoginScreen />);
     await switchToPassword(user);
@@ -193,6 +196,7 @@ describe("LoginScreen — e-mail + senha", () => {
       password: "s3nh4forte",
       callbackURL: "/",
     });
+    await waitFor(() => expect(window.location.href).toBe("/"));
   });
 
   it("esqueci a senha chama requestPasswordReset com redirectTo", async () => {
@@ -219,5 +223,113 @@ describe("LoginScreen — e-mail + senha", () => {
     await user.click(screen.getByRole("button", { name: /forgot password/i }));
     expect(requestPasswordReset).not.toHaveBeenCalled();
     expect(toastError).toHaveBeenCalledWith("Enter your email first.");
+  });
+});
+
+describe("LoginScreen — verificação de e-mail (resend)", () => {
+  async function switchToPassword(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(screen.getByRole("button", { name: /password/i }));
+  }
+
+  async function signup(
+    user: ReturnType<typeof userEvent.setup>,
+    email = "novo@b.com",
+  ) {
+    await switchToPassword(user);
+    await user.click(screen.getByRole("button", { name: /sign up/i }));
+    await user.type(screen.getByPlaceholderText("Your name"), "Fulano");
+    await user.type(screen.getByPlaceholderText("you@email.com"), email);
+    await user.type(screen.getByPlaceholderText("Password"), "s3nh4forte");
+    await user.click(screen.getByRole("button", { name: /^sign up$/i }));
+  }
+
+  it("signup sem sessão (verificação exigida) mostra o painel 'confirme seu e-mail'", async () => {
+    // Sem token = better-auth criou o user mas NÃO abriu sessão (mandou e-mail).
+    signUpEmail.mockResolvedValue({ data: { user: { id: "u1" } }, error: null });
+    const user = userEvent.setup();
+    render(<LoginScreen />);
+    await signup(user, "pending@b.com");
+
+    await waitFor(() =>
+      expect(screen.getByText(/confirm your email to finish/i)).toBeInTheDocument(),
+    );
+    expect(screen.getByText("pending@b.com")).toBeInTheDocument();
+    // Não navegou (fica na tela para verificar).
+    expect(window.location.href).toBe("");
+  });
+
+  it("botão de reenviar chama sendVerificationEmail e entra em cooldown", async () => {
+    signUpEmail.mockResolvedValue({ data: { user: { id: "u1" } }, error: null });
+    sendVerificationEmail.mockResolvedValue({ error: null });
+    const user = userEvent.setup();
+    render(<LoginScreen />);
+    await signup(user, "pending@b.com");
+
+    const resendBtn = await screen.findByRole("button", {
+      name: /resend verification email/i,
+    });
+    await user.click(resendBtn);
+
+    expect(sendVerificationEmail).toHaveBeenCalledWith({
+      email: "pending@b.com",
+      callbackURL: "/",
+    });
+    // Após enviar, o botão exibe o countdown e fica desabilitado.
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /resend in \d+s/i })).toBeDisabled(),
+    );
+  });
+
+  it("erro ao reenviar vira toast, sem cooldown", async () => {
+    signUpEmail.mockResolvedValue({ data: { user: { id: "u1" } }, error: null });
+    sendVerificationEmail.mockResolvedValue({ error: { message: "rate limited" } });
+    const user = userEvent.setup();
+    render(<LoginScreen />);
+    await signup(user, "pending@b.com");
+
+    await user.click(
+      await screen.findByRole("button", { name: /resend verification email/i }),
+    );
+
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith("rate limited"));
+    // Continua reenviável (sem countdown) porque o envio falhou.
+    expect(
+      screen.getByRole("button", { name: /resend verification email/i }),
+    ).toBeEnabled();
+  });
+
+  it("login bloqueado por e-mail não verificado cai no painel de resend", async () => {
+    signInEmail.mockResolvedValue({
+      error: { code: "EMAIL_NOT_VERIFIED", message: "Email not verified" },
+    });
+    const user = userEvent.setup();
+    render(<LoginScreen />);
+    await switchToPassword(user);
+
+    await user.type(screen.getByPlaceholderText("you@email.com"), "unverified@b.com");
+    await user.type(screen.getByPlaceholderText("Password"), "s3nh4forte");
+    await user.click(screen.getByRole("button", { name: /^sign in$/i }));
+
+    await waitFor(() =>
+      expect(screen.getByText(/confirm your email to finish/i)).toBeInTheDocument(),
+    );
+    expect(screen.getByText("unverified@b.com")).toBeInTheDocument();
+    // Erro de verificação não vira toast genérico de credencial.
+    expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it("'usar outro e-mail' volta para o formulário", async () => {
+    signUpEmail.mockResolvedValue({ data: { user: { id: "u1" } }, error: null });
+    const user = userEvent.setup();
+    render(<LoginScreen />);
+    await signup(user, "pending@b.com");
+
+    await user.click(
+      await screen.findByRole("button", { name: /use a different email/i }),
+    );
+    // De volta ao form de senha (campo de e-mail visível de novo).
+    await waitFor(() =>
+      expect(screen.getByPlaceholderText("you@email.com")).toBeInTheDocument(),
+    );
   });
 });

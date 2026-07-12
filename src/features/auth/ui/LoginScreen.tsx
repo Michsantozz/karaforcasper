@@ -1,7 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { SparklesIcon, LoaderIcon, MailIcon, KeyRoundIcon } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import {
+  SparklesIcon,
+  LoaderIcon,
+  MailIcon,
+  KeyRoundIcon,
+  MailCheckIcon,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/shared/ui/button";
 import { cn } from "@/shared/lib/utils";
@@ -182,6 +188,9 @@ function PasswordForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
+  // Set after a signup that DIDN'T open a session (email verification required):
+  // we swap the form for the "check your inbox / resend" panel.
+  const [pendingEmail, setPendingEmail] = useState<string | null>(null);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -189,7 +198,7 @@ function PasswordForm() {
     setBusy(true);
 
     if (isSignup) {
-      const { error } = await authClient.signUp.email({
+      const { data, error } = await authClient.signUp.email({
         name: name || email.split("@")[0],
         email,
         password,
@@ -197,6 +206,15 @@ function PasswordForm() {
       });
       setBusy(false);
       if (error) return toast.error(error.message ?? "Sign-up failed.");
+      // When email verification is required, better-auth creates the user but
+      // NO session (no token) — it sends a verification email instead. Show the
+      // "check your inbox" panel with a resend option rather than redirecting
+      // (which would just bounce back to this screen, unauthenticated).
+      if (!data?.token) {
+        setPendingEmail(email);
+        toast.success("Account created! Confirm your email to continue.");
+        return;
+      }
       toast.success("Account created! Signing in…");
       window.location.href = "/";
       return;
@@ -208,8 +226,25 @@ function PasswordForm() {
       callbackURL: "/",
     });
     setBusy(false);
-    if (error) return toast.error(error.message ?? "Invalid email or password.");
+    if (error) {
+      // An unverified account can't sign in when verification is enforced —
+      // route the user to the resend panel instead of a dead-end error.
+      if (isVerificationError(error)) {
+        setPendingEmail(email);
+        return;
+      }
+      return toast.error(error.message ?? "Invalid email or password.");
+    }
     window.location.href = "/";
+  }
+
+  if (pendingEmail) {
+    return (
+      <VerifyEmailPending
+        email={pendingEmail}
+        onBack={() => setPendingEmail(null)}
+      />
+    );
   }
 
   async function forgot() {
@@ -270,6 +305,115 @@ function PasswordForm() {
         )}
       </div>
     </form>
+  );
+}
+
+/* ── email verification pending / resend ─────────────────────────────── */
+
+/** True when a sign-in failed specifically because the email isn't verified. */
+function isVerificationError(error: {
+  code?: string;
+  status?: number;
+  message?: string;
+}): boolean {
+  return (
+    error.code === "EMAIL_NOT_VERIFIED" ||
+    error.status === 403 ||
+    /verif/i.test(error.message ?? "")
+  );
+}
+
+const RESEND_COOLDOWN_S = 60;
+
+/**
+ * "Confirm your email" panel — shown after signup (or a blocked sign-in) when
+ * email verification is required. Lets the user resend the verification email,
+ * with a cooldown so the button can't be hammered (anti-spam, and the endpoint
+ * is rate-limited server-side anyway).
+ */
+function VerifyEmailPending({
+  email,
+  onBack,
+}: {
+  email: string;
+  onBack: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  // Seconds left before "Resend" is available again. Starts armed (0) so the
+  // user can resend immediately if the first email never arrived.
+  const [cooldown, setCooldown] = useState(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    timerRef.current = setInterval(() => {
+      setCooldown((s) => (s <= 1 ? 0 : s - 1));
+    }, 1000);
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, [cooldown]);
+
+  async function resend() {
+    if (busy || cooldown > 0) return;
+    setBusy(true);
+    const { error } = await authClient.sendVerificationEmail({
+      email,
+      callbackURL: "/",
+    });
+    setBusy(false);
+    if (error) {
+      toast.error(error.message ?? "Could not resend the email.");
+      return;
+    }
+    setCooldown(RESEND_COOLDOWN_S);
+    toast.success("Verification email sent again.");
+  }
+
+  return (
+    <div className="flex flex-col items-center gap-4 text-center">
+      <span className="flex size-11 items-center justify-center rounded-[10px] border bg-background">
+        <MailCheckIcon className="size-5 text-(--thread-accent-primary)" />
+      </span>
+      <div className="flex flex-col gap-1.5">
+        <p className="text-sm text-foreground">
+          Confirm your email to finish signing in.
+        </p>
+        <p className="text-sm text-muted-foreground">
+          We sent a verification link to <strong>{email}</strong>. Open it, then
+          come back and sign in.
+        </p>
+      </div>
+
+      <div className="flex w-full flex-col gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          className="w-full"
+          onClick={resend}
+          disabled={busy || cooldown > 0}
+        >
+          {busy ? (
+            <Spinner />
+          ) : cooldown > 0 ? (
+            `Resend in ${cooldown}s`
+          ) : (
+            "Resend verification email"
+          )}
+        </Button>
+        <button
+          type="button"
+          onClick={onBack}
+          className="font-mono text-[11px] text-muted-foreground hover:text-foreground"
+        >
+          Use a different email
+        </button>
+      </div>
+
+      <p className="text-xs text-muted-foreground">
+        Didn&apos;t get it? Check your spam folder, or resend above.
+      </p>
+    </div>
   );
 }
 

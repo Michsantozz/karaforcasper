@@ -86,16 +86,65 @@ export async function userIdentityById(
   return row ? { name: row.name ?? null, email: row.email } : null;
 }
 
-/** Minimal HTML layout, consistent across the product's emails. */
-function shell(title: string, body: string, cta?: { label: string; href: string }): string {
+/**
+ * Design tokens mirrored from the app theme (globals.css). Email clients don't
+ * support oklch() or CSS variables, so the notebook's terminal/EvilCharts
+ * identity is baked as fixed hex here — kept in sync with `:root` in globals.css.
+ */
+const T = {
+  // primary accent — the notebook green (oklch(0.5 0.13 165))
+  accent: "#007950",
+  accentSoft: "#e6f2ec",
+  // secondary accent — red (oklch(0.5 0.2 12)), used sparingly
+  danger: "#b90044",
+  frame: "#f2f2f2", // --thread-frame-outer
+  bg: "#ffffff",
+  fg: "#0a0a0a",
+  muted: "#737373", // --muted-foreground
+  border: "#e5e5e5",
+  mono: "'JetBrains Mono','SF Mono',ui-monospace,Menlo,Consolas,monospace",
+  sans: "Geist,-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif",
+} as const;
+
+/**
+ * Email layout mirroring the in-app meeting notebook: a terminal-style framed
+ * card with a mono-uppercase header (live pulse dot + "casperagent · notebook"),
+ * an inner `border bg-background` content card, and a mono footer. Buttons use
+ * the app's green accent and 5px radius.
+ *
+ * Fixed hex only (no oklch/CSS vars) so it renders identically across mail
+ * clients. `dark` toggles a dark-inverted palette for the "minutes ready" push,
+ * matching the app's dark notebook.
+ */
+function shell(
+  title: string,
+  body: string,
+  cta?: { label: string; href: string },
+): string {
   const button = cta
-    ? `<a href="${cta.href}" style="display:inline-block;margin-top:16px;padding:10px 18px;background:#111;color:#fff;border-radius:6px;text-decoration:none;font-family:monospace;font-size:14px">${cta.label}</a>`
+    ? `<a href="${cta.href}" style="display:inline-block;margin-top:20px;padding:11px 20px;background:${T.accent};color:#ffffff;border-radius:5px;text-decoration:none;font-family:${T.mono};font-size:12px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase">${cta.label} &rarr;</a>`
     : "";
-  return `<div style="max-width:520px;margin:0 auto;font-family:system-ui,sans-serif;color:#111">
-    <h2 style="font-size:18px;margin:0 0 8px">${title}</h2>
-    <div style="font-size:14px;line-height:1.6;color:#333">${body}</div>
-    ${button}
-    <p style="margin-top:24px;font-family:monospace;font-size:11px;color:#999">CasperAgent · meetings, recorded and summarized</p>
+  return `<div style="margin:0;padding:24px 12px;background:${T.frame};font-family:${T.sans}">
+    <div style="max-width:544px;margin:0 auto">
+      <!-- header: "C" brand badge + mono uppercase label + pulse dot, mirrors the app rail + notebook top bar -->
+      <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin-bottom:12px">
+        <tr>
+          <td style="width:34px;vertical-align:middle">
+            <span style="display:inline-block;width:32px;height:32px;line-height:32px;text-align:center;border:1px solid ${T.border};border-radius:8px;background:${T.bg};font-family:${T.mono};font-size:14px;font-weight:700;color:${T.accent}">C</span>
+          </td>
+          <td style="vertical-align:middle;padding-left:10px;font-family:${T.mono};font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:${T.muted}">
+            <span style="display:inline-block;width:6px;height:6px;border-radius:1px;background:${T.accent};vertical-align:middle;margin-right:7px"></span>casperagent &middot; notebook
+          </td>
+        </tr>
+      </table>
+      <!-- inner content card: border + bg-background -->
+      <div style="background:${T.bg};border:1px solid ${T.border};border-radius:8px;padding:24px 24px 26px">
+        <h1 style="font-family:${T.sans};font-size:19px;font-weight:600;letter-spacing:-0.01em;margin:0 0 10px;color:${T.fg}">${title}</h1>
+        <div style="font-family:${T.sans};font-size:14px;line-height:1.6;color:#333333">${body}</div>
+        ${button}
+      </div>
+      <p style="margin:16px 4px 0;font-family:${T.mono};font-size:10px;letter-spacing:0.06em;color:#a3a3a3">CasperAgent &middot; meetings, recorded and summarized</p>
+    </div>
   </div>`;
 }
 
@@ -189,40 +238,65 @@ export type SummaryEmailContent = {
   topics?: string[] | null;
 };
 
-/** Renders the summary sections as the email body's inner HTML. */
+/**
+ * Renders the summary sections as the email body's inner HTML, mirroring the
+ * notebook's AI panels: mono-uppercase section labels (`ai / decisions`…),
+ * decisions with a green check, action items as bordered cards with an owner
+ * badge, and keywords as mono pills.
+ */
 function renderSummaryBody(content: SummaryEmailContent): string {
   const blocks: string[] = [];
+
+  // Section label — matches the notebook panel headers (mono, uppercase, dot).
   const heading = (t: string) =>
-    `<h3 style="font-size:13px;text-transform:uppercase;letter-spacing:0.05em;color:#666;margin:20px 0 6px">${t}</h3>`;
+    `<div style="font-family:${T.mono};font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:${T.muted};margin:22px 0 8px">` +
+    `<span style="display:inline-block;width:5px;height:5px;border-radius:1px;background:${T.accent};vertical-align:middle;margin-right:6px"></span>${t}</div>`;
 
   const body = content.overview?.trim() || content.summary?.trim();
-  if (body) blocks.push(`<p style="margin:0 0 8px">${esc(body)}</p>`);
+  if (body)
+    blocks.push(
+      `<p style="margin:0;font-size:14px;line-height:1.6;color:#333333">${esc(body)}</p>`,
+    );
 
   if (content.decisions?.length) {
-    blocks.push(heading("Decisions"));
+    blocks.push(heading("ai / decisions"));
     blocks.push(
-      `<ul style="margin:0;padding-left:18px">${content.decisions
-        .map((d) => `<li>${esc(d)}</li>`)
-        .join("")}</ul>`,
+      content.decisions
+        .map(
+          (d) =>
+            `<div style="display:flex;gap:8px;border:1px solid ${T.border};border-radius:5px;padding:8px 10px;margin-bottom:6px;font-size:14px;line-height:1.5;color:${T.fg}">` +
+            `<span style="color:${T.accent};font-weight:700">&#10003;</span><span>${esc(d)}</span></div>`,
+        )
+        .join(""),
     );
   }
 
   if (content.actionItems?.length) {
-    blocks.push(heading("Action items"));
+    blocks.push(heading("ai / action items"));
     blocks.push(
-      `<ul style="margin:0;padding-left:18px">${content.actionItems
+      content.actionItems
         .map(
           (a) =>
-            `<li>${esc(a.task)}${a.owner ? ` <span style="color:#666">— ${esc(a.owner)}</span>` : ""}</li>`,
+            `<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border:1px solid ${T.border};border-radius:5px;margin-bottom:6px"><tr>` +
+            `<td style="padding:8px 10px;font-size:14px;line-height:1.5;color:${T.fg}">${esc(a.task)}</td>` +
+            (a.owner
+              ? `<td style="padding:8px 10px;text-align:right;white-space:nowrap"><span style="display:inline-block;background:${T.accentSoft};color:${T.accent};border-radius:4px;padding:2px 7px;font-family:${T.mono};font-size:10px">${esc(a.owner)}</span></td>`
+              : "") +
+            `</tr></table>`,
         )
-        .join("")}</ul>`,
+        .join(""),
     );
   }
 
   if (content.topics?.length) {
-    blocks.push(heading("Topics"));
+    blocks.push(heading("ai / keywords"));
     blocks.push(
-      `<p style="margin:0;color:#333">${content.topics.map(esc).join(" · ")}</p>`,
+      `<div>${content.topics
+        .map(
+          (t) =>
+            `<span style="display:inline-block;border:1px solid ${T.border};border-radius:5px;padding:2px 8px;margin:0 5px 5px 0;font-family:${T.mono};font-size:11px;color:${T.muted}">${esc(t)}</span>`,
+        )
+        .join("")}</div>`,
     );
   }
 
@@ -249,9 +323,9 @@ export async function emailMeetingSummaryToRecipient(input: {
   note?: string;
 }): Promise<void> {
   const noteHtml = input.note?.trim()
-    ? `<p style="margin:0 0 12px;padding:10px 12px;background:#f4f4f5;border-radius:6px;font-style:italic;color:#333">${esc(input.note.trim())}</p>`
+    ? `<p style="margin:0 0 14px;padding:10px 12px;background:${T.frame};border-left:2px solid ${T.accent};border-radius:5px;font-style:italic;font-size:14px;color:#333333">${esc(input.note.trim())}</p>`
     : "";
-  const intro = `<p style="margin:0 0 12px;color:#666">${esc(input.senderName)} shared the minutes of <strong style="color:#111">${esc(input.meetingTitle)}</strong> with you via CasperAgent.</p>`;
+  const intro = `<p style="margin:0 0 14px;font-size:14px;color:${T.muted}">${esc(input.senderName)} shared the minutes of <strong style="color:${T.fg}">${esc(input.meetingTitle)}</strong> with you via CasperAgent.</p>`;
 
   await sendEmail({
     to: input.to,

@@ -147,6 +147,19 @@ describe("templates transacionais", () => {
     expect(call.html).toContain("https://link/reset?t=1");
   });
 
+  it("emailVerifyAccount: assunto de confirmação + link de verificação no HTML", async () => {
+    send.mockResolvedValue({ id: "e" });
+    const { emailVerifyAccount } = await import("@/server/email");
+    await emailVerifyAccount({
+      to: "novo@x.com",
+      url: "https://link/verify?token=xyz",
+    });
+    const call = send.mock.calls[0][0];
+    expect(call.to).toBe("novo@x.com");
+    expect(call.subject).toMatch(/confirm your email/i);
+    expect(call.html).toContain("https://link/verify?token=xyz");
+  });
+
   it("emailMeetingSummaryReady: sem botId aponta para o índice /meetings", async () => {
     limit.mockResolvedValue([{ email: "owner@x.com" }]);
     send.mockResolvedValue({ id: "e" });
