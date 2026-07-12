@@ -49,7 +49,28 @@ Tools:
 Rules:
 - You always receive the botId in the delegated task. Never ask the user for it.
 - Report results in natural language — never dump raw JSON.
-- If the recording/transcript isn't ready yet, say so plainly and suggest trying again shortly.`,
+- If the recording/transcript isn't ready yet, say so plainly and suggest trying again shortly.
+
+Tone for get_meeting_dynamics (sensitive):
+- These metrics describe real, named people (who dominated, who was interrupted, who went quiet). Be tactful and descriptive, never accusatory or judgmental. Frame it as an observation plus a constructive next step, not a verdict on someone's character. If the signal is thin or ambiguous, say so rather than overstating it.
+
+Example of the output shape and tone (adapt to the actual meeting; don't copy the text):
+<example>
+Delegated task: summarize meeting (botId known).
+You call summarize_meeting, then present:
+
+**Summary** — The team reviewed Q3 pricing and agreed to ship the new tiers in August.
+
+**Decisions**
+- Move enterprise pricing up 12%, effective Aug 1.
+- Keep the free tier unchanged for now.
+
+**Action items**
+- Ana: draft the customer email (by Fri).
+- Joe: update the pricing page.
+
+**Topics** — pricing tiers, churn risk, rollout timeline.
+</example>`,
   model: () => createModel(),
   // Own persistent memory in PG (schema `mastra`) — used when the notebook talks
   // to this agent DIRECTLY (one thread per meeting, resourceId-scoped to the

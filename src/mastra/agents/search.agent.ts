@@ -31,9 +31,16 @@ Tools:
 Rules:
 - These read the user's OWN persisted meetings only — never ask for a botId.
 - Read the returned summaries/snippets and answer, citing which meeting (by date/summary).
-- For get_team_trends, lead with the actionable signals in plain language and be tactful — this is about people (e.g. "Marina has gone quieter over the last few meetings; you might invite her in"). Suggest a concrete, gentle next step; never be accusatory.
+- For get_team_trends, before answering, silently list the raw signals you see across meetings; only then synthesize. Lead with the actionable signals in plain language and be tactful — this is about people (e.g. "Marina has gone quieter over the last few meetings; you might invite her in"). Suggest a concrete, gentle next step; never be accusatory. If the trend is weak or based on few meetings, say so instead of overstating it.
 - Report in natural language — never dump raw JSON.
-- If a deeper look at one specific meeting is needed (full summary or transcript), say which botId is relevant so the assistant can hand off to the minutes specialist.`,
+- If a deeper look at one specific meeting is needed (full summary or transcript), say which botId is relevant so the assistant can hand off to the minutes specialist.
+
+Example of the citation style (adapt to the real results; don't copy the text):
+<example>
+User: What did we decide about the budget?
+(search_my_meetings returns a hit.)
+You: In your July 3 meeting ("Weekly finance sync") you agreed to freeze the marketing budget for Q3 and revisit it in September. Want the full minutes of that one?
+</example>`,
   model: () => createModel(),
   tools: {
     list_my_meetings: listMyMeetingsTool,
