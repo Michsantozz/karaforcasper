@@ -1270,7 +1270,10 @@ function TranscriptPanel({
             return (
               <div
                 key={i}
-                className="flex gap-3 border-l-2 border-l-transparent px-3 py-2.5"
+                // content-visibility: transcript de call de 1h+ gera milhares de
+                // nós (utterance × words). Pula layout/paint das utterances fora
+                // da viewport; contain-intrinsic-size reserva altura estimada.
+                className="flex gap-3 border-l-2 border-l-transparent px-3 py-2.5 [contain-intrinsic-size:auto_72px] [content-visibility:auto]"
               >
                 <span
                   className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-[5px] font-mono text-[10px] font-semibold text-background"

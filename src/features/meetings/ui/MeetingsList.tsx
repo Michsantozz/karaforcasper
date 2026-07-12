@@ -278,7 +278,11 @@ function MeetingRow({ m, first }: { m: MeetingListItem; first: boolean }) {
   const inner = (
     <div
       className={cn(
-        "group flex items-center gap-3 px-4 py-3 transition-colors duration-150",
+        // content-visibility: pula layout/paint das rows fora da viewport na
+        // lista infinite-scroll (só cresce). contain-intrinsic-size reserva a
+        // altura estimada da row p/ o scrollbar não pular. Mesmo padrão do
+        // thread.tsx. ~66px (py-3 + 2 linhas).
+        "group flex items-center gap-3 px-4 py-3 transition-colors duration-150 [contain-intrinsic-size:auto_66px] [content-visibility:auto]",
         !first && "border-t border-border",
         clickable && "cursor-pointer hover:bg-muted/40",
       )}

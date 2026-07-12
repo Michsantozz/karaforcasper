@@ -91,8 +91,13 @@ export async function captureMeetingMedia(
 
   const shortcuts = pickRecording(bot?.recordings, botId)?.media_shortcuts;
 
-  const transcriptStruct = await captureTranscript(shortcuts?.transcript);
-  const videoUrl = await captureVideo(shortcuts?.video_mixed, botId, userId);
+  // Independentes (ambos só leem `shortcuts`; nenhum consome a saída do outro):
+  // um baixa+parseia o transcript, o outro faz stream do vídeo → storage. Em
+  // paralelo o wall-clock do enrich cai para o mais lento dos dois, não a soma.
+  const [transcriptStruct, videoUrl] = await Promise.all([
+    captureTranscript(shortcuts?.transcript),
+    captureVideo(shortcuts?.video_mixed, botId, userId),
+  ]);
 
   return { transcriptStruct, videoUrl };
 }

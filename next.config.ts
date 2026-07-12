@@ -55,6 +55,13 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  // lucide-react é um barrel com ~1.5k re-exports; sem esta transform o Next
+  // carrega o grafo inteiro em cada um dos 24 arquivos que importam ícones
+  // (200-800ms de cold start + HMR lento). optimizePackageImports reescreve os
+  // named-imports para caminhos diretos por ícone, mantendo tipos/autocomplete.
+  experimental: {
+    optimizePackageImports: ["lucide-react"],
+  },
   // Build standalone: `.next/standalone` traça só o server + node_modules
   // necessários, sem `next start` nem node_modules inteiro na imagem Docker.
   // Padrão oficial de containerização (docs/app/guides/self-hosting).

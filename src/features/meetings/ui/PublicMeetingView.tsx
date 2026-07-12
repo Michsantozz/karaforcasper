@@ -240,7 +240,13 @@ function Transcript({
           utterances.map((u, i) => {
             const color = speakerColor(speakerIndex.get(u.speaker) ?? 0);
             return (
-              <div key={i} className="flex flex-col gap-1">
+              <div
+                key={i}
+                // content-visibility: mesma otimização do notebook privado —
+                // pula layout/paint das utterances fora da viewport no
+                // transcript longo. contain-intrinsic-size reserva a altura.
+                className="flex flex-col gap-1 [contain-intrinsic-size:auto_64px] [content-visibility:auto]"
+              >
                 <button
                   type="button"
                   onClick={() => onSeek(u.start)}
